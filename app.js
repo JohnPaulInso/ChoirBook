@@ -941,7 +941,7 @@ function renderViewer(){
   let beatDots = '';
   for(let i=0;i<beatsPerBar;i++) beatDots += `<span class="beat-dot" data-beat="${i}"></span>`;
 
-// (2026-07-13) update viewer header, overlay & zoom; prev: top playbar
+// (2026-07-13) fix viewer flex layout and remove string node; prev: string in innerHTML
   app.innerHTML = `
     <div class="topbar" id="viewer-topbar">
       <button class="icon-btn" id="btn-back">${iconBack()}</button>
@@ -952,7 +952,6 @@ function renderViewer(){
       <button class="icon-btn" id="btn-adjust" title="Menu">${iconDots()}</button>
     </div>
     <div class="viewer-body">
-// (2026-07-13) set base font-size on chart-wrap; prev: chart-body only
       <div class="chart-wrap" id="chart-wrap" style="font-size:${fontSize}px">
         <div class="chart-title">${escapeHtml(song.title)}</div>
         <div class="chart-artist">${escapeHtml(song.artist||'')}</div>
