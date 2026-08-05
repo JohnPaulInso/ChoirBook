@@ -431,7 +431,8 @@ const state = {
   songs: [],
   categories: ['Uncategorized'],
   massParts: DEFAULT_MASS_PARTS.slice(),
-  loading: true,
+  // (2026-07-13) default loading to false for instant view; prev: loading: true
+  loading: false,
   authChecked: false,
   search: '',
   sortBy: 'title',
@@ -616,12 +617,9 @@ Forever and ever, forever and ever.`
    RENDER
    ============================================================ */
 const app = document.getElementById('app');
+// (2026-07-13) render view directly without loading spinner; prev: loading check
 function render(){
   if(state.view==='auth') return renderAuthView();
-  if(state.loading){
-    app.innerHTML = `<div class="loading">Loading your songs&hellip;</div>`;
-    return;
-  }
   if(state.view==='list') return renderListView();
   if(state.view==='viewer') return renderViewer();
   if(state.view==='editor') return renderEditor();
