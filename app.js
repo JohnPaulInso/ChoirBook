@@ -451,6 +451,22 @@ const state = {
   cameFromSetlistId: null // when set, the song viewer's back button returns to this setlist instead of the main list
 };
 
+// (2026-07-13) hydrate local cache immediately for 0ms startup; prev: loading true wait
+try{
+  const initCached = [];
+  for(let i=0; i<localStorage.length; i++){
+    const k = localStorage.key(i);
+    if(k && k.startsWith('song:')){
+      const v = localStorage.getItem(k);
+      if(v) try{ initCached.push(JSON.parse(v)); }catch(e){}
+    }
+  }
+  if(initCached.length > 0){
+    state.songs = initCached;
+    state.loading = false;
+  }
+}catch(e){}
+
 let scrollTimer = null;
 let metroCtx = null, metroTimer = null, metroBeat = 0;
 let resumeScrollTimer = null;
@@ -2336,6 +2352,7 @@ function subscribeRealtimeSync(){
   }catch(e){ console.error('Snapshot error', e); }
 }
 
+// (2026-07-13) non-blocking boot render for 0ms instant display; prev: blocking await
 (async function boot(){
   if(FIREBASE_READY){
     firebase.auth().onAuthStateChanged(async (user)=>{
@@ -2344,8 +2361,10 @@ function subscribeRealtimeSync(){
       if(user){
         subscribeRealtimeSync();
         state.view = 'list';
+        state.loading = false;
+        render();
         try{ await seedIfEmpty(); }catch(e){}
-        await loadAll();
+        loadAll().catch(()=>{});
       } else {
         if(unsubscribeSnapshot){ unsubscribeSnapshot(); unsubscribeSnapshot = null; }
         state.view = 'auth';
@@ -2354,8 +2373,10 @@ function subscribeRealtimeSync(){
       }
     });
   } else {
+    state.loading = false;
+    render();
     try{ await seedIfEmpty(); }catch(e){}
-    await loadAll();
+    loadAll().catch(()=>{});
   }
 })();
 
