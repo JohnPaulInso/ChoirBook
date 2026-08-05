@@ -2283,20 +2283,71 @@ if('serviceWorker' in navigator){
   });
 }
 
-/* ============================================================
-   BOOT
-   ============================================================ */
-// (2026-07-13) boot requires Google auth when ready; prev: allowed skippedAuth
+// (2026-07-13) subscribe to live Firestore onSnapshot changes across devices; prev: manual load
+let unsubscribeSnapshot = null;
+function subscribeRealtimeSync(){
+  if(!FIREBASE_READY || !firebaseUser) return;
+  if(unsubscribeSnapshot){ unsubscribeSnapshot(); unsubscribeSnapshot = null; }
+  try{
+    unsubscribeSnapshot = firebase.firestore().collection('users').doc(firebaseUser.uid).collection('data')
+      .onSnapshot((snap) => {
+        let changed = false;
+        snap.docChanges().forEach((change) => {
+          const docId = change.doc.id;
+          if(change.type === 'removed'){
+            LocalAdapter.delete(docId);
+            if(docId.startsWith('song:')){
+              const id = docId.replace('song:', '');
+              state.songs = state.songs.filter(s=>s.id!==id);
+              changed = true;
+            } else if(docId.startsWith('setlist:')){
+              const id = docId.replace('setlist:', '');
+              state.setlists = state.setlists.filter(s=>s.id!==id);
+              changed = true;
+            }
+          } else {
+            const val = change.doc.data().value;
+            LocalAdapter.set(docId, val);
+            if(docId.startsWith('song:')){
+              try{
+                const s = normalizeSong(JSON.parse(val));
+                const idx = state.songs.findIndex(item=>item.id===s.id);
+                if(idx >= 0) state.songs[idx] = s;
+                else state.songs.push(s);
+                changed = true;
+              }catch(e){}
+            } else if(docId.startsWith('setlist:')){
+              try{
+                const sl = normalizeSetlist(JSON.parse(val));
+                const idx = state.setlists.findIndex(item=>item.id===sl.id);
+                if(idx >= 0) state.setlists[idx] = sl;
+                else state.setlists.push(sl);
+                changed = true;
+              }catch(e){}
+            } else if(docId === 'meta:categories'){
+              try{ state.categories = JSON.parse(val); changed = true; }catch(e){}
+            } else if(docId === 'meta:massparts'){
+              try{ state.massParts = JSON.parse(val); changed = true; }catch(e){}
+            }
+          }
+        });
+        if(changed && !state.loading){ render(); }
+      }, (err) => { console.warn('Realtime snapshot notice:', err); });
+  }catch(e){ console.error('Snapshot error', e); }
+}
+
 (async function boot(){
   if(FIREBASE_READY){
     firebase.auth().onAuthStateChanged(async (user)=>{
       firebaseUser = user;
       selectAdapter();
       if(user){
+        subscribeRealtimeSync();
         state.view = 'list';
         try{ await seedIfEmpty(); }catch(e){}
         await loadAll();
       } else {
+        if(unsubscribeSnapshot){ unsubscribeSnapshot(); unsubscribeSnapshot = null; }
         state.view = 'auth';
         state.loading = false;
         render();
