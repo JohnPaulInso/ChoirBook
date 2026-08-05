@@ -529,32 +529,34 @@ function render(){
   if(state.view==='setlists') return renderSetlistsView();
   if(state.view==='setlist-editor') return renderSetlistEditor();
 }
+// (2026-07-13) mandatory Google login screen without offline skip; prev: skip auth button
 function renderAuthView(){
   app.innerHTML = `
     <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;text-align:center;gap:18px;">
       <div style="width:72px;height:72px;border-radius:20px;background:var(--chord);display:flex;align-items:center;justify-content:center;font-size:32px;">&#127925;</div>
       <div>
-        <h1 style="font-size:20px;margin:0 0 6px;">My Songbook</h1>
-        <div class="hint" style="font-size:13px;">Sign in with Google to sync your songs, folders and Mass Parts to your account across every device.</div>
+        <h1 style="font-size:22px;margin:0 0 8px;">Choir Book</h1>
+        <div class="hint" style="font-size:13px;max-width:280px;line-height:1.4;">Please sign in with Google to access and save your songs, folders, and Mass plans to your account.</div>
       </div>
-      <button class="btn btn-primary" id="btn-google-signin" style="flex:0 0 auto;padding:12px 28px;">Sign in with Google</button>
-      <button class="btn btn-secondary" id="btn-skip-signin" style="flex:0 0 auto;padding:10px 22px;">Continue offline for now</button>
+      <button class="btn btn-primary" id="btn-google-signin" style="flex:0 0 auto;padding:14px 32px;font-weight:600;font-size:15px;">Sign in with Google</button>
     </div>
   `;
-  document.getElementById('btn-google-signin').onclick = async ()=>{
-    try{
-      const provider = new firebase.auth.GoogleAuthProvider();
-      await firebase.auth().signInWithPopup(provider);
-      // onAuthStateChanged listener (set up in boot) takes it from here
-    }catch(e){
-      alert('Sign-in failed: ' + (e.message||'please try again.'));
-    }
-  };
-  document.getElementById('btn-skip-signin').onclick = async ()=>{
-    state.skippedAuth = true;
-    state.view = 'list';
-    await loadAll();
-  };
+  const btn = document.getElementById('btn-google-signin');
+  if(btn){
+    btn.onclick = async ()=>{
+      try{
+        const provider = new firebase.auth.GoogleAuthProvider();
+        await firebase.auth().signInWithPopup(provider);
+      }catch(e){
+        try{
+          const provider = new firebase.auth.GoogleAuthProvider();
+          await firebase.auth().signInWithRedirect(provider);
+        }catch(err){
+          alert('Sign-in failed: ' + (err.message||'please try again.'));
+        }
+      }
+    };
+  }
 }
 function showToast(msg){
   const t = document.createElement('div');
@@ -2202,9 +2204,9 @@ if('serviceWorker' in navigator){
 /* ============================================================
    BOOT
    ============================================================ */
+// (2026-07-13) boot requires Google auth when ready; prev: allowed skippedAuth
 (async function boot(){
   if(FIREBASE_READY){
-    // Wait for Firebase to tell us the current auth state before deciding what to show.
     firebase.auth().onAuthStateChanged(async (user)=>{
       firebaseUser = user;
       selectAdapter();
@@ -2212,18 +2214,15 @@ if('serviceWorker' in navigator){
         state.view = 'list';
         try{ await seedIfEmpty(); }catch(e){}
         await loadAll();
-      } else if(!state.skippedAuth){
+      } else {
         state.view = 'auth';
         state.loading = false;
         render();
       }
     });
   } else {
-    try{ await seedIfEmpty(); }catch(e){ /* storage may briefly fail on first run; continue */ }
+    try{ await seedIfEmpty(); }catch(e){}
     await loadAll();
-    if(!HAS_CLAUDE_STORAGE){
-      showToast('Running in local (on-device) storage mode');
-    }
   }
 })();
 

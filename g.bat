@@ -24,15 +24,15 @@ if "%~1"=="" (
 
 echo.
 echo ============================================
-:: (2026-07-13) Update title to Choir Book Pro; prev: HydroTrack
-echo  Choir Book Pro - GitHub Auto-Upload
+:: (2026-07-13) Update title to Choir Book; prev: Choir Book Pro
+echo  Choir Book - GitHub Auto-Upload
 echo  %TS%
 echo ============================================
 echo.
 echo  Commit: "%commitMsg%"
 echo.
 
-:: (2026-07-13) Set default Choir Book Pro repo remote; prev: HydroTrack
+:: (2026-07-13) Set default Choir Book repo remote; prev: Choir Book Pro
 if not exist ".git" (
     echo Initializing Git repository...
     git init
@@ -40,7 +40,7 @@ if not exist ".git" (
 )
 git remote get-url origin >nul 2>&1
 if errorlevel 1 (
-    git remote add origin https://github.com/JohnPaulInso/ChoirBookPro.git
+    git remote add origin https://github.com/JohnPaulInso/ChoirBook.git
 )
 
 :: -- Step 1: Stage all changes --

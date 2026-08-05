@@ -1,11 +1,11 @@
-# Setup Instructions for Firestore and GitHub
+# Setup Instructions for Firestore, Google Login, and GitHub
 
-## 1. Firestore Setup Guide
+## 1. Firestore & Google Login Setup Guide
 
 ### Step A: Create a Firebase Project
 1. Open https://console.firebase.google.com in your web browser.
 2. Click **Add project** (or **Create a project**).
-3. Enter your project name (e.g., `Choir Book Pro`) and follow the steps (Google Analytics is optional).
+3. Enter your project name (e.g., `Choir Book`) and follow the steps.
 
 ### Step B: Create Firestore Database
 1. In the left navigation menu, expand **Build** and click **Firestore Database**.
@@ -28,18 +28,33 @@ service cloud.firestore {
 ```
 3. Click **Publish**.
 
-### Step D: Enable Google Authentication
+### Step D: Enable Google Authentication Provider
 1. In the left navigation menu under **Build**, click **Authentication**.
-2. Click **Get started**.
-3. Select **Google** under Additional providers.
-4. Toggle **Enable**, choose your support email, and click **Save**.
+2. Click **Get started** (if not already enabled).
+3. Under the **Sign-in method** tab, click **Google** under Additional providers.
+4. Toggle **Enable**.
+5. Choose your **Project support email**.
+6. Click **Save**.
 
-### Step E: Copy Firebase Config
-1. Click the gear icon next to **Project Overview** in the top left and select **Project settings**.
-2. Scroll down to **Your apps** section and click the Web icon (`</>`).
-3. Enter an app nickname (e.g., `Choir Book Pro Web`) and click **Register app**.
-4. Copy the `firebaseConfig` keys (`apiKey`, `authDomain`, `projectId`, `storageBucket`, `messagingSenderId`, `appId`).
-5. Open `firebase-config.js` in your project editor and replace the placeholder strings with your actual keys.
+### Step E: Fix "auth/unauthorized-domain" Error (Add 127.0.0.1)
+1. Go to https://console.firebase.google.com and open project `choirbook-2317`.
+2. Expand **Build** > **Authentication** in the left sidebar.
+3. Click the **Settings** tab at the top.
+4. Click **Authorized domains** in the menu.
+5. Click **Add domain**.
+6. Enter `127.0.0.1` and click **Save** / **Add**.
+7. Refresh your browser at `http://127.0.0.1:5500` and click Sign in with Google again.
+
+### Step F: Add SHA-1 Fingerprint for Android Google Login
+1. Your local debug certificate SHA-1 fingerprint is:
+   `A0:9C:B9:88:64:26:BA:E7:33:87:32:7D:29:A0:C7:AD:3E:7A:FD:1C`
+2. Your SHA-256 fingerprint is:
+   `13:E2:43:A9:B5:70:13:07:4E:2D:21:A7:30:DB:70:EC:19:68:4A:F8:DE:4C:74:B9:5F:C1:11:79:C6:A9:FB:D7`
+3. Go to https://console.firebase.google.com > **Project Settings** (gear icon) > **General**.
+4. Scroll down to your Android app (`com.choirbook.app`).
+5. Click **Add fingerprint** and paste your SHA-1 fingerprint.
+6. Click **Save**.
+7. Download the updated `google-services.json` and place it in `android/app/google-services.json`.
 
 ---
 
@@ -47,14 +62,11 @@ service cloud.firestore {
 
 ### Step A: Create GitHub Repository
 1. Go to https://github.com/new.
-2. Set Repository name to `ChoirBookPro` (or your preferred repository name).
+2. Set Repository name to `ChoirBook`.
 3. Choose Public or Private.
-4. Do **NOT** check "Add a README file" or ".gitignore" (these are already present in your project).
+4. Do **NOT** check "Add a README file" or ".gitignore".
 5. Click **Create repository**.
 
 ### Step B: Connect and Push using g.bat
-1. If your GitHub repository URL matches `https://github.com/JohnPaulInso/ChoirBookPro.git`, you are ready to push.
-2. If your repository URL is different, open `g.bat` and update line 42 with your GitHub repository URL.
-3. Open terminal or command prompt in your project folder.
-4. Run `.\g.bat` (or double click `g.bat` in File Explorer).
-5. All files will automatically stage, commit with a timestamp, and push to the `main` branch on GitHub.
+1. Run `.\g.bat` in your project folder.
+2. All files will automatically stage, commit with a timestamp, and push to the `main` branch on GitHub.

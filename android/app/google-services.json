@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "303741150656",
+    "project_id": "choirbook-2317",
+    "storage_bucket": "choirbook-2317.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:303741150656:android:5663ff4374a29da49d9425",
+        "android_client_info": {
+          "package_name": "com.choirbook.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "303741150656-5ptj9tt99ff0lroco66brhmrt51a2eeh.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCk4b_WpPm9Wm3vFtqP6FRF05oe7XzFn5k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "303741150656-5ptj9tt99ff0lroco66brhmrt51a2eeh.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
