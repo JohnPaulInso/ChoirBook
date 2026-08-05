@@ -300,36 +300,30 @@ const ClaudeAdapter = {
   }
 };
 
-/* Firestore-backed adapter — used once the user is signed in with a configured
-   Firebase project. Mirrors the same list/get/set/delete shape as the other
-   adapters, so Store's logic below never needs to know which one is active. */
+// (2026-07-13) optimize FirestoreAdapter to query collection without index hangs; prev: documentId range query
 const FirestoreAdapter = {
   _col(){
     return firebase.firestore().collection('users').doc(firebaseUser.uid).collection('data');
   },
   async list(prefix){
     try{
-      const snap = await this._col()
-        .where(firebase.firestore.FieldPath.documentId(), '>=', prefix)
-        .where(firebase.firestore.FieldPath.documentId(), '<', prefix + '\uf8ff')
-        .get();
-      return snap.docs.map(d=>d.id);
-    }catch(e){ console.error('Firestore list failed', e); return []; }
+      const snap = await this._col().get();
+      return snap.docs.map(d=>d.id).filter(id=>id.startsWith(prefix));
+    }catch(e){ console.error('Firestore list failed', e); return LocalAdapter.list(prefix); }
   },
   async get(key){
     try{
       const doc = await this._col().doc(key).get();
-      if(!doc.exists) return null;
+      if(!doc.exists) return LocalAdapter.get(key);
       return {key, value: doc.data().value};
-    }catch(e){ console.error('Firestore get failed', e); return null; }
+    }catch(e){ console.error('Firestore get failed', e); return LocalAdapter.get(key); }
   },
   async getAll(prefix){
     try{
-      const snap = await this._col()
-        .where(firebase.firestore.FieldPath.documentId(), '>=', prefix)
-        .where(firebase.firestore.FieldPath.documentId(), '<', prefix + '\uf8ff')
-        .get();
-      const docs = snap.docs.map(d => ({ key: d.id, value: d.data().value }));
+      const snap = await this._col().get();
+      const docs = snap.docs
+        .filter(d => d.id.startsWith(prefix))
+        .map(d => ({ key: d.id, value: d.data().value }));
       docs.forEach(item => LocalAdapter.set(item.key, item.value));
       return docs;
     }catch(e){
@@ -339,13 +333,14 @@ const FirestoreAdapter = {
   },
   async set(key, value){
     LocalAdapter.set(key, value);
-    await this._col().doc(key).set({value, updatedAt: Date.now()});
+    try{ await this._col().doc(key).set({value, updatedAt: Date.now()}); }
+    catch(e){ console.error('Firestore set failed', e); }
     return {key, value};
   },
   async delete(key){
     LocalAdapter.delete(key);
-    try{ await this._col().doc(key).delete(); return {key, deleted:true}; }
-    catch(e){ return null; }
+    try{ await this._col().doc(key).delete(); }catch(e){}
+    return {key, deleted:true};
   }
 };
 
@@ -474,13 +469,20 @@ function normalizeSong(song){
   return song;
 }
 
-// (2026-07-13) instant load from local cache & batch query; prev: sequential doc gets
+// (2026-07-13) instant load from local cache with timeout protection; prev: un-timed network wait
 async function loadAll(){
   try{
     const cachedItems = await LocalAdapter.getAll('song:');
     if(cachedItems && cachedItems.length > 0){
       state.songs = cachedItems.map(it=>{
         try{ return normalizeSong(JSON.parse(it.value)); }catch(e){ return null; }
+      }).filter(Boolean);
+      state.categories = await Store.getCategories();
+      const savedParts = await Store.getMassParts();
+      state.massParts = savedParts || DEFAULT_MASS_PARTS.slice();
+      const cachedSetlists = await LocalAdapter.getAll('setlist:');
+      state.setlists = cachedSetlists.map(it=>{
+        try{ return normalizeSetlist(JSON.parse(it.value)); }catch(e){ return null; }
       }).filter(Boolean);
       state.loading = false;
       render();
@@ -489,14 +491,23 @@ async function loadAll(){
     }
   }catch(e){ state.loading = true; render(); }
 
-  const rawSongs = await Store.getAllSongs();
-  state.songs = rawSongs.map(normalizeSong);
-  state.categories = await Store.getCategories();
-  const savedParts = await Store.getMassParts();
-  state.massParts = savedParts || DEFAULT_MASS_PARTS.slice();
-  if(!savedParts) await Store.saveMassParts(state.massParts);
-  const rawSetlists = await Store.getAllSetlists();
-  state.setlists = rawSetlists.map(normalizeSetlist);
+  try{
+    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500));
+    const dataFetch = Promise.all([
+      Store.getAllSongs(),
+      Store.getCategories(),
+      Store.getMassParts(),
+      Store.getAllSetlists()
+    ]);
+    const [rawSongs, cats, parts, rawSetlists] = await Promise.race([dataFetch, timeout]);
+    if(rawSongs && rawSongs.length > 0) state.songs = rawSongs.map(normalizeSong);
+    if(cats) state.categories = cats;
+    if(parts) state.massParts = parts;
+    if(rawSetlists) state.setlists = rawSetlists.map(normalizeSetlist);
+  }catch(err){
+    console.warn('Network sync timed out or offline, using local data');
+  }
+
   state.loading = false;
   render();
 }
