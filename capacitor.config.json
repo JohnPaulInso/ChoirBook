@@ -1,0 +1,6 @@
+{
+  "appId": "com.choirbookpro.app",
+  "appName": "Choir Book Pro",
+  "webDir": "www",
+  "bundledWebRuntime": false
+}

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Choir Book Pro</string>
+    <string name="title_activity_main">Choir Book Pro</string>
+    <string name="package_name">com.choirbookpro.app</string>
+    <string name="custom_url_scheme">com.choirbookpro.app</string>
+</resources>
