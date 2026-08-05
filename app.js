@@ -237,6 +237,7 @@ const HAS_CLAUDE_STORAGE = (typeof window !== 'undefined' && !!window.storage);
 const FIREBASE_READY = (typeof firebase !== 'undefined' && !!window.__FIREBASE_CONFIGURED__);
 let firebaseUser = null;
 
+// (2026-07-13) batch getAll for instant load & local cache mirroring; prev: single get
 const LocalAdapter = {
   async list(prefix){
     const out = [];
@@ -249,6 +250,17 @@ const LocalAdapter = {
   async get(key){
     const v = localStorage.getItem(key);
     return v===null ? null : {key, value:v};
+  },
+  async getAll(prefix){
+    const out = [];
+    for(let i=0;i<localStorage.length;i++){
+      const k = localStorage.key(i);
+      if(k && k.startsWith(prefix)){
+        const v = localStorage.getItem(k);
+        if(v!==null) out.push({key:k, value:v});
+      }
+    }
+    return out;
   },
   async set(key, value){
     localStorage.setItem(key, value);
@@ -268,6 +280,17 @@ const ClaudeAdapter = {
   async get(key){
     try{ return await window.storage.get(key, false); }
     catch(e){ return null; }
+  },
+  async getAll(prefix){
+    try{
+      const keys = await this.list(prefix);
+      const out = [];
+      for(const k of keys){
+        const v = await this.get(k);
+        if(v) out.push(v);
+      }
+      return out;
+    }catch(e){ return []; }
   },
   async set(key, value){
     return await window.storage.set(key, value, false);
@@ -300,11 +323,27 @@ const FirestoreAdapter = {
       return {key, value: doc.data().value};
     }catch(e){ console.error('Firestore get failed', e); return null; }
   },
+  async getAll(prefix){
+    try{
+      const snap = await this._col()
+        .where(firebase.firestore.FieldPath.documentId(), '>=', prefix)
+        .where(firebase.firestore.FieldPath.documentId(), '<', prefix + '\uf8ff')
+        .get();
+      const docs = snap.docs.map(d => ({ key: d.id, value: d.data().value }));
+      docs.forEach(item => LocalAdapter.set(item.key, item.value));
+      return docs;
+    }catch(e){
+      console.error('Firestore batch getAll failed', e);
+      return LocalAdapter.getAll(prefix);
+    }
+  },
   async set(key, value){
+    LocalAdapter.set(key, value);
     await this._col().doc(key).set({value, updatedAt: Date.now()});
     return {key, value};
   },
   async delete(key){
+    LocalAdapter.delete(key);
     try{ await this._col().doc(key).delete(); return {key, deleted:true}; }
     catch(e){ return null; }
   }
@@ -328,6 +367,21 @@ const Store = {
     if(!r) return null;
     try{ return JSON.parse(r.value); }catch(e){ return null; }
   },
+  async getAllSongs(){
+    if(adapter.getAll){
+      const items = await adapter.getAll('song:');
+      return items.map(it => {
+        try{ return JSON.parse(it.value); }catch(e){ return null; }
+      }).filter(Boolean);
+    }
+    const keys = await this.listSongs();
+    const songs = [];
+    for(const k of keys){
+      const s = await this.getSong(k);
+      if(s) songs.push(s);
+    }
+    return songs;
+  },
   async saveSong(song){
     await adapter.set('song:'+song.id, JSON.stringify(song));
   },
@@ -349,6 +403,21 @@ const Store = {
     const r = await adapter.get(key);
     if(!r) return null;
     try{ return JSON.parse(r.value); }catch(e){ return null; }
+  },
+  async getAllSetlists(){
+    if(adapter.getAll){
+      const items = await adapter.getAll('setlist:');
+      return items.map(it => {
+        try{ return JSON.parse(it.value); }catch(e){ return null; }
+      }).filter(Boolean);
+    }
+    const keys = await this.listSetlists();
+    const setlists = [];
+    for(const k of keys){
+      const sl = await this.getSetlist(k);
+      if(sl) setlists.push(sl);
+    }
+    return setlists;
   },
   async saveSetlist(setlist){ await adapter.set('setlist:'+setlist.id, JSON.stringify(setlist)); },
   async deleteSetlist(id){ await adapter.delete('setlist:'+id); }
@@ -405,26 +474,29 @@ function normalizeSong(song){
   return song;
 }
 
+// (2026-07-13) instant load from local cache & batch query; prev: sequential doc gets
 async function loadAll(){
-  state.loading = true; render();
-  const keys = await Store.listSongs();
-  const songs = [];
-  for(const k of keys){
-    const s = await Store.getSong(k);
-    if(s) songs.push(normalizeSong(s));
-  }
-  state.songs = songs;
+  try{
+    const cachedItems = await LocalAdapter.getAll('song:');
+    if(cachedItems && cachedItems.length > 0){
+      state.songs = cachedItems.map(it=>{
+        try{ return normalizeSong(JSON.parse(it.value)); }catch(e){ return null; }
+      }).filter(Boolean);
+      state.loading = false;
+      render();
+    } else {
+      state.loading = true; render();
+    }
+  }catch(e){ state.loading = true; render(); }
+
+  const rawSongs = await Store.getAllSongs();
+  state.songs = rawSongs.map(normalizeSong);
   state.categories = await Store.getCategories();
   const savedParts = await Store.getMassParts();
   state.massParts = savedParts || DEFAULT_MASS_PARTS.slice();
   if(!savedParts) await Store.saveMassParts(state.massParts);
-  const setlistKeys = await Store.listSetlists();
-  const setlists = [];
-  for(const k of setlistKeys){
-    const sl = await Store.getSetlist(k);
-    if(sl) setlists.push(normalizeSetlist(sl));
-  }
-  state.setlists = setlists;
+  const rawSetlists = await Store.getAllSetlists();
+  state.setlists = rawSetlists.map(normalizeSetlist);
   state.loading = false;
   render();
 }

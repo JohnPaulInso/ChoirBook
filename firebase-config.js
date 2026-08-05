@@ -1,4 +1,4 @@
-// (2026-07-13) Set real choirbook-2317 config with compat global window object; prev: ES import
+// (2026-07-13) Set real choirbook-2317 config with offline persistence enabled; prev: basic initializeApp
 window.__FIREBASE_CONFIG__ = {
   apiKey: "AIzaSyD-Pb2Zomqvx7i24zgGBWEA5eWk53FqbZI",
   authDomain: "choirbook-2317.firebaseapp.com",
@@ -13,4 +13,7 @@ window.__FIREBASE_CONFIGURED__ = true;
 
 if (typeof firebase !== 'undefined') {
   firebase.initializeApp(window.__FIREBASE_CONFIG__);
+  if (firebase.firestore) {
+    firebase.firestore().enablePersistence({synchronizeTabs: true}).catch(function(){});
+  }
 }
