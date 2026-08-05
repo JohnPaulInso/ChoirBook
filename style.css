@@ -26,8 +26,8 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
   overscroll-behavior:none; scroll-behavior:smooth;}
 #app{max-width:520px;margin:0 auto;height:100vh;height:100dvh;display:flex;flex-direction:column;background:var(--bg);position:relative;overflow:hidden;}
 
-/* ---------- top bar ---------- */
-.topbar{display:flex;align-items:center;gap:6px;padding:12px 10px;background:var(--bg-elev);
+/* (2026-07-13) add top safe area padding for notch/APK status bar; prev: 12px 10px */
+.topbar{display:flex;align-items:center;gap:6px;padding:calc(12px + env(safe-area-inset-top, 0px)) 10px 12px 10px;background:var(--bg-elev);
   border-bottom:1px solid var(--line);flex-shrink:0;}
 .topbar h1{font-size:17px;font-weight:800;margin:0;flex:1;letter-spacing:.2px;padding:0 4px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -62,7 +62,8 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
   backdrop-filter:blur(6px);}
 .empty-state{padding:60px 24px;text-align:center;color:var(--text-dim);font-size:14px;line-height:1.6;}
 
-.fab{position:absolute;right:18px;bottom:18px;width:56px;height:56px;border-radius:18px;
+/* (2026-07-13) add bottom safe area offset to FAB for Samsung 3-button bar; prev: bottom:18px */
+.fab{position:absolute;right:18px;bottom:calc(18px + env(safe-area-inset-bottom, 0px));width:56px;height:56px;border-radius:18px;
   background:var(--accent);color:#0c1210;border:none;font-size:28px;display:flex;align-items:center;
   justify-content:center;cursor:pointer;box-shadow:0 8px 20px -4px rgba(255,140,0,.45), 0 2px 8px rgba(0,0,0,.35);z-index:5;
   transition:transform .15s var(--ease-snap), box-shadow .15s ease;}
@@ -138,7 +139,8 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
 .scroll-square-label{font-size:14px;font-weight:700;margin-top:6px;opacity:0;transition:opacity .15s ease;color:#ffffff;pointer-events:none;}
 .scroll-square:active .scroll-square-label, .scroll-square.is-pressed .scroll-square-label{opacity:1;}
 
-.speed-slider-wrap{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);width:90%;max-width:420px;
+/* (2026-07-13) add bottom safe area offset for Samsung bottom navigation bar; prev: bottom:10px */
+.speed-slider-wrap{position:absolute;bottom:calc(12px + env(safe-area-inset-bottom, 0px));left:50%;transform:translateX(-50%);width:90%;max-width:420px;
   display:flex;align-items:center;gap:12px;background:rgba(18,21,28,0.88);backdrop-filter:blur(8px);
   padding:8px 16px;border-radius:30px;border:1px solid var(--line);z-index:12;transition:opacity .2s ease;}
 .speed-slider-wrap.hidden{opacity:0;pointer-events:none;}
@@ -177,8 +179,10 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
 /* ---------- sidebar drawer ---------- */
 .sidebar-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.6);z-index:25;display:flex;opacity:0;pointer-events:none;transition:opacity .3s ease;}
 .sidebar-backdrop.active{opacity:1;pointer-events:auto;}
+/* (2026-07-13) add top/bottom safe area padding to sidebar for notch/APK; prev: 14px 10px */
 .sidebar{width:82%;max-width:300px;background:var(--bg-elev);height:100%;display:flex;flex-direction:column;
-  padding:14px 10px;overflow-y:auto;box-shadow:8px 0 32px rgba(0,0,0,.55);transform:translateX(-100%);
+  padding:calc(16px + env(safe-area-inset-top, 0px)) 10px calc(16px + env(safe-area-inset-bottom, 0px)) 10px;
+  overflow-y:auto;box-shadow:8px 0 32px rgba(0,0,0,.55);transform:translateX(-100%);
   transition:transform .32s var(--ease);}
 .sidebar-backdrop.active .sidebar{transform:translateX(0);}
 .sidebar-head{display:flex;align-items:center;justify-content:space-between;padding:4px 8px 14px;}
@@ -221,8 +225,9 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
 .field-row{display:flex;gap:10px;}
 .field-row .field{flex:1;}
 .hint{font-size:10.5px;color:var(--text-dim);margin-top:4px;line-height:1.4;opacity:0.75;}
+/* (2026-07-13) update save-bar padding-bottom for Samsung 3-button nav bar; prev: 14px */
 .save-bar{display:flex;gap:10px;padding:14px 16px;background:var(--bg-elev);border-top:1px solid var(--line);flex-shrink:0;
-  padding-bottom:calc(14px + env(safe-area-inset-bottom));}
+  padding-bottom:calc(16px + env(safe-area-inset-bottom, 0px));}
 .btn{flex:1;padding:14px;border-radius:12px;border:none;font-weight:700;font-size:14.5px;cursor:pointer;font-family:inherit;
   min-height:48px;transition:transform .1s ease, filter .15s ease, opacity .15s ease;}
 .btn:active{transform:scale(0.96);filter:brightness(0.92);}
