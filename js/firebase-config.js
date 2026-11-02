@@ -1,7 +1,8 @@
-// (2026-07-13) Set real choirbook-2317 config with offline persistence enabled; prev: basic initializeApp
+// (2026-07-13) export window.db and databaseURL; prev: internal init only
 window.__FIREBASE_CONFIG__ = {
   apiKey: "AIzaSyD-Pb2Zomqvx7i24zgGBWEA5eWk53FqbZI",
   authDomain: "choirbook-2317.firebaseapp.com",
+  databaseURL: "https://choirbook-2317-default-rtdb.firebaseio.com",
   projectId: "choirbook-2317",
   storageBucket: "choirbook-2317.firebasestorage.app",
   messagingSenderId: "303741150656",
@@ -14,6 +15,7 @@ window.__FIREBASE_CONFIGURED__ = true;
 if (typeof firebase !== 'undefined') {
   firebase.initializeApp(window.__FIREBASE_CONFIG__);
   if (firebase.firestore) {
-    firebase.firestore().enablePersistence({synchronizeTabs: true}).catch(function(){});
+    window.db = firebase.firestore();
+    window.db.enablePersistence({synchronizeTabs: true}).catch(function(){});
   }
 }
