@@ -238,6 +238,7 @@ function isMelodyNoteLine(line){
   return noteTokenCount >= 2 && lowerNoteCount >= 1;
 }
 
+// (2026-07-13) full-width staff & clear melody letter line; prev: squished staff
 function renderMelodyStaffLine(line){
   const rawLine = line.replace(/^> (?=\S)/, '').replace(/^>/, '');
   const prefixMatch = /^(\s*(?:first\s+notes\s*[-:]?|notes?\s*[-:]?|going\s+up\s*[-:]?)\s*)/i.exec(rawLine);
@@ -247,49 +248,55 @@ function renderMelodyStaffLine(line){
   const re = /(\S+)/g;
   re.lastIndex = startIdx;
   let m;
-  let itemsHtml = '';
-  let maxCol = Math.max(rawLine.length + 2, 18);
+  const tokens = [];
   while((m = re.exec(rawLine))){
-    const tok = m[1];
-    const col = m.index;
-    if(col + tok.length + 2 > maxCol) maxCol = col + tok.length + 2;
+    tokens.push({ tok: m[1], col: m.index });
+  }
+  const maxCol = Math.max(rawLine.trimEnd().length - 1, 10);
+  let itemsHtml = '';
+  tokens.forEach((item)=>{
+    const { tok, col } = item;
+    const ratio = Math.max(0, Math.min(1, col / maxCol));
     if(tok === '|'){
-      itemsHtml += `<span class="staff-barline" style="left:calc(${col} * 1ch);"></span>`;
-      continue;
+      itemsHtml += `<span class="staff-barline" style="left:calc(30px + (100% - 56px) * ${ratio.toFixed(4)});"></span>`;
+      return;
     }
     const nm = /^([a-gCD])(#|b)?\.?$/.exec(tok);
-    if(!nm) continue;
+    if(!nm) return;
     const letter = nm[1];
     const acc = nm[2] || '';
     const step = stepMap[letter] !== undefined ? stepMap[letter] : 0;
-    const yPx = 28 - step * 3;
+    const yPx = 26 - step * 3;
     const stemDown = step >= 4;
     let semi = semiMap[letter] || 0;
     if(acc === '#') semi = (semi + 1) % 12;
     if(acc === 'b') semi = (semi + 11) % 12;
     const accSym = acc === '#' ? '&#9839;' : (acc === 'b' ? '&#9837;' : '');
-    const ledgerHtml = step <= -2 ? `<span class="staff-ledger" style="top:${yPx}px;"></span>` : '';
+    const ledgerHtml = step <= -2 ? `<span class="staff-ledger" style="top:${yPx + 2}px;"></span>` : '';
     itemsHtml += `
-      <span class="staff-note-group" data-staff-note="${semi}" style="left:calc(${col} * 1ch);" title="Tap to play ${escapeHtml(tok)}">
+      <span class="staff-note-group" data-staff-note="${semi}" style="left:calc(30px + (100% - 56px) * ${ratio.toFixed(4)});" title="Tap to play ${escapeHtml(tok)}">
         ${ledgerHtml}
         <span class="staff-notehead ${stemDown?'stem-down':'stem-up'}" style="top:${yPx}px;">
           ${accSym ? `<span class="staff-acc">${accSym}</span>` : ''}
           <span class="staff-stem"></span>
         </span>
-        <span class="staff-note-label">${escapeHtml(tok.replace(/\.$/, ''))}</span>
       </span>`;
-  }
+  });
+
   return `
-    <div class="melody-staff-wrap" style="min-width:calc(${maxCol} * 1ch);">
-      <div class="melody-staff-lines">
-        <span class="staff-line" style="top:4px;"></span>
-        <span class="staff-line" style="top:10px;"></span>
-        <span class="staff-line" style="top:16px;"></span>
-        <span class="staff-line" style="top:22px;"></span>
-        <span class="staff-line" style="top:28px;"></span>
+    <div class="melody-staff-section">
+      <div class="melody-staff-wrap">
+        <div class="melody-staff-lines">
+          <span class="staff-line" style="top:2px;"></span>
+          <span class="staff-line" style="top:8px;"></span>
+          <span class="staff-line" style="top:14px;"></span>
+          <span class="staff-line" style="top:20px;"></span>
+          <span class="staff-line" style="top:26px;"></span>
+        </div>
+        <span class="staff-g-clef" aria-hidden="true">&#119070;</span>
+        ${itemsHtml}
       </div>
-      <span class="staff-g-clef" aria-hidden="true">&#119070;</span>
-      ${itemsHtml}
+      <div class="melody-letters-line">${escapeHtml(rawLine.replace(/^>/, ''))}</div>
     </div>`;
 }
 
@@ -581,7 +588,7 @@ const DEFAULT_MASS_PARTS = ['Entrance','Kyrie','Gloria','Responsorial Psalm','Go
   'Offertory','Sanctus','Memorial Acclamation','Our Father','Lamb of God','Communion','Recessional','Other'];
 
 // (2026-07-13) add Bisaya mass part cues dictionary; prev: none
-// (2026-07-13) full-volume web audio piano & spaced chord transposer; prev: none
+// (2026-07-13) clean acoustic piano synth without clipping; prev: clipped 1.85x
 let pianoAudioCtx = null, pianoMasterBus = null;
 function playPianoNote(noteIdx){
   try{
@@ -589,25 +596,32 @@ function playPianoNote(noteIdx){
     if(pianoAudioCtx.state === 'suspended') pianoAudioCtx.resume();
     if(!pianoMasterBus){
       const comp = pianoAudioCtx.createDynamicsCompressor();
-      comp.threshold.value = -12;
-      comp.knee.value = 6;
-      comp.ratio.value = 6;
-      comp.attack.value = 0.002;
-      comp.release.value = 0.15;
-      const boost = pianoAudioCtx.createGain();
-      boost.gain.value = 1.85;
-      comp.connect(boost);
-      boost.connect(pianoAudioCtx.destination);
+      comp.threshold.value = -3;
+      comp.knee.value = 4;
+      comp.ratio.value = 12;
+      comp.attack.value = 0.003;
+      comp.release.value = 0.2;
+      const masterGain = pianoAudioCtx.createGain();
+      masterGain.gain.value = 0.85;
+      comp.connect(masterGain);
+      masterGain.connect(pianoAudioCtx.destination);
       pianoMasterBus = comp;
     }
     const now = pianoAudioCtx.currentTime;
     const freq = 261.6256 * Math.pow(2, (noteIdx % 12) / 12);
+    const filter = pianoAudioCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(freq * 6, now);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(freq * 1.5, 380), now + 1.2);
+    filter.Q.value = 1.0;
+    filter.connect(pianoMasterBus);
+
     const partials = [
-      { mult: 1, type: 'triangle', peak: 1.0, decay: 1.6 },
-      { mult: 1, type: 'sine', peak: 0.85, decay: 1.8 },
-      { mult: 2, type: 'sine', peak: 0.45, decay: 1.1 },
-      { mult: 3, type: 'sine', peak: 0.22, decay: 0.6 },
-      { mult: 4, type: 'sine', peak: 0.10, decay: 0.35 }
+      { mult: 1, type: 'sine', peak: 0.50, decay: 1.8 },
+      { mult: 1, type: 'triangle', peak: 0.18, decay: 1.4 },
+      { mult: 2, type: 'sine', peak: 0.16, decay: 1.0 },
+      { mult: 3, type: 'sine', peak: 0.06, decay: 0.55 },
+      { mult: 4, type: 'sine', peak: 0.02, decay: 0.3 }
     ];
     partials.forEach(p=>{
       const osc = pianoAudioCtx.createOscillator();
@@ -615,20 +629,19 @@ function playPianoNote(noteIdx){
       osc.type = p.type;
       osc.frequency.setValueAtTime(freq * p.mult, now);
       g.gain.setValueAtTime(0.0001, now);
-      g.gain.linearRampToValueAtTime(p.peak, now + 0.006);
-      g.gain.exponentialRampToValueAtTime(0.0008, now + p.decay);
+      g.gain.linearRampToValueAtTime(p.peak, now + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0005, now + p.decay);
       osc.connect(g);
-      g.connect(pianoMasterBus);
+      g.connect(filter);
       osc.start(now);
       osc.stop(now + p.decay + 0.02);
     });
   }catch(e){}
 }
 
-function transposeSpacedChordLine(raw, semis){
+// (2026-07-13) default cue chords to sharps instead of flats; prev: preferFlat
+function transposeSpacedChordLine(raw, semis, preferFlat = false){
   if(!raw || !semis) return raw;
-  const targetKeyIdx = ((2 + semis) % 12 + 12) % 12;
-  const preferFlat = [3, 5, 8, 10].includes(targetKeyIdx);
   let out = '';
   let i = 0;
   while(i < raw.length){
@@ -1225,38 +1238,127 @@ function render(){
 }
 // (2026-07-13) mandatory Google login screen without offline skip; prev: skip auth button
 // (2026-07-13) add guest sign-in & offline fallback; prev: Google sign-in only
-// (2026-07-13) display official app logo in auth view; prev: emoji icon
+// (2026-07-13) revamped auth view with email/guest for mobile APK; prev: basic
 function renderAuthView(){
   app.innerHTML = `
-    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;text-align:center;gap:18px;">
-      <img src="./icons/icon-192.png" alt="Choir Book Pro" style="width:76px;height:76px;border-radius:20px;box-shadow:0 8px 24px rgba(0,0,0,0.45);border:1px solid var(--line);"/>
-      <div>
-        <h1 style="font-size:22px;margin:0 0 8px;">Choir Book</h1>
-        <div class="hint" style="font-size:13px;max-width:280px;line-height:1.4;">Please sign in with Google to access and save your songs, folders, and Mass plans to your account.</div>
+    <div class="auth-container">
+      <div class="auth-card">
+        <img src="./icons/icon-512.png" alt="Choir Book Pro" class="auth-logo"/>
+        <h1 class="auth-title">Choir Book Pro</h1>
+        <div class="auth-subtitle">Liturgical Hymnal &amp; Mass Planner</div>
+        <div class="auth-error" id="auth-error" style="display:none;"></div>
+        <button type="button" class="btn-google" id="btn-google-signin">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
+          <span>Continue with Google</span>
+        </button>
+        <div class="auth-divider"><span>OR WITH EMAIL</span></div>
+        <form class="auth-form" id="auth-email-form" onsubmit="return false;">
+          <input type="email" class="auth-input" id="auth-email" placeholder="Email address" autocomplete="email"/>
+          <input type="password" class="auth-input" id="auth-password" placeholder="Password (min 6 chars)" autocomplete="current-password"/>
+          <div class="auth-actions">
+            <button type="submit" class="btn btn-primary" id="btn-email-signin">Sign In</button>
+            <button type="button" class="btn btn-secondary" id="btn-email-signup">Register</button>
+          </div>
+        </form>
+        <button type="button" class="auth-guest-btn" id="btn-guest-signin">Continue as Guest (Offline Mode) &rarr;</button>
       </div>
-      <button class="btn btn-primary" id="btn-google-signin" style="flex:0 0 auto;padding:14px 32px;font-weight:600;font-size:15px;">Sign in with Google</button>
-      <button class="btn btn-secondary" id="btn-guest-signin" style="flex:0 0 auto;padding:10px 24px;font-size:13px;">Continue as Guest</button>
     </div>
   `;
-  const btn = document.getElementById('btn-google-signin');
-  if(btn){
-    btn.onclick = async ()=>{
+
+  const errBox = document.getElementById('auth-error');
+  const showAuthError = (msg)=>{
+    if(!errBox) return;
+    errBox.textContent = msg;
+    errBox.style.display = 'block';
+  };
+
+  const googleBtn = document.getElementById('btn-google-signin');
+  if(googleBtn){
+    googleBtn.onclick = async ()=>{
+      if(errBox) errBox.style.display = 'none';
+      // (2026-07-13) native Google One Tap on mobile APK without browser; prev: popup
+      if(window.Capacitor && window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable('GoogleOneTap')){
+        try{
+          const res = await window.Capacitor.Plugins.GoogleOneTap.signIn();
+          if(res && res.idToken){
+            const cred = firebase.auth.GoogleAuthProvider.credential(res.idToken);
+            await firebase.auth().signInWithCredential(cred);
+            return;
+          }
+        }catch(err){
+          const msg = (err && (err.message || err.toString())) || '';
+          if(!msg.toLowerCase().includes('cancel') && !msg.toLowerCase().includes('dismiss')){
+            showAuthError(msg || 'Google One Tap sign-in failed.');
+          }
+          return;
+        }
+      }
       try{
         const provider = new firebase.auth.GoogleAuthProvider();
         await firebase.auth().signInWithPopup(provider);
       }catch(e){
-        try{
-          const provider = new firebase.auth.GoogleAuthProvider();
-          await firebase.auth().signInWithRedirect(provider);
-        }catch(err){
-          alert('Sign-in failed: ' + (err.message||'please try again.'));
+        if(e && (e.code === 'auth/operation-not-supported-in-this-environment' || e.code === 'auth/popup-blocked' || e.code === 'auth/disallowed_useragent')){
+          try{
+            const provider = new firebase.auth.GoogleAuthProvider();
+            await firebase.auth().signInWithRedirect(provider);
+          }catch(err){
+            showAuthError('Google sign-in is restricted in this environment. Please sign in with Email or continue as Guest.');
+          }
+        } else {
+          showAuthError(e.message || 'Google sign-in failed. Please try again.');
         }
       }
     };
   }
+
+  const emailForm = document.getElementById('auth-email-form');
+  const emailInp = document.getElementById('auth-email');
+  const passInp = document.getElementById('auth-password');
+
+  if(emailForm){
+    emailForm.onsubmit = async (ev)=>{
+      ev.preventDefault();
+      if(errBox) errBox.style.display = 'none';
+      const email = (emailInp ? emailInp.value : '').trim();
+      const password = (passInp ? passInp.value : '').trim();
+      if(!email || !password){
+        showAuthError('Please enter both email and password.');
+        return;
+      }
+      try{
+        await firebase.auth().signInWithEmailAndPassword(email, password);
+      }catch(e){
+        showAuthError(e.message || 'Failed to sign in. Check your credentials.');
+      }
+    };
+  }
+
+  const signupBtn = document.getElementById('btn-email-signup');
+  if(signupBtn){
+    signupBtn.onclick = async ()=>{
+      if(errBox) errBox.style.display = 'none';
+      const email = (emailInp ? emailInp.value : '').trim();
+      const password = (passInp ? passInp.value : '').trim();
+      if(!email || !password){
+        showAuthError('Please enter an email and password to create an account.');
+        return;
+      }
+      if(password.length < 6){
+        showAuthError('Password must be at least 6 characters.');
+        return;
+      }
+      try{
+        await firebase.auth().createUserWithEmailAndPassword(email, password);
+      }catch(e){
+        showAuthError(e.message || 'Registration failed. Please try again.');
+      }
+    };
+  }
+
   const guestBtn = document.getElementById('btn-guest-signin');
   if(guestBtn){
     guestBtn.onclick = async ()=>{
+      if(errBox) errBox.style.display = 'none';
       try{
         if(typeof firebase !== 'undefined' && firebase.auth){
           await firebase.auth().signInAnonymously();
@@ -1424,6 +1526,34 @@ function parseGSMA(text, overrideFolder){
   });
 
   return { folderName, songs };
+}
+
+// (2026-07-13) export songs to standard .gsma format & trigger download; prev: none
+function generateGSMA(songs, defaultAuthor){
+  return songs.map(s=>{
+    const author = defaultAuthor || (Array.isArray(s.categories) && s.categories[0]) || 'Choir Book Pro';
+    const sGuid = s.importedGuid || uid();
+    const aGuid = uid();
+    const title = (s.title || 'Untitled').replace(/"/g, '\\"');
+    const authorEsc = author.replace(/"/g, '\\"');
+    const delay = s.scrollDelay || 7;
+    const duration = s.viewerScrollSpeed || 30;
+    let extra = '';
+    if(s.tempo) extra += `tempo ${s.tempo}\n`;
+    if(s.referenceUrl) extra += `yt: ${s.referenceUrl}\n`;
+    return `author="${authorEsc}";\nauthorguid="${aGuid}";\nsongguid="${sGuid}";\nsystem="false";\nsong="${title}";\ndelay="${delay}";\nduration="${duration}";\nsender="";\n${extra}${s.body || ''}\n`;
+  }).join('\n');
+}
+function downloadGSMA(filename, content){
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename.endsWith('.gsma') ? filename : `${filename}.gsma`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(()=> URL.revokeObjectURL(url), 2000);
 }
 
 // (2026-07-13) sync bundled mass & misa de gallo gsma files; prev: mass songs only
@@ -1733,18 +1863,30 @@ async function toggleSongIncludeExclude(id){
   }
 }
 
+// (2026-07-13) toggle song checkmark for batch folder assignment; prev: exclude toggle
+function toggleSongChecked(id){
+  const idx = state.checkedSongIds.indexOf(id);
+  if(idx >= 0){
+    state.checkedSongIds.splice(idx, 1);
+  } else {
+    state.checkedSongIds.push(id);
+  }
+  renderListView();
+}
+
+// (2026-07-13) default none checked in edit mode & select specific songs; prev: checked all
 function renderSongRowHtml(s, secMassPart){
   const isExcluded = isSongExcluded(s);
-  const isIncluded = !isExcluded;
+  const isChecked = state.checkedSongIds.includes(s.id);
   const leftControl = state.listEditMode
-    ? `<button class="song-check-btn ${isIncluded?'checked':''}" data-check-id="${s.id}" title="${isIncluded?'Included in swipe order (tap to exclude)':'Excluded from swipe order (tap to include)'}">${iconCheckSmall()}</button>`
+    ? `<button class="song-check-btn ${isChecked?'checked':''}" data-check-id="${s.id}" title="${isChecked?'Deselect':'Select'}">${isChecked?iconCheckSmall():''}</button>`
     : `<span class="fav" style="display:flex;align-items:center;">${s.favorite ? iconStar(true) : iconStar(false)}</span>`;
   const rightControl = state.listEditMode
     ? `<span class="song-drag-handle" data-drag-handle="1" title="Hold and drag to reorder">${iconDragBars()}</span>`
     : '';
   const excludedBadge = isExcluded ? `<span class="excluded-badge" title="Skipped when swiping in this folder">Excluded</span>` : '';
   return `
-    <div class="song-row ${state.listEditMode?'edit-mode':''} ${isExcluded?'is-excluded':''}" data-id="${s.id}" data-section-mp="${escapeHtml(secMassPart||'')}">
+    <div class="song-row ${state.listEditMode?'edit-mode':''} ${isChecked?'is-checked':''} ${isExcluded?'is-excluded':''}" data-id="${s.id}" data-section-mp="${escapeHtml(secMassPart||'')}">
       ${leftControl}
       <div style="flex:1;min-width:0;">
         <div class="song-title">${escapeHtml(s.title)}${excludedBadge}</div>
@@ -1830,14 +1972,19 @@ function renderListView(animateChipScroll){
     </div>` : '';
 
   const headerTitle = state.filterMassPart ? escapeHtml(state.filterMassPart) : (state.filterCat==='All' ? 'My Songbook' : escapeHtml(state.filterCat));
+  const existingListWrap = document.getElementById('list-wrap');
+  const prevListScroll = existingListWrap ? existingListWrap.scrollTop : 0;
 
-  // (2026-07-13) add edit mode toggle button on header & compact rows; prev: folder/profile only
+  // (2026-07-13) add batch-folder button & default none selected in edit mode; prev: delete only
   app.innerHTML = `
     <div class="topbar">
       <button class="icon-btn" id="btn-open-sidebar">${iconMenu()}</button>
       <h1>${headerTitle}</h1>
       <div style="display:flex;align-items:center;gap:2px;position:relative;">
-        ${state.listEditMode && state.checkedSongIds.length > 0 ? `<button class="icon-btn" id="btn-delete-checked" title="Delete Checked Songs" style="color:var(--danger);">${iconTrash()}</button>` : ''}
+        ${state.listEditMode && state.checkedSongIds.length > 0 ? `
+          <button class="icon-btn" id="btn-add-checked-to-folder" title="Add Selected Songs to Folder" style="color:var(--accent);">${iconFolder()}</button>
+          <button class="icon-btn" id="btn-delete-checked" title="Delete Checked Songs" style="color:var(--danger);">${iconTrash()}</button>
+        ` : ''}
         <button class="icon-btn ${state.listEditMode?'active-edit':''}" id="btn-edit-list" title="${state.listEditMode?'Done Editing':'Edit & Reorder Songs'}">${state.listEditMode ? iconCheck() : iconEdit()}</button>
         <button class="icon-btn" id="btn-manage-cats" title="Folders">${iconFolder()}</button>
         <button class="profile-btn" id="btn-profile-menu" title="Profile & Settings">${profileAvatarHtml()}</button>
@@ -1858,29 +2005,45 @@ function renderListView(animateChipScroll){
     <div class="chiprow">${chips}</div>
     ${colorBarHtml}
     <div class="list-wrap" id="list-wrap">${rows}</div>
-    <button class="fab" id="fab-add">+</button>
+    ${/* (2026-07-13) hide batch bar when modal open; prev: text comment in html */ ''}
+    ${!state.modal && state.listEditMode && state.checkedSongIds.length > 0 ? `
+      <div class="batch-action-bar" id="batch-action-bar" style="position:fixed;bottom:calc(18px + env(safe-area-inset-bottom, 0px));left:50%;transform:translateX(-50%);background:var(--bg-elev2);border:1.5px solid var(--accent);border-radius:18px;padding:8px 18px;display:flex;align-items:center;gap:12px;box-shadow:0 12px 36px rgba(0,0,0,0.7);z-index:15;">
+        <span style="font-size:13px;font-weight:700;color:var(--accent);">${state.checkedSongIds.length} selected</span>
+        <button class="btn btn-primary" id="btn-batch-add-folder" style="padding:7px 16px;min-height:36px;font-size:13px;flex:0 0 auto;">Add to Folder</button>
+        <button class="btn btn-secondary" id="btn-batch-export" style="padding:7px 14px;min-height:36px;font-size:13px;flex:0 0 auto;">Export</button>
+      </div>
+    ` : (state.listEditMode ? '' : '<button class="fab" id="fab-add">+</button>')}
     ${sidebarHtml()}
     ${modalHtml()}
   `;
 
+  // (2026-07-13) restore list-wrap scroll position; prev: reset to top
+  const initialLw = document.getElementById('list-wrap');
+  if(initialLw && prevListScroll > 0) initialLw.scrollTop = prevListScroll;
+
   // (2026-07-13) keep search-input focused & highlighted while typing; prev: renderListView()
   const searchInp = document.getElementById('search-input');
-  searchInp.oninput = e=>{
-    state.search = e.target.value;
-    const lw = document.getElementById('list-wrap');
-    if(lw){
-      lw.innerHTML = buildSongListRowsHtml();
-      wireListWrapRows();
-    }
-  };
+  if(searchInp){
+    searchInp.oninput = e=>{
+      state.search = e.target.value;
+      const lw = document.getElementById('list-wrap');
+      if(lw){
+        lw.innerHTML = buildSongListRowsHtml();
+        wireListWrapRows();
+      }
+    };
+  }
   if(wasSearchFocused && searchInp){
     searchInp.focus();
     try{
       if(searchSelStart !== null) searchInp.setSelectionRange(searchSelStart, searchSelEnd);
     }catch(e){}
   }
-  document.getElementById('sort-select').onchange = e=>{ state.sortBy = e.target.value; renderListView(); };
-  document.getElementById('fab-add').onclick = ()=> openEditor(null);
+  const sortSel = document.getElementById('sort-select');
+  if(sortSel) sortSel.onchange = e=>{ state.sortBy = e.target.value; renderListView(); };
+  // (2026-07-13) null check fab-add in edit mode; prev: direct onclick assignment
+  const fabAdd = document.getElementById('fab-add');
+  if(fabAdd) fabAdd.onclick = ()=> openEditor(null);
   const editListBtn = document.getElementById('btn-edit-list');
   if(editListBtn){
     editListBtn.onclick = ()=>{
@@ -1904,6 +2067,27 @@ function renderListView(animateChipScroll){
         showToast(`Deleted ${count} song(s)`);
         renderListView();
       }
+    };
+  }
+  // (2026-07-13) wire batch add to folder modal for selected songs; prev: none
+  const triggerBatchAddFolder = ()=>{
+    if(!state.checkedSongIds.length) return;
+    state.modal = { type: 'batch-add-folder', songIds: [...state.checkedSongIds] };
+    render();
+  };
+  const addFolderBtn = document.getElementById('btn-add-checked-to-folder');
+  if(addFolderBtn) addFolderBtn.onclick = triggerBatchAddFolder;
+  const batchAddBtn = document.getElementById('btn-batch-add-folder');
+  if(batchAddBtn) batchAddBtn.onclick = triggerBatchAddFolder;
+  // (2026-07-13) wire batch export of selected songs; prev: none
+  const batchExpBtn = document.getElementById('btn-batch-export');
+  if(batchExpBtn){
+    batchExpBtn.onclick = ()=>{
+      const selected = state.songs.filter(s=>state.checkedSongIds.includes(s.id));
+      const scope = state.filterCat && state.filterCat !== 'All' ? state.filterCat : 'Selected Songs';
+      const text = generateGSMA(selected, scope);
+      downloadGSMA(`${scope}.gsma`, text);
+      showToast(`Exported ${selected.length} song(s) to "${scope}.gsma"`);
     };
   }
   const paletteBtn = document.getElementById('btn-chip-palette');
@@ -2016,7 +2200,8 @@ function wireSongRowInteractions(el, id, sectionMassPart){
     const toggleCheck = (e)=>{
       e.stopPropagation();
       e.preventDefault();
-      toggleSongIncludeExclude(id);
+      // (2026-07-13) toggle song checkmark for batch folder selection; prev: exclude
+      toggleSongChecked(id);
     };
     checkBtn.addEventListener('click', toggleCheck);
   }
@@ -2153,7 +2338,8 @@ function wireSongRowInteractions(el, id, sectionMassPart){
     cancel();
     if(!moved && !longFired){
       if(state.listEditMode){
-        toggleSongIncludeExclude(id);
+        // (2026-07-13) tap row to toggle batch selection in edit mode; prev: exclude
+        toggleSongChecked(id);
       } else {
         openViewer(id, null, sectionMassPart);
       }
@@ -2165,7 +2351,7 @@ function wireSongRowInteractions(el, id, sectionMassPart){
     cancel();
     if(!longFired){
       if(state.listEditMode){
-        toggleSongIncludeExclude(id);
+        toggleSongChecked(id);
       } else {
         openViewer(id, null, sectionMassPart);
       }
@@ -2231,8 +2417,8 @@ function renderCuePianoFinder(){
   const mode = getCueNoteMode();
   const keyIdx = getCueKeyIdx();
   const activeNoteIdx = mode === '1st' ? (keyIdx + 4) % 12 : keyIdx;
-  const preferFlat = [3, 5, 8, 10].includes(keyIdx);
-  const keyName = spellNote(keyIdx, preferFlat);
+  // (2026-07-13) spell cue key with sharps instead of flats; prev: preferFlat
+  const keyName = spellNote(keyIdx, false);
   const whiteNotes = [
     { idx: 0, label: 'C' },
     { idx: 2, label: 'D' },
@@ -2354,6 +2540,7 @@ function renderMassPartCueCard(song){
       </div>`;
   }
 
+  // (2026-07-13) place find priest key at bottom of cue card; prev: under header
   return `
     <div class="masspart-cue-card" id="masspart-cue-card">
       <div class="masspart-cue-header">
@@ -2367,11 +2554,11 @@ function renderMassPartCueCard(song){
           <button class="cue-toggle-btn" id="btn-toggle-cue" title="Hide Liturgical Cues">${iconCueHide()}<span>Hide</span></button>
         </div>
       </div>
-      ${renderCuePianoFinder()}
       <div class="masspart-cue-body">
         ${cueItemsHtml}
         ${postSongHtml}
       </div>
+      ${renderCuePianoFinder()}
     </div>`;
 }
 
@@ -2552,8 +2739,8 @@ function renderViewer(){
     const mode = getCueNoteMode();
     const keyIdx = getCueKeyIdx();
     const activeNoteIdx = mode === '1st' ? (keyIdx + 4) % 12 : keyIdx;
-    const preferFlat = [3, 5, 8, 10].includes(keyIdx);
-    const keyName = spellNote(keyIdx, preferFlat);
+    // (2026-07-13) spell cue key and chords with sharps; prev: preferFlat
+    const keyName = spellNote(keyIdx, false);
     const semis = getCueSemis();
     document.querySelectorAll('.cue-note-mode-select').forEach(sel=>{ sel.value = mode; });
     document.querySelectorAll('.cue-key-readout').forEach(el=>{ el.textContent = keyName; });
@@ -2562,7 +2749,7 @@ function renderViewer(){
     });
     document.querySelectorAll('.cue-chord-row[data-base-chords]').forEach(row=>{
       const base = row.getAttribute('data-base-chords') || '';
-      const transposed = transposeSpacedChordLine(base, semis);
+      const transposed = transposeSpacedChordLine(base, semis, false);
       row.innerHTML = renderChordLine('>' + transposed);
       row.querySelectorAll('.chord-tok').forEach(el=>{
         el.onclick = ()=>{ state.modal = {type:'chord', chord: el.dataset.chord}; renderViewer(); };
@@ -2578,7 +2765,7 @@ function renderViewer(){
   document.querySelectorAll('.cue-piano-key').forEach(btn=>{
     let touched = false;
     const triggerKey = (e)=>{
-      e.stopPropagation();
+      if(e && e.stopPropagation) e.stopPropagation();
       const noteIdx = parseInt(btn.dataset.pianoNote, 10);
       if(isNaN(noteIdx)) return;
       playPianoNote(noteIdx);
@@ -2588,10 +2775,19 @@ function renderViewer(){
     };
     btn.addEventListener('touchstart', (e)=>{
       touched = true;
+      e.stopPropagation();
       if(e.cancelable) e.preventDefault();
       triggerKey(e);
     }, {passive:false});
+    btn.addEventListener('touchend', (e)=>{
+      e.stopPropagation();
+      if(e.cancelable) e.preventDefault();
+    }, {passive:false});
+    btn.addEventListener('touchmove', (e)=>{
+      e.stopPropagation();
+    }, {passive:false});
     btn.addEventListener('mousedown', (e)=>{
+      e.stopPropagation();
       if(touched){ touched = false; return; }
       triggerKey(e);
     });
@@ -2603,16 +2799,30 @@ function renderViewer(){
       renderViewer();
     };
   }
+  // (2026-07-13) block song swipe on piano & cue card touches; prev: accidental swipe
   const viewerBodyEl = document.querySelector('.viewer-body');
   if(viewerBodyEl){
-    let startX = 0, startY = 0;
+    let startX = 0, startY = 0, startTime = 0;
     viewerBodyEl.addEventListener('touchstart', (e)=>{
+      if(e.target.closest('#masspart-cue-card, .cue-piano-wrap, .cue-piano-key, .speed-slider-wrap, .scroll-square, button, select, input, textarea, a, .melody-staff-section')){
+        startX = 0; startY = 0; startTime = 0;
+        return;
+      }
       if(e.touches && e.touches.length === 1){
         startX = e.touches[0].clientX;
         startY = e.touches[0].clientY;
+        startTime = Date.now();
       }
     }, {passive:true});
     viewerBodyEl.addEventListener('touchend', (e)=>{
+      if(!startTime || !startX || (Date.now() - startTime > 700)){
+        startX = 0; startY = 0; startTime = 0;
+        return;
+      }
+      if(e.target.closest('#masspart-cue-card, .cue-piano-wrap, .cue-piano-key, .speed-slider-wrap, .scroll-square, button, select, input, textarea, a, .melody-staff-section')){
+        startX = 0; startY = 0; startTime = 0;
+        return;
+      }
       if(e.changedTouches && e.changedTouches.length === 1){
         const dx = e.changedTouches[0].clientX - startX;
         const dy = e.changedTouches[0].clientY - startY;
@@ -2624,6 +2834,7 @@ function renderViewer(){
           }
         }
       }
+      startX = 0; startY = 0; startTime = 0;
     }, {passive:true});
   }
   document.onkeydown = (e)=>{
@@ -3407,6 +3618,7 @@ function sidebarHtml(){
         ${massPartItems}
         <div class="side-item side-add" id="side-add-masspart"><span>+ New Mass Part</span></div>
         <div class="side-item side-add" id="side-import-gsma" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;">${iconImport()}</span><span style="flex:1;text-align:left;">Import .gsma / .gsm</span><input type="file" id="gsma-file-input" accept=".gsma,.gsm,.txt" style="display:none;"/></div>
+        <div class="side-item side-add" id="side-export-gsma" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;">${iconExport()}</span><span style="flex:1;text-align:left;">Export .gsma</span></div>
         <div style="flex:1"></div>
         <div class="sidebar-foot">
           ${Store.mode==='firebase' ? `<div class="hint">Signed in &middot; syncing to your account</div><button class="btn btn-secondary" id="btn-signout" style="margin-top:8px;">Sign out</button>` :
@@ -3534,6 +3746,16 @@ function wireSidebar(){
       };
       reader.onerror = ()=> alert('Could not read that file.');
       reader.readAsText(file);
+    };
+  }
+  // (2026-07-13) wire sidebar export gsma button; prev: none
+  const exportBtn = document.getElementById('side-export-gsma');
+  if(exportBtn){
+    exportBtn.onclick = ()=>{
+      closeSidebar(()=>{
+        state.modal = { type: 'export-gsma' };
+        render();
+      });
     };
   }
   const signOutBtn = document.getElementById('btn-signout');
@@ -3776,7 +3998,56 @@ function modalHtml(){
         </div>
       </div>`;
   }
-// (2026-07-13) move metronome to adjust menu; prev: metronome on top playbar
+  // (2026-07-13) modal for batch adding selected songs to a folder; prev: none
+  if(state.modal.type==='batch-add-folder'){
+    const count = (state.modal.songIds || []).length;
+    const folderChips = state.categories.map(c=>{
+      const ct = getFolderTheme(c);
+      return `<button class="cat-toggle" data-batch-folder="${escapeHtml(c)}" style="border-color:${ct.dim};background:transparent;cursor:pointer;display:inline-flex;align-items:center;padding:7px 12px;border-radius:20px;font-size:13px;font-weight:600;"><span class="chip-dot" style="background:${ct.swatch};margin-right:7px;"></span>${escapeHtml(c)}</button>`;
+    }).join('');
+    return `
+      <div class="modal-backdrop" id="modal-bg">
+        <div class="modal">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <h3 style="margin:0;">Add to Folder</h3>
+            <button class="icon-btn" id="modal-x" style="width:28px;height:28px;">${iconClose()}</button>
+          </div>
+          <div style="font-size:12px;color:var(--text-dim);margin-bottom:14px;">Select destination folder for <strong>${count}</strong> selected song(s):</div>
+          <div class="cat-toggle-wrap" style="display:flex;flex-wrap:wrap;gap:8px;max-height:260px;overflow-y:auto;margin-bottom:12px;">
+            ${folderChips || '<div style="color:var(--text-dim);font-size:12px;">No folders created yet.</div>'}
+          </div>
+        </div>
+      </div>`;
+  }
+  // (2026-07-13) export gsma modal dialog; prev: none
+  if(state.modal.type==='export-gsma'){
+    const currentScope = state.filterCat || 'All';
+    const folderSongs = currentScope === 'All' ? state.songs : state.songs.filter(s=>(s.categories||[]).includes(currentScope));
+    return `
+      <div class="modal-backdrop center" id="modal-bg">
+        <div class="modal card" style="max-width:320px;">
+          <button class="icon-btn modal-close" id="modal-x">${iconClose()}</button>
+          <h3 style="text-align:center;">Export .gsma</h3>
+          <div style="font-size:12px;color:var(--text-dim);margin-bottom:14px;text-align:center;">
+            Export songs in standard .gsma format compatible with backup and import.
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            ${currentScope !== 'All' ? `
+              <button class="btn btn-primary" id="btn-export-current-scope" style="width:100%;padding:10px;">
+                Export "${escapeHtml(currentScope)}" (${folderSongs.length})
+              </button>
+            ` : ''}
+            <button class="btn ${currentScope==='All'?'btn-primary':'btn-secondary'}" id="btn-export-all-songs" style="width:100%;padding:10px;">
+              Export All Songs (${state.songs.length})
+            </button>
+          </div>
+          <div style="margin-top:14px;">
+            <button class="btn btn-secondary" id="adj-done" style="width:100%;">Done</button>
+          </div>
+        </div>
+      </div>`;
+  }
+// (2026-07-13) adjust modal autoscroll speed & done btn; prev: text size only
   if(state.modal.type==='adjust'){
     const song = state.songs.find(s=>s.id===state.modal.id);
     if(!song) return '';
@@ -3786,7 +4057,7 @@ function modalHtml(){
     for(let i=0;i<beatsPerBar;i++) beatDots += `<span class="beat-dot" data-beat="${i}"></span>`;
     return `
       <div class="modal-backdrop center" id="modal-bg">
-        <div class="modal card" style="max-width:300px;">
+        <div class="modal card" style="max-width:310px;">
           <button class="icon-btn modal-close" id="modal-x">${iconClose()}</button>
           <h3 style="text-align:center;">Adjustments</h3>
           <div class="field">
@@ -3809,14 +4080,21 @@ function modalHtml(){
             </div>
           </div>
           <div class="field">
-            <label>Text size (pinch on the chart to zoom too)</label>
+            <label>Text size (${song.viewerFontSize||15}px)</label>
             <div style="display:flex;gap:8px;">
               <button class="toolbtn" style="flex:1;" id="adj-zoom-down">A&minus;</button>
               <button class="toolbtn" style="flex:1;" id="adj-zoom-up">A+</button>
             </div>
           </div>
-          <div class="field" style="margin-bottom:0;">
-            <button class="btn btn-secondary" id="adj-edit" style="width:100%;">Edit song details</button>
+          <div class="field">
+            <label>Autoscroll Speed (<span id="adj-speed-val">${song.viewerScrollSpeed||30}</span>)</label>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <input type="range" id="adj-speed-slider" min="5" max="100" value="${song.viewerScrollSpeed||30}" style="flex:1;">
+            </div>
+          </div>
+          <div style="margin-top:14px;display:flex;gap:8px;">
+            <button class="btn btn-secondary" id="adj-edit" style="flex:1;">Edit Details</button>
+            <button class="btn btn-primary" id="adj-done" style="flex:1;">Done</button>
           </div>
         </div>
       </div>`;
@@ -3930,6 +4208,7 @@ function wireModal(){
   const bg = document.getElementById('modal-bg');
   if(!bg) return;
   // (2026-07-13) show SongTitle saved toast when closing song-context modal; prev: silent close
+  // (2026-07-13) reliable modal backdrop, done & close button dismissal; prev: stuck modal
   const closeActiveModal = ()=>{
     const closingModal = state.modal;
     state.modal = null;
@@ -3939,9 +4218,21 @@ function wireModal(){
       if(s) showToast(`${s.title} saved.`);
     }
   };
-  bg.onclick = (e)=>{ if(e.target===bg){ closeActiveModal(); } };
+  bg.onclick = (e)=>{
+    if(e.target===bg || e.target.closest('#modal-x, .modal-close, #adj-done, [data-modal-close]')){
+      closeActiveModal();
+    }
+  };
+  bg.ontouchend = (e)=>{
+    if(e.target===bg){
+      e.preventDefault();
+      closeActiveModal();
+    }
+  };
   const x = document.getElementById('modal-x');
   if(x) x.onclick = ()=>{ closeActiveModal(); };
+  const doneBtn = document.getElementById('adj-done');
+  if(doneBtn) doneBtn.onclick = ()=>{ closeActiveModal(); };
   document.querySelectorAll('.diagram-tabs button').forEach(b=>{
     b.onclick = ()=>{ state.modal.tab = b.dataset.tab; render(); };
   });
@@ -4242,6 +4533,55 @@ function wireModal(){
       await Store.saveSong(song);
     };
   });
+  // (2026-07-13) wire batch add selected songs to folder; prev: none
+  document.querySelectorAll('[data-batch-folder]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const cat = btn.dataset.batchFolder;
+      const songIds = (state.modal && state.modal.songIds) || [];
+      for(const sid of songIds){
+        const s = state.songs.find(item=>item.id===sid);
+        if(s){
+          if(!Array.isArray(s.categories)) s.categories = [];
+          if(!s.categories.includes(cat)){
+            s.categories.push(cat);
+            await Store.saveSong(s);
+          }
+        }
+      }
+      showToast(`${songIds.length} song(s) added to "${cat}"`);
+      state.modal = null;
+      state.checkedSongIds = [];
+      state.listEditMode = false;
+      render();
+    };
+  });
+  // (2026-07-13) wire export gsma modal download handlers; prev: none
+  const expScopeBtn = document.getElementById('btn-export-current-scope');
+  if(expScopeBtn){
+    expScopeBtn.onclick = ()=>{
+      const scope = state.filterCat || 'Folder';
+      const songs = state.songs.filter(s=>(s.categories||[]).includes(scope));
+      const text = generateGSMA(songs, scope);
+      downloadGSMA(`${scope}.gsma`, text);
+      showToast(`Exported ${songs.length} song(s) to "${scope}.gsma"`);
+      state.modal = null;
+      render();
+    };
+  }
+  const expAllBtn = document.getElementById('btn-export-all-songs');
+  if(expAllBtn){
+    expAllBtn.onclick = ()=>{
+      const text = generateGSMA(state.songs, 'All Songs');
+      downloadGSMA('Choir Book Pro - All Songs.gsma', text);
+      showToast(`Exported all ${state.songs.length} song(s)`);
+      state.modal = null;
+      render();
+    };
+  }
+  const modalCancelBtn = document.getElementById('modal-cancel');
+  if(modalCancelBtn){
+    modalCancelBtn.onclick = ()=>{ state.modal = null; render(); };
+  }
   const metroBtn = document.getElementById('btn-metro');
   if(metroBtn) metroBtn.onclick = ()=>{
     const song = state.songs.find(s=>s.id===state.modal.id);
@@ -4271,18 +4611,41 @@ function wireModal(){
     song.transposeOffset = 0;
     await Store.saveSong(song); render();
   };
+  // (2026-07-13) persist zoom & scroll speed to db in adjust modal; prev: font only
   const adjZoomUp = document.getElementById('adj-zoom-up');
   if(adjZoomUp) adjZoomUp.onclick = async ()=>{
     const song = state.songs.find(s=>s.id===state.modal.id);
+    if(!song) return;
     song.viewerFontSize = Math.min(36, (song.viewerFontSize||15)+2);
+    const idx = state.songs.findIndex(s=>s.id===song.id);
+    if(idx>=0) state.songs[idx] = song;
     await Store.saveSong(song); render();
   };
   const adjZoomDown = document.getElementById('adj-zoom-down');
   if(adjZoomDown) adjZoomDown.onclick = async ()=>{
     const song = state.songs.find(s=>s.id===state.modal.id);
+    if(!song) return;
     song.viewerFontSize = Math.max(10, (song.viewerFontSize||15)-2);
+    const idx = state.songs.findIndex(s=>s.id===song.id);
+    if(idx>=0) state.songs[idx] = song;
     await Store.saveSong(song); render();
   };
+  const adjSpeedSlider = document.getElementById('adj-speed-slider');
+  if(adjSpeedSlider){
+    adjSpeedSlider.oninput = async (e)=>{
+      const newSpeed = parseInt(e.target.value, 10) || 30;
+      const song = state.songs.find(s=>s.id===state.modal.id);
+      if(!song) return;
+      song.viewerScrollSpeed = newSpeed;
+      const idx = state.songs.findIndex(s=>s.id===song.id);
+      if(idx>=0) state.songs[idx] = song;
+      const valLabel = document.getElementById('adj-speed-val');
+      if(valLabel) valLabel.textContent = newSpeed;
+      const onScreenSlider = document.getElementById('speed-range-slider');
+      if(onScreenSlider) onScreenSlider.value = newSpeed;
+      await Store.saveSong(song);
+    };
+  }
 
   // ---- new-setlist ----
   const slTypeTemplate = document.getElementById('new-sl-type-template');
@@ -4401,6 +4764,8 @@ function iconStar(filled){
 }
 function iconMusic(){ return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`; }
 function iconImport(){ return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`; }
+// (2026-07-13) export arrow icon; prev: none
+function iconExport(){ return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`; }
 function iconCross(){ return `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`; }
 function iconSpeedArrows(){ return `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 4l-5 6h10l-5-6zm0 16l5-6H7l5 6z"/></svg>`; }
 function iconSetlist(){ return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`; }
@@ -4478,6 +4843,9 @@ function subscribeRealtimeSync(){
             }
           } else {
             const val = change.doc.data().value;
+            if(localStorage.getItem(docId) === val){
+              return;
+            }
             LocalAdapter.set(docId, val);
             if(docId.startsWith('song:')){
               try{
@@ -4504,14 +4872,17 @@ function subscribeRealtimeSync(){
             }
           }
         });
-        if(changed && !state.loading){ render(); }
+        // (2026-07-13) skip render on local snapshot echo or active modal; prev: render()
+        if(changed && !state.loading && !state.modal){ render(); }
       }, (err) => { console.warn('Realtime snapshot notice:', err); });
   }catch(e){ console.error('Snapshot error', e); }
 }
 
-// (2026-07-13) non-blocking boot render for 0ms instant display; prev: blocking await
+// (2026-07-13) handle redirect auth result & local persistence; prev: listener only
 (async function boot(){
   if(FIREBASE_READY){
+    try{ await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){}
+    try{ await firebase.auth().getRedirectResult(); }catch(e){}
     firebase.auth().onAuthStateChanged(async (user)=>{
       firebaseUser = user;
       selectAdapter();

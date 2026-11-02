@@ -4,7 +4,8 @@ android {
     namespace = "com.choirbookpro.app"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.choirbookpro.app"
+        // (2026-07-13) match package with google-services.json; prev: com.choirbookpro.app
+        applicationId "com.choirbook.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
@@ -36,6 +37,8 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+    // (2026-07-13) add play-services-auth for native Google One Tap; prev: none
+    implementation "com.google.android.gms:play-services-auth:21.2.0"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
