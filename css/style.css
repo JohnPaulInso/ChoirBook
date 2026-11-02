@@ -69,8 +69,9 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
   border-radius:9px;padding:6px 8px;font-size:12px;font-family:inherit;transition:border-color .15s ease;}
 .searchrow select:focus{outline:none;border-color:var(--accent);}
 
-/* ---------- song list ---------- */
-.list-wrap{flex:1;overflow-y:auto;position:relative;-webkit-overflow-scrolling:touch;scroll-behavior:smooth;}
+/* (2026-07-13) hide scrollbar gutter in list-wrap; prev: default scrollbar */
+.list-wrap{flex:1;overflow-y:auto;position:relative;-webkit-overflow-scrolling:touch;scroll-behavior:smooth;scrollbar-width:none;-ms-overflow-style:none;}
+.list-wrap::-webkit-scrollbar{display:none;width:0;height:0;}
 .song-row{display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--line);cursor:pointer;
   transition:background-color .12s ease;}
 .song-row:active{background:var(--bg-elev);}
@@ -89,10 +90,10 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
 .song-sub{font-size:11.5px;color:var(--text-dim);margin-top:2px;}
 /* Section container scoping sticky headers */
 .song-section-group{position:relative;}
-/* (2026-07-13) prevent sticky section header overlap; prev: unwrapped sticky */
-.letter-divider{position:sticky;top:0;background:var(--bg-elev2);color:var(--accent);
+/* (2026-07-13) remove top & right gaps on letter-divider; prev: gaps */
+.letter-divider{position:sticky;top:-1px;width:100%;box-sizing:border-box;background:var(--bg-elev2);color:var(--accent);
   font-size:11px;font-weight:700;letter-spacing:1px;padding:6px 14px;z-index:2;
-  border-bottom:1px solid var(--line);}
+  border-bottom:1px solid var(--line);box-shadow:0 -1px 0 var(--bg-elev2);}
 .empty-state{padding:60px 24px;text-align:center;color:var(--text-dim);font-size:14px;line-height:1.6;}
 
 /* (2026-07-13) tone down fab shadow & add bottom safe area offset; prev: bright orange glow */

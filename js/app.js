@@ -461,11 +461,14 @@ const FirestoreAdapter = {
       return snap.docs.map(d=>d.id).filter(id=>id.startsWith(prefix));
     }catch(e){ console.error('Firestore list failed', e); return LocalAdapter.list(prefix); }
   },
+  // (2026-07-13) cache fetched doc value to LocalAdapter; prev: direct return
   async get(key){
     try{
       const doc = await this._col().doc(key).get();
       if(!doc.exists) return LocalAdapter.get(key);
-      return {key, value: doc.data().value};
+      const val = doc.data().value;
+      LocalAdapter.set(key, val);
+      return {key, value: val};
     }catch(e){ console.error('Firestore get failed', e); return LocalAdapter.get(key); }
   },
   async getAll(prefix){
@@ -531,30 +534,47 @@ const Store = {
     await adapter.set('song:'+song.id, JSON.stringify(song));
   },
   async deleteSong(id){ await adapter.delete('song:'+id); },
-  // (2026-07-13) default categories to empty list for new accounts; prev: Uncategorized
+  // (2026-07-13) fallback to LocalAdapter for instant category cache; prev: none
   async getCategories(){
     const r = await adapter.get('meta:categories');
-    if(!r) return [];
+    if(!r){
+      const loc = await LocalAdapter.get('meta:categories');
+      if(!loc) return [];
+      try{ return JSON.parse(loc.value); }catch(e){ return []; }
+    }
     try{ return JSON.parse(r.value); }catch(e){ return []; }
   },
   async saveCategories(cats){ await adapter.set('meta:categories', JSON.stringify(cats)); },
+  // (2026-07-13) fallback to LocalAdapter for massparts cache; prev: none
   async getMassParts(){
     const r = await adapter.get('meta:massparts');
-    if(!r) return null;
+    if(!r){
+      const loc = await LocalAdapter.get('meta:massparts');
+      if(!loc) return null;
+      try{ return JSON.parse(loc.value); }catch(e){ return null; }
+    }
     try{ return JSON.parse(r.value); }catch(e){ return null; }
   },
   async saveMassParts(parts){ await adapter.set('meta:massparts', JSON.stringify(parts)); },
-  // (2026-07-13) store & load 8-color folder themes; prev: none
+  // (2026-07-13) fallback to LocalAdapter for folderColors cache; prev: none
   async getFolderColors(){
     const r = await adapter.get('meta:folderColors');
-    if(!r) return {};
+    if(!r){
+      const loc = await LocalAdapter.get('meta:folderColors');
+      if(!loc) return {};
+      try{ return JSON.parse(loc.value) || {}; }catch(e){ return {}; }
+    }
     try{ return JSON.parse(r.value) || {}; }catch(e){ return {}; }
   },
   async saveFolderColors(colors){ await adapter.set('meta:folderColors', JSON.stringify(colors || {})); },
-  // (2026-07-13) persist cue chord spacings to database; prev: localStorage only
+  // (2026-07-13) fallback to LocalAdapter for cue chords cache; prev: none
   async getCueChords(){
     const r = await adapter.get('meta:cueChordsV2');
-    if(!r) return {};
+    if(!r){
+      const loc = await LocalAdapter.get('meta:cueChordsV2');
+      if(!loc) return {};
+      try{ return JSON.parse(loc.value) || {}; }catch(e){ return {}; }
+    }
     try{ return JSON.parse(r.value) || {}; }catch(e){ return {}; }
   },
   async saveCueChords(map){ await adapter.set('meta:cueChordsV2', JSON.stringify(map || {})); },
@@ -957,25 +977,41 @@ async function persistMigratedChordSongs(){
   }
 }
 
-// (2026-07-13) instant load from local cache with timeout protection; prev: un-timed network wait
+// (2026-07-13) read cached meta and songs from LocalAdapter; prev: Store network
 async function loadAll(){
   try{
     const cachedItems = await LocalAdapter.getAll('song:');
+    const cachedCats = await LocalAdapter.get('meta:categories');
+    const cachedColors = await LocalAdapter.get('meta:folderColors');
+    const cachedChords = await LocalAdapter.get('meta:cueChordsV2');
+    const cachedParts = await LocalAdapter.get('meta:massparts');
+    const cachedSetlists = await LocalAdapter.getAll('setlist:');
+    if(cachedCats){
+      try{ state.categories = JSON.parse(cachedCats.value) || []; }catch(e){}
+    }
+    if(cachedColors){
+      try{ state.folderColors = JSON.parse(cachedColors.value) || {}; }catch(e){}
+    }
+    if(cachedChords){
+      try{ state.cueChords = JSON.parse(cachedChords.value) || {}; }catch(e){}
+    }
+    if(cachedParts){
+      try{ state.massParts = JSON.parse(cachedParts.value) || DEFAULT_MASS_PARTS.slice(); }catch(e){}
+    }
+    applyFolderTheme(state.filterCat);
+    if(cachedSetlists && cachedSetlists.length > 0){
+      state.setlists = cachedSetlists.map(it=>{
+        try{ return normalizeSetlist(JSON.parse(it.value)); }catch(e){ return null; }
+      }).filter(Boolean);
+    }
     if(cachedItems && cachedItems.length > 0){
       state.songs = cachedItems.map(it=>{
         try{ return normalizeSong(JSON.parse(it.value)); }catch(e){ return null; }
       }).filter(Boolean);
       persistMigratedChordSongs();
-      state.categories = await Store.getCategories();
-      state.folderColors = await Store.getFolderColors();
-      state.cueChords = await Store.getCueChords();
-      applyFolderTheme(state.filterCat);
-      const savedParts = await Store.getMassParts();
-      state.massParts = savedParts || DEFAULT_MASS_PARTS.slice();
-      const cachedSetlists = await LocalAdapter.getAll('setlist:');
-      state.setlists = cachedSetlists.map(it=>{
-        try{ return normalizeSetlist(JSON.parse(it.value)); }catch(e){ return null; }
-      }).filter(Boolean);
+      state.loading = false;
+      render();
+    } else if(state.categories.length > 0){
       state.loading = false;
       render();
     } else {
@@ -1000,10 +1036,10 @@ async function loadAll(){
     }
     // (2026-07-13) sync liturgical dialogue sections & metadata; prev: add if missing
     syncLiturgicalDialogues(true);
-    if(cats) state.categories = cats;
-    if(parts) state.massParts = parts;
-    if(fColors) state.folderColors = fColors;
-    if(cChords) state.cueChords = cChords;
+    if(cats){ state.categories = cats; LocalAdapter.set('meta:categories', JSON.stringify(cats)); }
+    if(parts){ state.massParts = parts; LocalAdapter.set('meta:massparts', JSON.stringify(parts)); }
+    if(fColors){ state.folderColors = fColors; LocalAdapter.set('meta:folderColors', JSON.stringify(fColors)); }
+    if(cChords){ state.cueChords = cChords; LocalAdapter.set('meta:cueChordsV2', JSON.stringify(cChords)); }
     applyFolderTheme(state.filterCat);
     if(rawSetlists) state.setlists = rawSetlists.map(normalizeSetlist);
   }catch(err){
@@ -1022,6 +1058,57 @@ function normalizeSetlist(sl){
   if(sl.basedOnTemplateId===undefined) sl.basedOnTemplateId = null;
   return sl;
 }
+
+// (2026-07-13) synchronously hydrate state from local storage; prev: none
+function hydrateInitialState(){
+  try{
+    const cachedCats = localStorage.getItem('meta:categories');
+    if(cachedCats){
+      const parsed = JSON.parse(cachedCats);
+      if(Array.isArray(parsed) && parsed.length > 0) state.categories = parsed;
+    }
+    const cachedColors = localStorage.getItem('meta:folderColors');
+    if(cachedColors){
+      const parsed = JSON.parse(cachedColors);
+      if(parsed && typeof parsed === 'object') state.folderColors = parsed;
+    }
+    const cachedParts = localStorage.getItem('meta:massparts');
+    if(cachedParts){
+      const parsed = JSON.parse(cachedParts);
+      if(Array.isArray(parsed) && parsed.length > 0) state.massParts = parsed;
+    }
+    const cachedChords = localStorage.getItem('meta:cueChordsV2') || localStorage.getItem('meta:cueChords');
+    if(cachedChords){
+      const parsed = JSON.parse(cachedChords);
+      if(parsed && typeof parsed === 'object') state.cueChords = parsed;
+    }
+    const savedFilter = localStorage.getItem('ui:filterCat');
+    if(savedFilter && (savedFilter === 'All' || savedFilter === 'Favorites' || state.categories.includes(savedFilter))){
+      state.filterCat = savedFilter;
+    }
+    const songs = [];
+    const setlists = [];
+    for(let i=0; i<localStorage.length; i++){
+      const k = localStorage.key(i);
+      if(!k) continue;
+      if(k.startsWith('song:')){
+        try{
+          const s = JSON.parse(localStorage.getItem(k));
+          if(s && s.id) songs.push(normalizeSong(s));
+        }catch(e){}
+      } else if(k.startsWith('setlist:')){
+        try{
+          const sl = JSON.parse(localStorage.getItem(k));
+          if(sl && sl.id) setlists.push(normalizeSetlist(sl));
+        }catch(e){}
+      }
+    }
+    if(songs.length > 0) state.songs = songs;
+    if(setlists.length > 0) state.setlists = setlists;
+    applyFolderTheme(state.filterCat);
+  }catch(e){}
+}
+hydrateInitialState();
 
 // (2026-07-13) left-indented chord rows in liturgical dialogues; prev: unindented chords
 function getLiturgicalDialogueSongs(){
@@ -1213,8 +1300,9 @@ function syncLiturgicalDialogues(persist){
 }
 if(state.songs.length > 0) syncLiturgicalDialogues(false);
 
-// (2026-07-13) remove default sample songs from seedIfEmpty; prev: seeded 2 samples
+// (2026-07-13) skip seed check if songs are already cached; prev: listSongs check
 async function seedIfEmpty(){
+  if(state.songs && state.songs.length > 0) return;
   const keys = await Store.listSongs();
   if(keys.length===0){
     for(const ls of getLiturgicalDialogueSongs()){
@@ -2159,10 +2247,11 @@ function renderListView(animateChipScroll){
   }
   document.getElementById('btn-manage-cats').onclick = ()=>{ state.modal = {type:'categories'}; renderListView(); };
   document.getElementById('btn-open-sidebar').onclick = ()=>{ state.sidebarOpen = true; renderListView(); };
-  // (2026-07-13) scroll clicked/active chip to start of chiprow view; prev: reset scrollLeft
+  // (2026-07-13) persist selected filter category to cache; prev: state only
   document.querySelectorAll('.chip[data-cat]').forEach(el=>{
     el.onclick = ()=>{
       state.filterCat = el.dataset.cat;
+      localStorage.setItem('ui:filterCat', state.filterCat);
       state.filterMassPart = null;
       applyFolderTheme(state.filterCat);
       renderListView(true);
@@ -4869,6 +4958,8 @@ function subscribeRealtimeSync(){
               try{ state.massParts = JSON.parse(val); changed = true; }catch(e){}
             } else if(docId === 'meta:folderColors'){
               try{ state.folderColors = JSON.parse(val) || {}; applyFolderTheme(state.filterCat); changed = true; }catch(e){}
+            } else if(docId === 'meta:cueChordsV2' || docId === 'meta:cueChords'){
+              try{ state.cueChords = JSON.parse(val) || {}; changed = true; }catch(e){}
             }
           }
         });
@@ -4878,9 +4969,14 @@ function subscribeRealtimeSync(){
   }catch(e){ console.error('Snapshot error', e); }
 }
 
-// (2026-07-13) handle redirect auth result & local persistence; prev: listener only
+// (2026-07-13) instant cache render & non-blocking sync; prev: blocking sync
 (async function boot(){
   if(FIREBASE_READY){
+    if(state.songs.length > 0 || state.categories.length > 0 || firebase.auth().currentUser){
+      state.view = 'list';
+      state.loading = false;
+      render();
+    }
     try{ await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){}
     try{ await firebase.auth().getRedirectResult(); }catch(e){}
     firebase.auth().onAuthStateChanged(async (user)=>{
@@ -4891,7 +4987,7 @@ function subscribeRealtimeSync(){
         state.view = 'list';
         state.loading = false;
         render();
-        try{ await seedIfEmpty(); }catch(e){}
+        seedIfEmpty().catch(()=>{});
         loadAll().catch(()=>{});
       } else {
         if(unsubscribeSnapshot){ unsubscribeSnapshot(); unsubscribeSnapshot = null; }
@@ -4903,7 +4999,7 @@ function subscribeRealtimeSync(){
   } else {
     state.loading = false;
     render();
-    try{ await seedIfEmpty(); }catch(e){}
+    seedIfEmpty().catch(()=>{});
     loadAll().catch(()=>{});
   }
 })();

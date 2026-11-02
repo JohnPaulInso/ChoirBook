@@ -1,5 +1,5 @@
-// (2026-07-13) bump sw shell cache to v42; prev: v41
-const CACHE_NAME = 'songbook-shell-v42';
+// (2026-07-13) bump sw shell cache to v44; prev: v43
+const CACHE_NAME = 'songbook-shell-v44';
 const SHELL_FILES = [
   './index.html',
   './css/style.css',
@@ -29,14 +29,21 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+  const url = new URL(event.request.url);
+  if (url.origin.includes('firestore.googleapis.com') || url.origin.includes('identitytoolkit.googleapis.com') || url.origin.includes('securetoken.googleapis.com')) {
+    return;
+  }
   event.respondWith(
-    fetch(event.request).then((response) => {
-      if (response.ok && event.request.url.startsWith(self.location.origin)) {
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-      }
-      return response;
-    }).catch(() => caches.match(event.request))
+    caches.match(event.request, { ignoreSearch: true }).then((cachedResponse) => {
+      const fetchPromise = fetch(event.request).then((networkResponse) => {
+        if (networkResponse && networkResponse.status === 200) {
+          const clone = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        }
+        return networkResponse;
+      }).catch(() => cachedResponse);
+      return cachedResponse || fetchPromise;
+    })
   );
 });
 
