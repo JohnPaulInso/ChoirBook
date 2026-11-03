@@ -202,6 +202,13 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
 .cue-chord-input{width:100%;box-sizing:border-box;font-family:'JetBrains Mono',monospace;font-size:12.5px;font-weight:700;color:var(--chord);background:rgba(255,255,255,0.04);border:1px dashed var(--accent);border-radius:5px;padding:2px 4px;outline:none;letter-spacing:0.1px;}
 .cue-chord-text{color:var(--chord);font-weight:700;background:none;border:none;padding:0;cursor:pointer;}
 .cue-response{color:var(--text);font-weight:700;font-size:12.5px;line-height:1.45;}
+/* (2026-07-13) prayer dialogue cue item styling; prev: unaligned separate lines */
+.dialogue-cue-item{margin:6px 0 10px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;flex-direction:column;gap:5px;}
+.dialogue-cue-item:last-child{border-bottom:none;margin-bottom:4px;}
+.chart-body .cue-priest{font-size:1em;line-height:1.5;color:var(--text-dim);}
+.chart-body .cue-response{font-size:1em;line-height:1.5;color:var(--text);font-weight:700;}
+.chart-body .cue-chord-row{font-size:1em;line-height:1.35;font-family:'JetBrains Mono',monospace;color:var(--chord);font-weight:700;}
+.chart-body .dialogue-badge{font-size:0.75em;vertical-align:middle;}
 .badge-svg{flex-shrink:0;display:inline-block;vertical-align:-1px;}
 .chart-meta-inline b{color:var(--text);font-weight:700;}
 .chart-meta-inline span{margin-right:12px;display:inline-block;}

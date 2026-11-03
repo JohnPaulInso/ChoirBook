@@ -325,15 +325,15 @@ function classifyLine(line){
 function escapeHtml(s){
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
-// (2026-07-13) use cross icon for priest & people icon for response; prev: arrow/note
-function renderPriestLine(line){
+// (2026-07-13) extract dialogue role & text for priest & response; prev: inline formatting
+function extractPriestData(line){
   const m = /^([\u27a4>]\s*)?((?:Priest|Presider|Celebrant)(?:\/Reader)?)\s*:?\s*(.*)$/i.exec(line.trim());
   const role = (m && m[2]) ? m[2] : 'Priest';
   const text = m ? (m[3] || '') : line;
-  return `<div class="lyric-line"><span class="dialogue-badge priest-badge">${iconPriestCross()} ${escapeHtml(role)}</span> ${escapeHtml(text)}</div>`;
+  return { role, text };
 }
-// (2026-07-13) parse All dialogue line requiring colon or symbol; prev: matched any all
-function renderResponseLine(line){
+
+function extractResponseData(line){
   const trimmed = line.trim();
   let role = 'Response', text = trimmed;
   const m = /^(?:([\u2669\u211fR]\s*)?(Response|People)\s*:?\s*(.*)|(?:[\u2669\u211fR]\s*)?(All)\s*:\s*(.*)|([\u2669\u211fR])\s*(All)\s*:?\s*(.*))$/i.exec(trimmed);
@@ -341,7 +341,17 @@ function renderResponseLine(line){
     role = m[2] || m[4] || m[7] || 'Response';
     text = m[3] !== undefined ? m[3] : (m[5] !== undefined ? m[5] : (m[8] !== undefined ? m[8] : ''));
   }
-  return `<div class="lyric-line"><span class="dialogue-badge response-badge">${iconPeopleGroup()} ${escapeHtml(role)}</span> ${escapeHtml(text)}</div>`;
+  return { role, text };
+}
+
+function renderPriestLine(line){
+  const p = extractPriestData(line);
+  return `<div class="cue-line cue-priest"><span class="dialogue-badge priest-badge">${iconPriestCross()} ${escapeHtml(p.role)}</span><span class="cue-text">${escapeHtml(p.text)}</span></div>`;
+}
+
+function renderResponseLine(line){
+  const r = extractResponseData(line);
+  return `<div class="cue-line cue-response"><span class="dialogue-badge response-badge">${iconPeopleGroup()} ${escapeHtml(r.role)}</span><span class="cue-text">${escapeHtml(r.text)}</span></div>`;
 }
 
 // (2026-07-13) song flag palette & display helpers; prev: emoji title typing
@@ -1169,7 +1179,7 @@ function getLiturgicalDialogueSongs(){
       timeSig: '4/4', style: 'Chant', instrument: 'Guitar / Vocal', categories: [],
       massParts: ['Gloria'],
       sectionTitle: 'Pag-ampo human sa Gloria \u2022 Before Psalm',
-      anchorPart: 'Gloria', anchorPos: 'after', litVersion: 3,
+      anchorPart: 'Gloria', anchorPos: 'after', litVersion: 4,
       favorite: false, transposeOffset: 0, dateAdded: Date.now() - 7000,
       viewerFontSize: 15, viewerScrollSpeed: 30,
       body:
@@ -1183,7 +1193,7 @@ function getLiturgicalDialogueSongs(){
       timeSig: '4/4', style: 'Chant', instrument: 'Guitar / Vocal', categories: [],
       massParts: ['Gospel Acclamation'],
       sectionTitle: 'Ebanghelyo (Gospel) \u2022 After Gospel Acclamation',
-      anchorPart: 'Gospel Acclamation', anchorPos: 'after', litVersion: 3,
+      anchorPart: 'Gospel Acclamation', anchorPos: 'after', litVersion: 4,
       favorite: false, transposeOffset: 0, dateAdded: Date.now() - 6000,
       viewerFontSize: 15, viewerScrollSpeed: 30,
       body:
@@ -1206,7 +1216,7 @@ function getLiturgicalDialogueSongs(){
       timeSig: '4/4', style: 'Liturgy', instrument: 'Guitar / Vocal', categories: [],
       massParts: ['Offertory'],
       sectionTitle: 'Kredo & Pag-ampo sa Katilingban \u2022 Before Offertory',
-      anchorPart: 'Offertory', anchorPos: 'before', litVersion: 3,
+      anchorPart: 'Offertory', anchorPos: 'before', litVersion: 4,
       favorite: false, transposeOffset: 0, dateAdded: Date.now() - 5000,
       viewerFontSize: 15, viewerScrollSpeed: 30,
       body:
@@ -1224,7 +1234,7 @@ function getLiturgicalDialogueSongs(){
       timeSig: '4/4', style: 'Liturgy', instrument: 'Guitar / Vocal', categories: [],
       massParts: ['Offertory'],
       sectionTitle: 'Liturhiya sa Eukaristiya \u2022 Before Preface',
-      anchorPart: 'Offertory', anchorPos: 'after', litVersion: 3,
+      anchorPart: 'Offertory', anchorPos: 'after', litVersion: 4,
       favorite: false, transposeOffset: 0, dateAdded: Date.now() - 4000,
       viewerFontSize: 15, viewerScrollSpeed: 30,
       body:
@@ -1241,7 +1251,7 @@ function getLiturgicalDialogueSongs(){
       timeSig: '4/4', style: 'Chant', instrument: 'Guitar / Vocal', categories: [],
       massParts: ['Sanctus'],
       sectionTitle: 'Pasiuna nga Pag-ampo (Preface) \u2022 Before Sanctus',
-      anchorPart: 'Sanctus', anchorPos: 'before', litVersion: 3,
+      anchorPart: 'Sanctus', anchorPos: 'before', litVersion: 4,
       favorite: false, transposeOffset: 0, dateAdded: Date.now() - 3000,
       viewerFontSize: 15, viewerScrollSpeed: 30,
       body:
@@ -1268,7 +1278,7 @@ function getLiturgicalDialogueSongs(){
       timeSig: '4/4', style: 'Liturgy', instrument: 'Guitar / Vocal', categories: [],
       massParts: ['Communion'],
       sectionTitle: 'Pangalawat Dialogue \u2022 Before Communion',
-      anchorPart: 'Communion', anchorPos: 'before', optionalLit: true, litVersion: 3,
+      anchorPart: 'Communion', anchorPos: 'before', optionalLit: true, litVersion: 4,
       favorite: false, transposeOffset: 0, dateAdded: Date.now() - 2000,
       viewerFontSize: 15, viewerScrollSpeed: 30,
       body:
@@ -1285,7 +1295,7 @@ function getLiturgicalDialogueSongs(){
       timeSig: '4/4', style: 'Chant', instrument: 'Guitar / Vocal', categories: [],
       massParts: ['Recessional'],
       sectionTitle: 'Panapos nga Rito (Concluding Rites) \u2022 Before Recessional',
-      anchorPart: 'Recessional', anchorPos: 'before', litVersion: 3,
+      anchorPart: 'Recessional', anchorPos: 'before', litVersion: 4,
       favorite: false, transposeOffset: 0, dateAdded: Date.now() - 1000,
       viewerFontSize: 15, viewerScrollSpeed: 30,
       body:
@@ -1340,7 +1350,7 @@ function syncLiturgicalDialogues(persist){
       existing.anchorPart = ls.anchorPart;
       existing.anchorPos = ls.anchorPos;
       existing.optionalLit = ls.optionalLit;
-      if((!existing.userEdited && existing.litVersion !== 3) || existing.title !== ls.title){
+      if((!existing.userEdited && existing.litVersion !== 4) || existing.title !== ls.title){
         existing.title = ls.title;
         if(!existing.userEdited) existing.body = ls.body;
         existing.litVersion = 3;
@@ -2912,18 +2922,94 @@ function renderSongSheetContent(s, isPeek){
   const body = offset ? transposeBody(s.body, offset, preferFlat) : s.body;
   const flag = getSongFlag(s);
   const flagPill = flag ? `<span class="song-flag-pill" style="background-color:${flag.color};"></span>` : '';
-  const lines = (body||'').split('\n').map(line=>{
+  // (2026-07-13) prayer dialogue parser aligning response chords & text; prev: unaligned
+  const rawLines = (body||'').split('\n');
+  const renderedLines = [];
+  for(let i = 0; i < rawLines.length; i++){
+    const line = rawLines[i];
     const cls = classifyLine(line);
-    if(cls==='melody') return renderMelodyStaffLine(line);
-    if(cls==='chord') return `<div class="lyric-line">${renderChordLine(line)}</div>`;
-    if(cls==='bracket') return `<div class="lyric-line">${renderBracketLine(line)}</div>`;
-    if(cls==='divider') return `<hr class="chart-hr"/>`;
-    if(cls==='section') return `<div class="section-line">${escapeHtml(line)}</div>`;
-    if(cls==='priest') return renderPriestLine(line);
-    if(cls==='response') return renderResponseLine(line);
-    if(cls==='blank') return `<div>&nbsp;</div>`;
-    return `<div class="lyric-line">${escapeHtml(line)}</div>`;
-  }).join('');
+    if(cls === 'melody'){
+      renderedLines.push(renderMelodyStaffLine(line));
+    } else if(cls === 'bracket'){
+      renderedLines.push(`<div class="lyric-line">${renderBracketLine(line)}</div>`);
+    } else if(cls === 'divider'){
+      renderedLines.push(`<hr class="chart-hr"/>`);
+    } else if(cls === 'section'){
+      renderedLines.push(`<div class="section-line">${escapeHtml(line)}</div>`);
+    } else if(cls === 'priest'){
+      const pData = extractPriestData(line);
+      let nextIdx = i + 1;
+      while(nextIdx < rawLines.length && classifyLine(rawLines[nextIdx]) === 'blank') nextIdx++;
+      let chordLine = null, respLine = null;
+      if(nextIdx < rawLines.length && classifyLine(rawLines[nextIdx]) === 'chord'){
+        let afterChordIdx = nextIdx + 1;
+        while(afterChordIdx < rawLines.length && classifyLine(rawLines[afterChordIdx]) === 'blank') afterChordIdx++;
+        if(afterChordIdx < rawLines.length && classifyLine(rawLines[afterChordIdx]) === 'response'){
+          chordLine = rawLines[nextIdx];
+          respLine = rawLines[afterChordIdx];
+          i = afterChordIdx;
+        }
+      } else if(nextIdx < rawLines.length && classifyLine(rawLines[nextIdx]) === 'response'){
+        respLine = rawLines[nextIdx];
+        i = nextIdx;
+      }
+
+      if(respLine){
+        const rData = extractResponseData(respLine);
+        renderedLines.push(`
+          <div class="cue-item dialogue-cue-item">
+            <div class="cue-line cue-priest"><span class="dialogue-badge priest-badge">${iconPriestCross()} ${escapeHtml(pData.role)}</span><span class="cue-text">${escapeHtml(pData.text)}</span></div>
+            <div class="cue-line cue-response">
+              <span class="dialogue-badge response-badge">${iconPeopleGroup()} ${escapeHtml(rData.role)}</span>
+              ${chordLine ? `
+                <div class="cue-response-content">
+                  <div class="cue-chord-row">${renderChordLine('>' + chordLine.replace(/^>\s*/, ''))}</div>
+                  <span class="cue-text">${escapeHtml(rData.text)}</span>
+                </div>
+              ` : `<span class="cue-text">${escapeHtml(rData.text)}</span>`}
+            </div>
+          </div>`);
+      } else {
+        renderedLines.push(`
+          <div class="cue-item dialogue-cue-item">
+            <div class="cue-line cue-priest"><span class="dialogue-badge priest-badge">${iconPriestCross()} ${escapeHtml(pData.role)}</span><span class="cue-text">${escapeHtml(pData.text)}</span></div>
+          </div>`);
+      }
+    } else if(cls === 'chord'){
+      let nextIdx = i + 1;
+      while(nextIdx < rawLines.length && classifyLine(rawLines[nextIdx]) === 'blank') nextIdx++;
+      if(nextIdx < rawLines.length && classifyLine(rawLines[nextIdx]) === 'response'){
+        const rData = extractResponseData(rawLines[nextIdx]);
+        i = nextIdx;
+        renderedLines.push(`
+          <div class="cue-item dialogue-cue-item">
+            <div class="cue-line cue-response">
+              <span class="dialogue-badge response-badge">${iconPeopleGroup()} ${escapeHtml(rData.role)}</span>
+              <div class="cue-response-content">
+                <div class="cue-chord-row">${renderChordLine('>' + line.replace(/^>\s*/, ''))}</div>
+                <span class="cue-text">${escapeHtml(rData.text)}</span>
+              </div>
+            </div>
+          </div>`);
+      } else {
+        renderedLines.push(`<div class="lyric-line">${renderChordLine(line)}</div>`);
+      }
+    } else if(cls === 'response'){
+      const rData = extractResponseData(line);
+      renderedLines.push(`
+        <div class="cue-item dialogue-cue-item">
+          <div class="cue-line cue-response">
+            <span class="dialogue-badge response-badge">${iconPeopleGroup()} ${escapeHtml(rData.role)}</span>
+            <span class="cue-text">${escapeHtml(rData.text)}</span>
+          </div>
+        </div>`);
+    } else if(cls === 'blank'){
+      renderedLines.push(`<div>&nbsp;</div>`);
+    } else {
+      renderedLines.push(`<div class="lyric-line">${escapeHtml(line)}</div>`);
+    }
+  }
+  const lines = renderedLines.join('');
 
   return `
     ${renderMassPartCueCard(s)}
