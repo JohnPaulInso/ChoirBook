@@ -922,6 +922,17 @@ const Store = {
     try{ return JSON.parse(r.value) || {}; }catch(e){ return {}; }
   },
   async saveCueChords(map){ await adapter.set('meta:cueChordsV2', JSON.stringify(map || {})); },
+  // (2026-07-13) get & save custom cues in Store & Firestore; prev: none
+  async getCustomCues(){
+    const r = await adapter.get('meta:customCues');
+    if(!r){
+      const loc = await LocalAdapter.get('meta:customCues');
+      if(!loc) return {};
+      try{ return JSON.parse(loc.value) || {}; }catch(e){ return {}; }
+    }
+    try{ return JSON.parse(r.value) || {}; }catch(e){ return {}; }
+  },
+  async saveCustomCues(cues){ await adapter.set('meta:customCues', JSON.stringify(cues || {})); },
   async listSetlists(){ return adapter.list('setlist:'); },
   async getSetlist(key){
     const r = await adapter.get(key);
@@ -1167,24 +1178,88 @@ const MASS_PART_CUES = {
   }
 };
 
+// (2026-07-13) resolve cue key & prioritize customCues; prev: static cues
+function getMassPartCueKey(name){
+  if(!name) return 'entrance';
+  const n = String(name).toLowerCase().trim();
+  if(MASS_PART_CUES[n]) return n;
+  if(n.includes('kyrie') || n.includes('ginoo')) return 'kyrie';
+  if(n.includes('gloria') || n.includes('himaya')) return 'gloria';
+  if(n.includes('psalm') || n.includes('salmo')) return 'responsorial psalm';
+  if(n.includes('alleluia') || n.includes('aleluya') || n.includes('acclamation')) return 'gospel acclamation';
+  if(n.includes('offertory') || n.includes('halad')) return 'offertory';
+  if(n.includes('sanctus') || n.includes('santos') || n.includes('holy')) return 'sanctus';
+  if(n.includes('memorial') || n.includes('misteryo')) return 'memorial acclamation';
+  if(n.includes('amen')) return 'great amen';
+  if(n.includes('father') || n.includes('amahan')) return 'our father';
+  if(n.includes('lamb') || n.includes('kordero') || n.includes('peace') || n.includes('kalinaw')) return 'lamb of god';
+  if(n.includes('communion') || n.includes('kalawat') || n.includes('pangalawat')) return 'communion';
+  if(n.includes('recessional') || n.includes('panapos') || n.includes('exit')) return 'recessional';
+  if(n.includes('entrance') || n.includes('pasiuna') || n.includes('opening')) return 'entrance';
+  return 'entrance';
+}
+
 function findMassPartCue(name){
   if(!name) return null;
-  const n = name.toLowerCase().trim();
-  if(MASS_PART_CUES[n]) return MASS_PART_CUES[n];
-  if(n.includes('kyrie') || n.includes('ginoo')) return MASS_PART_CUES['kyrie'];
-  if(n.includes('gloria') || n.includes('himaya')) return MASS_PART_CUES['gloria'];
-  if(n.includes('psalm') || n.includes('salmo')) return MASS_PART_CUES['responsorial psalm'];
-  if(n.includes('alleluia') || n.includes('aleluya') || n.includes('acclamation')) return MASS_PART_CUES['gospel acclamation'];
-  if(n.includes('offertory') || n.includes('halad')) return MASS_PART_CUES['offertory'];
-  if(n.includes('sanctus') || n.includes('santos') || n.includes('holy')) return MASS_PART_CUES['sanctus'];
-  if(n.includes('memorial') || n.includes('misteryo')) return MASS_PART_CUES['memorial acclamation'];
-  if(n.includes('amen')) return MASS_PART_CUES['great amen'];
-  if(n.includes('father') || n.includes('amahan')) return MASS_PART_CUES['our father'];
-  if(n.includes('lamb') || n.includes('kordero') || n.includes('peace') || n.includes('kalinaw')) return MASS_PART_CUES['lamb of god'];
-  if(n.includes('communion') || n.includes('kalawat') || n.includes('pangalawat')) return MASS_PART_CUES['communion'];
-  if(n.includes('recessional') || n.includes('panapos') || n.includes('exit')) return MASS_PART_CUES['recessional'];
-  if(n.includes('entrance') || n.includes('pasiuna') || n.includes('opening')) return MASS_PART_CUES['entrance'];
+  const key = getMassPartCueKey(name);
+  if(state.customCues && state.customCues[key]) return state.customCues[key];
+  if(MASS_PART_CUES[key]) return MASS_PART_CUES[key];
   return null;
+}
+
+// (2026-07-13) sync cue editor draft from modal input values; prev: none
+function syncCueDraftFromModal(draft){
+  if(!draft) return;
+  const titleEl = document.getElementById('cue-edit-title');
+  if(titleEl) draft.title = titleEl.value.trim();
+  const priestInputs = document.querySelectorAll('.cue-input-priest');
+  const chordInputs = document.querySelectorAll('.cue-input-chords');
+  const respInputs = document.querySelectorAll('.cue-input-response');
+  priestInputs.forEach(pIn=>{
+    const i = parseInt(pIn.dataset.idx, 10);
+    if(draft.cues && draft.cues[i]){
+      draft.cues[i].priest = pIn.value;
+    }
+  });
+  chordInputs.forEach(cIn=>{
+    const i = parseInt(cIn.dataset.idx, 10);
+    if(draft.cues && draft.cues[i]){
+      draft.cues[i].chords = cIn.value;
+    }
+  });
+  respInputs.forEach(rIn=>{
+    const i = parseInt(rIn.dataset.idx, 10);
+    if(draft.cues && draft.cues[i]){
+      draft.cues[i].response = rIn.value;
+    }
+  });
+  const postPriest = document.getElementById('cue-input-post-priest');
+  if(postPriest && draft.postPrayer){
+    draft.postPrayer.priest = postPriest.value;
+    const postChords = document.getElementById('cue-input-post-chords');
+    if(postChords) draft.postPrayer.chords = postChords.value;
+    const postResp = document.getElementById('cue-input-post-response');
+    if(postResp) draft.postPrayer.response = postResp.value;
+  }
+}
+
+// (2026-07-13) open liturgical cue editor for mass part; prev: none
+function openCueEditor(targetMassPart){
+  const mp = targetMassPart || state.filterMassPart || (currentSong()?.massParts?.[0]) || 'Kyrie';
+  const key = getMassPartCueKey(mp);
+  const base = findMassPartCue(key) || MASS_PART_CUES[key] || MASS_PART_CUES['kyrie'];
+  const draft = JSON.parse(JSON.stringify(base));
+  if(!draft.cues) draft.cues = [];
+  state.modal = {
+    type: 'edit-cue',
+    massPartKey: key,
+    massPartName: mp,
+    cueDraft: draft,
+    openedAt: performance.now()
+  };
+  if(state.view === 'list') renderListView();
+  else if(state.view === 'viewer') renderViewer();
+  else render();
 }
 
 /* ============================================================
@@ -1209,6 +1284,8 @@ const state = {
   searchActive: false,
   // (2026-07-13) default sortBy to massflow order; prev: sortBy: 'title'
   sortBy: 'massflow',
+  // (2026-07-13) custom cues state synced with Firestore; prev: none
+  customCues: {},
   filterCat: 'All',
   filterMassPart: null, // when set, list view is browsing by mass part instead of folder
   // (2026-07-13) add filterFlag for flag browse mode; prev: none
@@ -1416,9 +1493,11 @@ async function loadAll(){
       Store.getMassParts(),
       Store.getAllSetlists(),
       Store.getFolderColors(),
-      Store.getCueChords()
+      Store.getCueChords(),
+      // (2026-07-13) fetch custom liturgical cues from Firestore; prev: none
+      Store.getCustomCues()
     ]);
-    const [rawSongs, cats, parts, rawSetlists, fColors, cChords] = await Promise.race([dataFetch, timeout]);
+    const [rawSongs, cats, parts, rawSetlists, fColors, cChords, cCues] = await Promise.race([dataFetch, timeout]);
     if(rawSongs && rawSongs.length > 0){
       state.songs = rawSongs.map(normalizeSong);
       persistMigratedChordSongs();
@@ -1429,6 +1508,7 @@ async function loadAll(){
     if(parts){ state.massParts = parts; LocalAdapter.set('meta:massparts', JSON.stringify(parts)); }
     if(fColors){ state.folderColors = fColors; LocalAdapter.set('meta:folderColors', JSON.stringify(fColors)); }
     if(cChords){ state.cueChords = cChords; LocalAdapter.set('meta:cueChordsV2', JSON.stringify(cChords)); }
+    if(cCues){ state.customCues = cCues; LocalAdapter.set('meta:customCues', JSON.stringify(cCues)); }
     applyFolderTheme(state.filterCat);
     if(rawSetlists) state.setlists = rawSetlists.map(normalizeSetlist);
   }catch(err){
@@ -1531,6 +1611,14 @@ function hydrateInitialState(){
     if(cachedChords){
       const parsed = JSON.parse(cachedChords);
       if(parsed && typeof parsed === 'object') state.cueChords = parsed;
+    }
+    // (2026-07-13) synchronously hydrate customCues from cache; prev: none
+    const cachedCues = localStorage.getItem('meta:customCues');
+    if(cachedCues){
+      try{
+        const parsed = JSON.parse(cachedCues);
+        if(parsed && typeof parsed === 'object') state.customCues = parsed;
+      }catch(e){}
     }
     const savedFilter = localStorage.getItem('ui:filterCat');
     if(savedFilter && (savedFilter === 'All' || savedFilter === 'Favorites' || state.categories.includes(savedFilter))){
@@ -2534,13 +2622,20 @@ function buildSongListRowsHtml(){
       const isFirstSection = secIdx === 0;
       const toggle = isFirstSection ? favToggleBtn : '';
 
+      const editCuePill = (isFirstSection && (state.filterMassPart || sec.massPart)) ? `
+        <button type="button" class="fav-toggle-pill" id="btn-edit-cue-pill" data-edit-mp-cue="${escapeHtml(state.filterMassPart || sec.massPart)}" title="Edit Liturgical Cue" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:10.5px;font-weight:700;letter-spacing:0.2px;border-radius:12px;border:1px solid rgba(255,255,255,0.18);background:transparent;color:var(--text);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all 0.15s ease;">
+          <span style="display:inline-flex;align-items:center;width:11px;height:11px;">${iconEdit()}</span>
+          <span>Edit Cue</span>
+        </button>` : '';
+      const rightControls = isFirstSection ? `<div style="display:flex;align-items:center;gap:6px;">${editCuePill}${toggle}</div>` : '';
+
       if(sec.optionalLit){
         const hidden = !!state.hideOptionalCommunionLit;
         secHtml += `
           <div class="letter-divider" style="display:flex;align-items:center;justify-content:space-between;">
             <span>&#10022; ${escapeHtml(sec.title)}</span>
             <div style="display:flex;align-items:center;gap:6px;">
-              ${toggle}
+              ${rightControls || toggle}
               <button class="cue-toggle-btn" data-toggle-opt-lit="${escapeHtml(sec.litId)}" style="padding:1px 7px;font-size:10px;">${hidden ? 'Show Page' : 'Hide Page'}</button>
             </div>
           </div>`;
@@ -2551,7 +2646,7 @@ function buildSongListRowsHtml(){
         secHtml += `
           <div class="letter-divider" style="${isFirstSection?'display:flex;align-items:center;justify-content:space-between;':''}">
             <span>${sec.isLiturgical ? '&#10022; ' : ''}${escapeHtml(sec.title)}</span>
-            ${toggle}
+            ${rightControls || toggle}
           </div>`;
         sec.songs.forEach(s=>{ secHtml += renderSongRowHtml(s, sec.massPart); });
       }
@@ -2563,7 +2658,14 @@ function buildSongListRowsHtml(){
       <div class="song-section-group">
         <div class="letter-divider" style="display:flex;align-items:center;justify-content:space-between;">
           <span>${escapeHtml(viewTitle)}</span>
-          ${favToggleBtn}
+          <div style="display:flex;align-items:center;gap:6px;">
+            ${state.filterMassPart ? `
+              <button type="button" class="fav-toggle-pill" id="btn-edit-cue-pill" data-edit-mp-cue="${escapeHtml(state.filterMassPart)}" title="Edit Liturgical Cue" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:10.5px;font-weight:700;letter-spacing:0.2px;border-radius:12px;border:1px solid rgba(255,255,255,0.18);background:transparent;color:var(--text);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all 0.15s ease;">
+                <span style="display:inline-flex;align-items:center;width:11px;height:11px;">${iconEdit()}</span>
+                <span>Edit Cue</span>
+              </button>` : ''}
+            ${favToggleBtn}
+          </div>
         </div>
         <div class="empty-state">
           ${state.favOnly
@@ -2577,6 +2679,15 @@ function buildSongListRowsHtml(){
 
 // (2026-07-13) wire favorited-only divider toggle & empty state reset; prev: toggle only
 function wireListWrapRows(){
+  // (2026-07-13) wire edit cue pill click in song list divider; prev: none
+  const btnEditCuePill = document.getElementById('btn-edit-cue-pill');
+  if(btnEditCuePill){
+    btnEditCuePill.onclick = (e)=>{
+      e.preventDefault();
+      e.stopPropagation();
+      openCueEditor(btnEditCuePill.dataset.editMpCue || state.filterMassPart);
+    };
+  }
   const btnFavOnly = document.getElementById('btn-toggle-fav-only');
   if(btnFavOnly){
     btnFavOnly.onclick = (e)=>{
@@ -2688,6 +2799,12 @@ function renderListView(animateChipScroll){
         ` : ''}
         ${!state.listEditMode ? `
           <button class="icon-btn ${isSearching?'active':''}" id="btn-search-toggle" title="Search Songs">${iconSearch()}</button>
+        ` : ''}
+        ${state.filterMassPart && !state.listEditMode ? `
+          <button class="toolbtn" id="btn-edit-mp-cue-top" title="Edit Liturgical Cue for ${escapeHtml(state.filterMassPart)}" style="height:32px;padding:0 9px;border-radius:10px;background:var(--bg-elev2);border:1px solid var(--line);color:var(--text);font-size:11px;font-weight:700;display:inline-flex;align-items:center;gap:4px;cursor:pointer;">
+            <span style="display:inline-flex;align-items:center;width:12px;height:12px;">${iconEdit()}</span>
+            <span>Edit Cue</span>
+          </button>
         ` : ''}
         <button class="${state.listEditMode?'btn-done-edit':'icon-btn'}" id="btn-edit-list" title="${state.listEditMode?'Done Editing':'Edit & Reorder Songs'}" ${state.listEditMode ? 'style="background:var(--accent);color:#0f1115;border:none;font-weight:800;font-size:12px;padding:5px 12px;border-radius:16px;min-height:30px;display:inline-flex;align-items:center;gap:4px;cursor:pointer;box-shadow:0 2px 8px var(--accent-dim);"' : ''}>
           ${state.listEditMode ? `${iconCheck()}<span>Done</span>` : iconEdit()}
@@ -2921,7 +3038,17 @@ function renderListView(animateChipScroll){
       render();
     };
   }
-  document.getElementById('btn-manage-cats').onclick = ()=>{ state.modal = {type:'categories'}; renderListView(); };
+  // (2026-07-13) wire top bar edit cue button for current mass part; prev: none
+  const editCueTop = document.getElementById('btn-edit-mp-cue-top');
+  if(editCueTop){
+    editCueTop.onclick = ()=>{
+      openCueEditor(state.filterMassPart);
+    };
+  }
+  const manageCatsBtn = document.getElementById('btn-manage-cats');
+  if(manageCatsBtn){
+    manageCatsBtn.onclick = ()=>{ state.modal = {type:'categories'}; renderListView(); };
+  }
   // (2026-07-13) wire desktop horizontal drag on chiprow; prev: none
   const chipRow = document.querySelector('.chiprow');
   if(chipRow){
@@ -3423,6 +3550,11 @@ function renderMassPartCueCard(song){
         </div>
         <div class="masspart-cue-actions">
           ${selectorHtml}
+          <!-- (2026-07-13) edit cue button in cue card header; prev: none -->
+          <button class="cue-toggle-btn" id="btn-open-cue-editor" title="Edit Liturgical Dialogue & Chords" data-mp="${escapeHtml(currentPart)}">
+            <span style="display:inline-flex;align-items:center;width:11px;height:11px;">${iconEdit()}</span>
+            <span>Edit Cue</span>
+          </button>
           ${editCueBtnHtml}
           <button class="cue-toggle-btn" id="btn-toggle-cue" title="Hide Liturgical Cues">${iconCueHide()}<span>Hide</span></button>
         </div>
@@ -3813,6 +3945,13 @@ function renderViewer(){
     toggleCueBtn.onclick = ()=>{
       state.hideCueCard = !state.hideCueCard;
       renderViewer();
+    };
+  }
+  // (2026-07-13) wire edit cue button in viewer cue card; prev: none
+  const btnOpenCueEd = document.getElementById('btn-open-cue-editor');
+  if(btnOpenCueEd){
+    btnOpenCueEd.onclick = ()=>{
+      openCueEditor(btnOpenCueEd.dataset.mp || state.selectedViewerMassPart);
     };
   }
   const editCueBtn = document.getElementById('btn-edit-cue');
@@ -5194,6 +5333,99 @@ function showConfirmModal({ title, message, confirmText, danger = true, onConfir
 
 function modalHtml(){
   if(!state.modal) return '';
+  // (2026-07-13) edit liturgical cue modal synced with Firestore; prev: none
+  if(state.modal.type === 'edit-cue'){
+    const { massPartKey, cueDraft } = state.modal;
+    const mpOptions = [
+      { key: 'entrance', label: 'Entrance (Pasiuna nga Awit)' },
+      { key: 'kyrie', label: 'Kyrie (Pasiuna nga Pag-ampo & Kyrie)' },
+      { key: 'gloria', label: 'Gloria (Himaya sa Dios)' },
+      { key: 'responsorial psalm', label: 'Responsorial Psalm (Salmo)' },
+      { key: 'gospel acclamation', label: 'Gospel Acclamation (Aleluya)' },
+      { key: 'offertory', label: 'Offertory (Pag-andam sa mga Halad)' },
+      { key: 'sanctus', label: 'Sanctus (Santos)' },
+      { key: 'memorial acclamation', label: 'Memorial Acclamation' },
+      { key: 'great amen', label: 'Great Amen (Dako nga Amen)' },
+      { key: 'our father', label: 'Our Father (Amahan Namo)' },
+      { key: 'lamb of god', label: 'Lamb of God (Kordero sa Dios)' },
+      { key: 'communion', label: 'Communion (Pangalawat)' },
+      { key: 'recessional', label: 'Recessional (Panapos nga Awit)' }
+    ];
+    return `
+      <div class="modal-backdrop center" id="modal-bg">
+        <div class="modal card" style="max-width:460px;width:95%;max-height:88vh;display:flex;flex-direction:column;padding:0;overflow:hidden;border-radius:16px;">
+          <div style="padding:16px 18px 12px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+            <div>
+              <h3 style="margin:0;font-size:16px;font-weight:800;display:flex;align-items:center;gap:6px;">
+                <span style="color:var(--accent);">&#10022;</span> Edit Liturgical Cue
+              </h3>
+              <div style="font-size:11px;color:var(--text-dim);margin-top:2px;">Updates across all songs &amp; syncs to Firestore</div>
+            </div>
+            <button class="icon-btn modal-close" id="modal-x" style="width:32px;height:32px;">${iconClose()}</button>
+          </div>
+          <div style="padding:16px 18px;overflow-y:auto;flex:1;-webkit-overflow-scrolling:touch;">
+            <div style="margin-bottom:14px;">
+              <label style="display:block;font-size:11px;font-weight:800;color:var(--text-dim);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px;">Mass Part</label>
+              <select id="cue-edit-part-select" style="width:100%;padding:9px 12px;background:var(--bg-elev);border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:13px;font-weight:600;">
+                ${mpOptions.map(o=>`<option value="${o.key}" ${o.key===massPartKey?'selected':''}>${escapeHtml(o.label)}</option>`).join('')}
+              </select>
+            </div>
+            <div style="margin-bottom:16px;">
+              <label style="display:block;font-size:11px;font-weight:800;color:var(--text-dim);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px;">Cue Card Title</label>
+              <input id="cue-edit-title" type="text" value="${escapeHtml(cueDraft.title||'')}" style="width:100%;box-sizing:border-box;padding:8px 12px;background:var(--bg-elev);border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:13px;">
+            </div>
+            <div style="font-size:11px;font-weight:800;color:var(--text-dim);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:8px;">Dialogue Sequence</div>
+            <div id="cue-dialogues-list">
+              ${(cueDraft.cues||[]).map((c, i)=>`
+                <div class="cue-item-edit-row" data-cue-row="${i}" style="background:var(--bg-elev);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:10px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                    <span style="font-size:10.5px;font-weight:800;color:var(--text-dim);letter-spacing:0.5px;">LINE ${i + 1}</span>
+                    <button type="button" class="toolbtn" data-del-cue-item="${i}" style="font-size:11px;color:var(--danger);background:transparent;border:none;cursor:pointer;padding:0 4px;">Delete</button>
+                  </div>
+                  <div style="margin-bottom:6px;">
+                    <span style="display:block;font-size:10.5px;font-weight:700;color:var(--priest);margin-bottom:2px;">Priest</span>
+                    <textarea class="cue-input-priest" data-idx="${i}" rows="2" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:12.5px;padding:6px;font-family:inherit;resize:vertical;">${escapeHtml(c.priest||'')}</textarea>
+                  </div>
+                  <div style="margin-bottom:6px;">
+                    <span style="display:block;font-size:10.5px;font-weight:700;color:var(--chord);margin-bottom:2px;">Response Chords (optional)</span>
+                    <input type="text" class="cue-input-chords" data-idx="${i}" value="${escapeHtml(c.chords||'')}" placeholder="e.g.         D     G      A    D" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--chord);font-size:12.5px;padding:6px;font-family:'JetBrains Mono',monospace;">
+                  </div>
+                  <div>
+                    <span style="display:block;font-size:10.5px;font-weight:700;color:var(--response);margin-bottom:2px;">Response</span>
+                    <input type="text" class="cue-input-response" data-idx="${i}" value="${escapeHtml(c.response||'')}" placeholder="e.g. Amen" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:12.5px;padding:6px;font-family:inherit;">
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+            <button type="button" class="btn btn-secondary" id="btn-add-cue-line" style="width:100%;min-height:36px;padding:6px 12px;font-size:12px;font-weight:700;margin-bottom:14px;border-style:dashed;">+ Add Dialogue Line</button>
+            ${cueDraft.postPrayer ? `
+              <div style="background:var(--bg-elev);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:14px;">
+                <div style="font-size:10.5px;font-weight:800;color:var(--text-dim);letter-spacing:0.5px;margin-bottom:6px;">AFTER SONG &bull; COLLECT PRAYER</div>
+                <div style="margin-bottom:6px;">
+                  <span style="display:block;font-size:10.5px;font-weight:700;color:var(--priest);margin-bottom:2px;">Priest</span>
+                  <textarea id="cue-input-post-priest" rows="2" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:12.5px;padding:6px;font-family:inherit;resize:vertical;">${escapeHtml(cueDraft.postPrayer.priest||'')}</textarea>
+                </div>
+                <div style="margin-bottom:6px;">
+                  <span style="display:block;font-size:10.5px;font-weight:700;color:var(--chord);margin-bottom:2px;">Response Chords (optional)</span>
+                  <input type="text" id="cue-input-post-chords" value="${escapeHtml(cueDraft.postPrayer.chords||'')}" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--chord);font-size:12.5px;padding:6px;font-family:'JetBrains Mono',monospace;">
+                </div>
+                <div>
+                  <span style="display:block;font-size:10.5px;font-weight:700;color:var(--response);margin-bottom:2px;">Response</span>
+                  <input type="text" id="cue-input-post-response" value="${escapeHtml(cueDraft.postPrayer.response||'')}" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:12.5px;padding:6px;font-family:inherit;">
+                </div>
+              </div>
+            ` : ''}
+          </div>
+          <div style="padding:12px 18px 16px;border-top:1px solid var(--line);background:var(--bg-elev);display:flex;gap:10px;justify-content:space-between;flex-shrink:0;">
+            <button type="button" class="btn btn-secondary" id="btn-reset-cue" style="flex:0 0 auto;padding:8px 12px;font-size:12px;color:var(--text-dim);" title="Reset to original default">Reset</button>
+            <div style="display:flex;gap:8px;flex:1;justify-content:flex-end;">
+              <button type="button" class="btn btn-secondary" id="modal-cancel-btn" style="flex:1;max-width:110px;padding:8px 12px;font-size:13px;">Cancel</button>
+              <button type="button" class="btn btn-primary" id="btn-save-cue" style="flex:1;max-width:140px;padding:8px 14px;font-size:13px;font-weight:800;">Save Changes</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }
   // (2026-07-13) modal confirmation dialog; prev: browser confirm alert
   if(state.modal.type==='confirm'){
     const { title = 'Delete Song', message = 'Are you sure?', confirmText = 'Delete', danger = true } = state.modal;
@@ -6394,6 +6626,57 @@ function wireModal(){
     state.view = 'setlist-editor';
     render();
   };
+
+  // (2026-07-13) wire edit-cue modal interactions & Firestore persistence; prev: none
+  if(state.modal && state.modal.type === 'edit-cue'){
+    const { massPartKey, cueDraft } = state.modal;
+    const partSelect = document.getElementById('cue-edit-part-select');
+    if(partSelect){
+      partSelect.onchange = (e)=>{
+        openCueEditor(e.target.value);
+      };
+    }
+    const addLineBtn = document.getElementById('btn-add-cue-line');
+    if(addLineBtn){
+      addLineBtn.onclick = ()=>{
+        syncCueDraftFromModal(cueDraft);
+        cueDraft.cues.push({ id: uid(), priest: '', chords: '', response: '' });
+        render();
+      };
+    }
+    document.querySelectorAll('[data-del-cue-item]').forEach(b=>{
+      b.onclick = ()=>{
+        const idx = parseInt(b.dataset.delCueItem, 10);
+        syncCueDraftFromModal(cueDraft);
+        cueDraft.cues.splice(idx, 1);
+        render();
+      };
+    });
+    const resetBtn = document.getElementById('btn-reset-cue');
+    if(resetBtn){
+      resetBtn.onclick = ()=>{
+        const orig = MASS_PART_CUES[massPartKey] || MASS_PART_CUES['entrance'];
+        state.modal.cueDraft = JSON.parse(JSON.stringify(orig));
+        render();
+      };
+    }
+    const saveCueBtn = document.getElementById('btn-save-cue');
+    if(saveCueBtn){
+      saveCueBtn.onclick = async ()=>{
+        syncCueDraftFromModal(cueDraft);
+        if(!state.customCues) state.customCues = {};
+        state.customCues[massPartKey] = cueDraft;
+        try{ localStorage.setItem('meta:customCues', JSON.stringify(state.customCues)); }catch(e){}
+        closeActiveModal();
+        try{
+          await Store.saveCustomCues(state.customCues);
+        }catch(err){
+          console.error('Save custom cues to Firestore failed:', err);
+        }
+        showToast('Cue saved & synced across all songs');
+      };
+    }
+  }
 }
 
 // (2026-07-13) SVG icon helpers (star, music, import, cross); prev: none
@@ -6516,6 +6799,9 @@ function subscribeRealtimeSync(){
               try{ state.folderColors = JSON.parse(val) || {}; applyFolderTheme(state.filterCat); changed = true; }catch(e){}
             } else if(docId === 'meta:cueChordsV2' || docId === 'meta:cueChords'){
               try{ state.cueChords = JSON.parse(val) || {}; changed = true; }catch(e){}
+            // (2026-07-13) realtime snapshot sync for customCues; prev: none
+            } else if(docId === 'meta:customCues'){
+              try{ state.customCues = JSON.parse(val) || {}; changed = true; }catch(e){}
             }
           }
         });
