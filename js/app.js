@@ -216,31 +216,11 @@ function normalizeBodyChordLines(body){
     return line;
   }).join('\n');
 }
-// (2026-07-13) detect <> melody note prefix & octave notes; prev: missed <>
+// (2026-07-13) melody staff only for explicit <> prefix or intro; prev: auto-detected chords as melody
 function isMelodyNoteLine(line){
   if(!line) return false;
-  let cleaned = line.replace(/^>\s*/, '').trim();
-  if(cleaned.startsWith('<>')) return true;
-  const hasNoteLabel = /^(?:first\s+notes\s*[-:]?|notes?\s*[-:]?|going\s+up\s*[-:]?)\s+/i.test(cleaned);
-  cleaned = cleaned.replace(/^(?:first\s+notes\s*[-:]?|notes?\s*[-:]?|going\s+up\s*[-:]?)\s*/i, '').trim();
-  if(!cleaned) return false;
-  const tokens = cleaned.split(/\s+/).filter(Boolean);
-  let lowerNoteCount = 0;
-  let noteTokenCount = 0;
-  for(const tok of tokens){
-    if(tok === '|' || tok === '/' || tok === '\\' || tok === '-') continue;
-    if(/^[a-g](#|b)?\.?$/.test(tok)){
-      lowerNoteCount++;
-      noteTokenCount++;
-    } else if(/^[A-G](#|b)?\.?$/.test(tok)){
-      noteTokenCount++;
-    } else {
-      return false;
-    }
-  }
-  if(hasNoteLabel && noteTokenCount >= 1) return true;
-  if(noteTokenCount === 1 && lowerNoteCount === 1 && !line.trim().startsWith('>')) return true;
-  return noteTokenCount >= 2 && (lowerNoteCount >= 1 || /^[a-gA-G]/.test(tokens[0]));
+  const cleaned = line.replace(/^>\s*/, '').trim();
+  return cleaned.startsWith('<>');
 }
 
 // (2026-07-13) large staff with high/low octave notes & bars; prev: 34px misaligned
@@ -2793,6 +2773,26 @@ function renderMassPartFooterCue(song){
     </div>`;
 }
 
+// (2026-07-13) render dedicated intro melody staff section; prev: staffs all over song
+function renderIntroMelodySection(introMelody){
+  if(!introMelody || !introMelody.trim()) return '';
+  const lines = introMelody.split(/\r?\n/).map(l=>l.trimEnd()).filter(l=>l.trim().length > 0);
+  if(!lines.length) return '';
+  const staffsHtml = lines.map((line, idx)=>`
+    <div class="intro-staff-block" style="margin-bottom:${idx < lines.length - 1 ? '16px' : '4px'};">
+      <div class="intro-staff-label" style="font-size:10px;font-weight:800;color:var(--text-dim);letter-spacing:1px;margin-bottom:2px;text-transform:uppercase;">STAFF ${idx + 1}</div>
+      ${renderMelodyStaffLine(line)}
+    </div>
+  `).join('');
+  return `
+    <div class="intro-melody-box" style="margin:4px 0 16px 0;padding:12px 14px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:12px;">
+      <div class="intro-melody-header" style="font-size:11px;font-weight:800;color:var(--accent);letter-spacing:0.8px;text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:6px;">
+        <span>&#9835; Intro Melody</span>
+      </div>
+      ${staffsHtml}
+    </div>`;
+}
+
 function renderViewer(){
   const song = currentSong();
   if(!song){ state.view='list'; return renderListView(); }
@@ -2860,6 +2860,7 @@ function renderViewer(){
           <span>Instr. <b>${escapeHtml(song.instrument||'—')}</b></span>
           ${song.referenceUrl ? `<span><a href="${escapeHtml(song.referenceUrl)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;font-weight:700;">&#9654; Reference</a></span>` : ''}
         </div>
+        ${renderIntroMelodySection(song.introMelody)}
         <div class="chart-body" id="chart-body">${lines}</div>
         ${renderMassPartFooterCue(song)}
       </div>
@@ -3404,9 +3405,9 @@ function openEditor(id){
   state.modal = null;
   document.querySelectorAll('.modal-backdrop, #modal-bg').forEach(el=>el.remove());
   const song = id ? state.songs.find(s=>s.id===id) : null;
-  state.editingDraft = song ? {...song} : {
+  state.editingDraft = song ? {...song, introMelody: song.introMelody || ''} : {
     id: uid(), title:'', artist:'', key:'C', capo:0, tempo:90, timeSig:'4/4', style:'', instrument:'',
-    categories: [], favorite:false, transposeOffset:0, dateAdded: Date.now(), body:''
+    introMelody: '', categories: [], favorite:false, transposeOffset:0, dateAdded: Date.now(), body:''
   };
   if(!state.editingDraft.categories){
     state.editingDraft.categories = state.editingDraft.category ? [state.editingDraft.category] : [];
@@ -3472,6 +3473,15 @@ function renderEditor(){
           }).join('')}
         </div>
       </div>
+      <!-- (2026-07-13) dedicated intro melody notes box in editor; prev: none -->
+      <div class="field" style="margin-bottom:14px;">
+        <label style="display:flex;align-items:center;justify-content:space-between;">
+          <span style="font-weight:700;color:var(--accent);">&#9835; Intro Melody Notes (Staff)</span>
+          <span style="font-size:11px;color:var(--text-dim);text-transform:none;">1 line = 1 staff &middot; e.g. e a b g d &nbsp; g</span>
+        </label>
+        <textarea id="f-intro-melody" rows="2" placeholder="e a b g d   g&#10;e a b g d   g" style="font-family:'JetBrains Mono',monospace;font-size:13px;padding:9px 12px;resize:vertical;min-height:56px;background:var(--bg-elev);border:1px solid var(--line);border-radius:8px;color:var(--text);width:100%;box-sizing:border-box;">${escapeHtml(d.introMelody || '')}</textarea>
+        <div class="hint" style="font-size:11px;color:var(--text-dim);margin-top:3px;">Type note letters separated by spaces. If you add 2 lines, 2 separate staffs will be drawn over the intro.</div>
+      </div>
       <div class="field" id="field-massparts">
         <label>Mass Part <span class="req">*</span></label>
         <div class="cat-toggle-wrap" id="mp-toggle-wrap">
@@ -3528,6 +3538,10 @@ function renderEditor(){
     d.title = cleanSongTitleForDisplay(d.title);
     renderEditor();
   };
+  const edIntroMelody = document.getElementById('f-intro-melody');
+  if(edIntroMelody){
+    edIntroMelody.oninput = (e)=>{ d.introMelody = e.target.value; };
+  }
   document.getElementById('f-timesig').onchange = e=>{
     document.getElementById('custom-timesig-wrap').style.display = e.target.value==='custom' ? 'block':'none';
   };
@@ -3616,10 +3630,11 @@ function renderEditor(){
 
     const timeSel = document.getElementById('f-timesig').value;
     const timeVal = timeSel==='custom' ? (document.getElementById('f-timesig-custom').value.trim()||'4/4') : timeSel;
-    // (2026-07-13) persist song flag in song object; prev: none
+    // (2026-07-13) persist introMelody in song save; prev: none
     const song = {
       ...d,
       flag: d.flag || (getSongFlag(d)?.key) || 'none',
+      introMelody: (document.getElementById('f-intro-melody')?.value || '').trim(),
       title: titleVal,
       artist: document.getElementById('f-artist').value.trim(),
       key: document.getElementById('f-key').value.trim(),
