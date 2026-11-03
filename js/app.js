@@ -3804,7 +3804,8 @@ function handleStaffPlayClick(btn){
     if(prevCol !== null && col !== null){
       const gap = Math.max(0, col - (prevCol + prevLen));
       if(gap > 1){
-        const extraPause = Math.min(intervalMs * 3.5, (gap - 1) * (intervalMs * 0.45));
+        // (2026-07-13) gentle musical pause for long spaces; prev: up to 3.5x beat pause
+        const extraPause = Math.min(intervalMs * 0.75, (gap - 1) * (intervalMs * 0.12));
         currentTimeMs += extraPause;
       }
     }
