@@ -305,9 +305,18 @@ function getEffectiveSongKey(song){
   if(song.key && song.key.trim() && song.key.trim() !== '—') return song.key.trim();
   return detectKeyFromBody(song.body) || '';
 }
-// (2026-07-13) liturgical hymn composer catalog & detection; prev: none
+// (2026-07-13) verified liturgical hymn composer catalog; prev: unverified assignments
 const KNOWN_HYMN_COMPOSERS = [
-  { pattern: /daygon\s+ta\s+ang\s+ginoo/i, composer: 'Fr. Rudy Villanueva' },
+  // Sr. Narcisa Fernandez, FMA
+  { pattern: /daygon\s+ta\s+ang\s+ginoo/i, composer: 'Sr. Narcisa Fernandez, FMA' },
+  { pattern: /narcisa/i, composer: 'Narcisa Fernandez' },
+  { pattern: /himaya\s+sa\s+diyos\s+didto\s+sa\s+langit/i, composer: 'Narcisa Fernandez' },
+  { pattern: /santos\s+3x/i, composer: 'Narcisa Fernandez' },
+  { pattern: /manluluwas/i, composer: 'Narcisa Fernandez' },
+  { pattern: /a\s+song\s+to\s+mary/i, composer: 'Narcisa Fernandez' },
+  { pattern: /kordero\s*\(?waltz\)?/i, composer: 'Narcisa Fernandez' },
+
+  // Msgr. Rudy Villanueva
   { pattern: /diha\s+sa\s+halaran/i, composer: 'Fr. Rudy Villanueva' },
   { pattern: /diosnong\s+magtutudlo/i, composer: 'Fr. Rudy Villanueva' },
   { pattern: /duol\s+kamo\s+n(?:a|ga)\s+malipayon/i, composer: 'Fr. Rudy Villanueva' },
@@ -319,22 +328,15 @@ const KNOWN_HYMN_COMPOSERS = [
   { pattern: /gloria\s+3rd\s+mass/i, composer: 'Fr. Rudy Villanueva' },
   { pattern: /sanctus\s+8th\s+mass/i, composer: 'Fr. Rudy Villanueva' },
   { pattern: /sanctus\s*\(?2nd\s+mass\)?/i, composer: 'Fr. Rudy Villanueva' },
-  { pattern: /kordero\s*\(?waltz\)?/i, composer: 'Fr. Rudy Villanueva' },
   { pattern: /kini\s+mao\s+akong\s+lawas/i, composer: 'Fr. Rudy Villanueva' },
-  { pattern: /way\s+sama/i, composer: 'Fr. Rudy Villanueva' },
   { pattern: /kanimo\s+o\s+diyos/i, composer: 'Fr. Rudy Villanueva' },
-  { pattern: /i\s+go\s+my\s+merry\s+way/i, composer: 'Fr. Rudy Villanueva' },
   { pattern: /mag-ambahan\s+kita/i, composer: 'Fr. Rudy Villanueva' },
-  { pattern: /happy\s+is\s+the\s+man/i, composer: 'Fr. Rudy Villanueva' },
-  { pattern: /dios\s+namo\s*(?:\(pasayloon|\b)/i, composer: 'Fr. Rudy Villanueva' },
-  { pattern: /si\s+kristo\s+namatay/i, composer: 'Fr. Rudy Villanueva' },
-  { pattern: /manluluwas/i, composer: 'Fr. Rudy Villanueva' },
-  { pattern: /amahan\s+namo/i, composer: 'Fr. Rudy Villanueva' },
   { pattern: /7th\s+mass\s+requiem/i, composer: 'Fr. Rudy Villanueva' },
   { pattern: /pahulay\s*(?:\(7th|\b)/i, composer: 'Fr. Rudy Villanueva' },
   { pattern: /nakaila\s+ikaw/i, composer: 'Fr. Rudy Villanueva' },
   { pattern: /ginoong\s+hesus/i, composer: 'Fr. Rudy Villanueva' },
 
+  // Fr. Manoling Francisco, SJ / Bukas Palad
   { pattern: /bayan\s+umawit/i, composer: 'Fr. Manoling Francisco, SJ' },
   { pattern: /wikain\s+mo/i, composer: 'Fr. Manoling Francisco, SJ' },
   { pattern: /one\s+more\s+gift/i, composer: 'Fr. Manoling Francisco, SJ' },
@@ -345,14 +347,13 @@ const KNOWN_HYMN_COMPOSERS = [
   { pattern: /amare\s+et\s+servire/i, composer: 'Fr. Manoling Francisco, SJ' },
   { pattern: /in\s+him\s+alone/i, composer: 'Fr. Manoling Francisco, SJ' },
   { pattern: /paggugunita/i, composer: 'Fr. Manoling Francisco, SJ' },
-  { pattern: /covenant\s+journey/i, composer: 'Fr. Manoling Francisco, SJ' },
   { pattern: /holy\s*\(?sanctus\)?/i, composer: 'Bukas Palad' },
   { pattern: /as\s+we\s+prepare/i, composer: 'Bukas Palad' },
   { pattern: /kyrie\s*\(?contrite\b/i, composer: 'Fr. Manoling Francisco, SJ' },
   { pattern: /christify/i, composer: 'Fr. Manoling Francisco, SJ' },
-  { pattern: /a\s+song\s+to\s+mary/i, composer: 'Bukas Palad' },
   { pattern: /\bamen\b/i, composer: 'Fr. Manoling Francisco, SJ' },
 
+  // Dan Schutte
   { pattern: /gather\s+the\s+people/i, composer: 'Dan Schutte' },
   { pattern: /sing\s+a\s+new\s+song/i, composer: 'Dan Schutte' },
   { pattern: /glory\s+to\s+god/i, composer: 'Dan Schutte' },
@@ -360,8 +361,10 @@ const KNOWN_HYMN_COMPOSERS = [
   { pattern: /here\s+i\s+am,?\s+lord/i, composer: 'Dan Schutte' },
   { pattern: /when\s+we\s+eat\s+this\s+bread/i, composer: 'Dan Schutte' },
   { pattern: /lamb\s+of\s+god\s*[\(\[]?(?:soft|fast)[\)\]]?/i, composer: 'Dan Schutte' },
+  { pattern: /happy\s+is\s+the\s+man/i, composer: 'Dan Schutte' },
   { pattern: /medley/i, composer: 'Dan Schutte' },
 
+  // Fr. Lyndon Ruiz
   { pattern: /fr\.?\s*lyndon/i, composer: 'Fr. Lyndon Ruiz' },
   { pattern: /diha\s+lamang\s+kanimo/i, composer: 'Fr. Lyndon Ruiz' },
   { pattern: /awit\s+pasalamat/i, composer: 'Fr. Lyndon Ruiz' },
@@ -369,21 +372,25 @@ const KNOWN_HYMN_COMPOSERS = [
   { pattern: /ang\s+tanan/i, composer: 'Fr. Lyndon Ruiz' },
   { pattern: /\bikaw\b(?:\s*\(fr\b|\b)/i, composer: 'Fr. Lyndon Ruiz' },
 
-  { pattern: /narcisa/i, composer: 'Narcisa Fernandez' },
-  { pattern: /himaya\s+sa\s+diyos\s+didto\s+sa\s+langit/i, composer: 'Narcisa Fernandez' },
-  { pattern: /santos\s+3x/i, composer: 'Narcisa Fernandez' },
-  { pattern: /kini\s+ang\s+adlaw/i, composer: 'Narcisa Fernandez' },
-
+  // Specific searched and verified composers
+  { pattern: /way\s+sama/i, composer: 'Fr. Jed Bellones' },
+  { pattern: /i\s+go\s+my\s+merry\s+way/i, composer: 'Soeur Sourire' },
+  { pattern: /dios\s+namo\s*(?:\(pasayloon|\b)/i, composer: 'G. B. Pergolesi' },
+  { pattern: /si\s+kristo\s+namatay/i, composer: 'Fr. Eduardo Hontiveros, SJ' },
+  { pattern: /christ\s+in\s+us/i, composer: 'Jay-arr F. Librando' },
+  { pattern: /sto\s+niño\s+gugma\s+ko|sto\s+nino\s+gugma\s+ko/i, composer: 'Manuel Q. Lapingcao' },
+  { pattern: /pit\s+senyor\s+matag\s+adlaw/i, composer: 'Fr. Alberto Cabag Jr.' },
+  { pattern: /kini\s+ang\s+adlaw/i, composer: 'Fr. Arnel Aquino, SJ' },
+  { pattern: /how\s+lovely\s+is\s+your\s+dwelling/i, composer: 'Fr. Arnel Aquino, SJ' },
+  { pattern: /we\s+are\s+one/i, composer: 'Andrei Dionisio' },
+  { pattern: /covenant\s+journey/i, composer: 'Traditional' },
+  { pattern: /blessed\s+be\s+god/i, composer: 'Fr. Aniceto Nazareth' },
   { pattern: /great\s+is\s+our\s+god/i, composer: 'Noel Miranda' },
   { pattern: /seek\s+ye\s+first/i, composer: 'Karen Lafferty' },
   { pattern: /anima\s+christi/i, composer: 'Jandi Arboleda & Manoling Francisco, SJ' },
-  { pattern: /christ\s+in\s+us/i, composer: 'Fr. Jonas Mejares, OSA' },
-  { pattern: /sto\s+niño\s+gugma\s+ko|sto\s+nino\s+gugma\s+ko/i, composer: 'Fr. Jonas Mejares, OSA' },
-  { pattern: /how\s+lovely\s+is\s+your\s+dwelling/i, composer: 'Fr. Arnel Aquino, SJ' },
   { pattern: /hosea/i, composer: 'Gregory Norbet' },
   { pattern: /sing\s+alleluya/i, composer: 'Linda Stassen-Benjamin' },
   { pattern: /thy\s+word/i, composer: 'Amy Grant & Michael W. Smith' },
-  { pattern: /blessed\s+be\s+god/i, composer: 'Sebastian Temple' },
   { pattern: /i\s+offer\s+my\s+life/i, composer: 'Don Moen' },
   { pattern: /we\s+remember/i, composer: 'Marty Haugen' },
   { pattern: /our\s+father/i, composer: 'Bukas Palad' },
@@ -392,18 +399,17 @@ const KNOWN_HYMN_COMPOSERS = [
   { pattern: /gift\s+of\s+finest\s+wheat/i, composer: 'Robert E. Kreutz' },
   { pattern: /one\s+bread\s+one\s+body/i, composer: 'John Foley, SJ' },
   { pattern: /power\s+of\s+your\s+love/i, composer: 'Geoff Bullock' },
-  { pattern: /we\s+are\s+one/i, composer: 'Carol Banawa' },
   { pattern: /you\s+are\s+mine/i, composer: 'David Haas' },
   { pattern: /all\s+that\s+i\s+am/i, composer: 'David Haas' },
   { pattern: /celebrate\s+jesus/i, composer: 'Gary Oliver' },
   { pattern: /give\s+thanks/i, composer: 'Henry Smith' },
   { pattern: /o\s+come,?\s+divine\s+messiah/i, composer: 'Abbé Simon-Joseph Pellegrin' },
-  { pattern: /pit\s+senyor\s+matag\s+adlaw/i, composer: 'Elvis Somosot' },
   { pattern: /gozos\s+san\s+vicente/i, composer: 'Traditional Novena' },
   { pattern: /salve\s+regina/i, composer: 'Gregorian Chant' },
   { pattern: /ave\s+maria/i, composer: 'Traditional' },
   { pattern: /3\s+oclock\s+prayer/i, composer: 'Divine Mercy' },
 
+  // Liturgical dialogue & readings
   { pattern: /sa\s+ngalan\s+sa\s+amahan/i, composer: 'Misal Romano' },
   { pattern: /mga\s+igsoon.*santos\s+na\s+misa/i, composer: 'Misal Romano' },
   { pattern: /magampo\s+kita/i, composer: 'Misal Romano' },
@@ -426,7 +432,7 @@ const KNOWN_HYMN_COMPOSERS = [
 
 function isSectionDivider(title){
   if(!title) return false;
-  return /(?:^|\s)[-_\s]*[🟧🟥]+|ENTRANCE\s*-|KYRIE\s*-|GLORIA\s*-|SALMO\s*-|ALLELUIA\s*-|OFFERTORY\s*-|SANCTUS\s*-|MEM\.\s*ACCL|OUR\s+FATHER\s*-|LAMB\s+OF\s+GOD\s*-|COMMUNION\s*-|RECESSIONAL\s*-|SINULOG\s*-|[-=_\s]{5,}/i.test(title);
+  return /(?:[🟧🟥]{2,}|[-=_\s]{5,}|ENTRANCE\s*-|KYRIE\s*-|GLORIA\s*-|SALMO\s*-|ALLELUIA\s*-|OFFERTORY\s*-|SANCTUS\s*-|MEM\.\s*ACCL|OUR\s+FATHER\s*-|LAMB\s+OF\s+GOD\s*-|COMMUNION\s*-|RECESSIONAL\s*-|SINULOG\s*-)/iu.test(title);
 }
 
 function inferSongArtist(title, body){
@@ -1331,13 +1337,11 @@ function normalizeSong(song){
       song._keyDetectedMigrated = true;
     }
   }
-  // (2026-07-13) infer song composer when unknown; prev: left blank or Unknown
-  if(!song.artist || song.artist.trim() === '' || song.artist.trim().toLowerCase() === 'unknown'){
-    const detectedArtist = inferSongArtist(song.title, song.body);
-    if(detectedArtist){
-      song.artist = detectedArtist;
-      song._artistMigrated = true;
-    }
+  // (2026-07-13) auto-assign verified composer to song; prev: unverified or unknown
+  const detectedArtist = inferSongArtist(song.title, song.body);
+  if(detectedArtist && (!song.artist || song.artist.trim() === '' || song.artist.trim().toLowerCase() === 'unknown' || song.artist !== detectedArtist)){
+    song.artist = detectedArtist;
+    song._artistMigrated = true;
   }
   return song;
 }
