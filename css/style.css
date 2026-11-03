@@ -11,6 +11,8 @@
   --chord-dim:rgba(255,230,0,0.2);
   --accent:#ff8c00;
   --accent-dim:rgba(255,140,0,0.25);
+  /* (2026-07-13) dynamic accent shadow variable; prev: hardcoded */
+  --accent-shadow:rgba(255,140,0,0.45);
   --danger:#ff5c4d;
   --danger-dim:rgba(255,92,77,0.18);
   --priest:#3ddc84;
@@ -314,18 +316,17 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
 /* (2026-07-13) hideable scroll overlay on speed toggle; prev: always active */
 .scroll-overlay{position:absolute;inset:0;pointer-events:none;z-index:6;}
 .scroll-overlay.hidden{display:none !important;}
-.scroll-square{position:absolute;right:0;width:130px;height:160px;background:transparent;
-  border:none;border-radius:12px 0 0 12px;
+/* (2026-07-13) smaller scroll-square buttons & icons; prev: 130x160px */
+.scroll-square{position:absolute;right:0;width:52px;height:68px;background:transparent;
+  border:none;border-radius:10px 0 0 10px;
   color:var(--text);display:flex;flex-direction:column;align-items:center;justify-content:center;
   pointer-events:auto;transition:background .15s ease;user-select:none;-webkit-user-select:none;}
-/* (2026-07-13) move scroll overlay squares lower; prev: top:15% */
-.scroll-square.up{top:23%;}
-.scroll-square.down{top:calc(23% + 175px);}
+.scroll-square.up{top:32%;}
+.scroll-square.down{top:calc(32% + 78px);}
 .scroll-square:active, .scroll-square.is-pressed{background:rgba(255,255,255,0.08);}
-/* (2026-07-13) make scroll overlay triangles more transparent; prev: 0.30 */
-.scroll-square svg{width:42px;height:42px;opacity:0.10;transition:opacity .15s ease;}
+.scroll-square svg{width:22px;height:16px;opacity:0.10;transition:opacity .15s ease;}
 .scroll-square:active svg, .scroll-square.is-pressed svg{opacity:0.90;}
-.scroll-square-label{font-size:14px;font-weight:700;margin-top:6px;opacity:0;transition:opacity .15s ease;color:#ffffff;pointer-events:none;}
+.scroll-square-label{font-size:10px;font-weight:700;margin-top:2px;opacity:0;transition:opacity .15s ease;color:#ffffff;pointer-events:none;}
 .scroll-square:active .scroll-square-label, .scroll-square.is-pressed .scroll-square-label{opacity:1;}
 
 /* (2026-07-13) add bottom safe area offset for Samsung bottom navigation bar; prev: bottom:10px */
@@ -427,7 +428,8 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
 .btn{flex:1;padding:14px;border-radius:12px;border:none;font-weight:700;font-size:14.5px;cursor:pointer;font-family:inherit;
   min-height:48px;transition:transform .1s ease, filter .15s ease, opacity .15s ease;}
 .btn:active{transform:scale(0.96);filter:brightness(0.92);}
-.btn-primary{background:var(--accent);color:#0c1210;box-shadow:0 4px 14px -4px rgba(255,140,0,.5);}
+/* (2026-07-13) match primary button shadow to accent; prev: hardcoded orange */
+.btn-primary{background:var(--accent);color:#0c1210;box-shadow:0 4px 14px -4px var(--accent-shadow, rgba(56,128,255,.45));}
 .btn-secondary{background:var(--bg-elev2);color:var(--text);border:1.5px solid var(--line);}
 .btn-danger{background:transparent;color:var(--danger);border:1.5px solid var(--danger);}
 .btn:disabled{opacity:0.45;pointer-events:none;transform:none;}

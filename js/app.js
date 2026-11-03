@@ -1264,6 +1264,8 @@ function applyFolderTheme(catName){
   root.style.setProperty('--line', t.line);
   root.style.setProperty('--accent', t.accent);
   root.style.setProperty('--accent-dim', t.dim);
+  // (2026-07-13) update --accent-shadow for folder theme; prev: static orange
+  root.style.setProperty('--accent-shadow', t.accent ? (t.accent + '70') : 'rgba(255,140,0,.45)');
 }
 
 // (2026-07-13) block image drag and non-input text drag globally; prev: none
@@ -6563,8 +6565,6 @@ function subscribeRealtimeSync(){
   }
 })();
 
-})();
-
 // (2026-07-13) universal back button handling for modals & viewer; prev: none
 function handleUniversalBack(){
   if(state.modal){
@@ -6632,3 +6632,6 @@ document.addEventListener('click', (e)=>{
   e.stopPropagation();
   handleStaffPlayClick(btn);
 });
+
+// (2026-07-13) close main IIFE after global listeners; prev: premature close
+})();
