@@ -647,8 +647,7 @@ function uid(){ return Date.now().toString(36) + Math.random().toString(36).slic
 const DEFAULT_MASS_PARTS = ['Entrance','Kyrie','Gloria','Responsorial Psalm','Gospel Acclamation',
   'Offertory','Sanctus','Memorial Acclamation','Our Father','Lamb of God','Communion','Recessional','Other'];
 
-// (2026-07-13) add Bisaya mass part cues dictionary; prev: none
-// (2026-07-13) clean acoustic piano synth without clipping; prev: clipped 1.85x
+// (2026-07-13) boost piano audio volume & clarity; prev: 0.85 master gain
 let pianoAudioCtx = null, pianoMasterBus = null;
 function playPianoNote(noteIdx){
   try{
@@ -656,13 +655,13 @@ function playPianoNote(noteIdx){
     if(pianoAudioCtx.state === 'suspended') pianoAudioCtx.resume();
     if(!pianoMasterBus){
       const comp = pianoAudioCtx.createDynamicsCompressor();
-      comp.threshold.value = -3;
-      comp.knee.value = 4;
-      comp.ratio.value = 12;
-      comp.attack.value = 0.003;
-      comp.release.value = 0.2;
+      comp.threshold.value = -1.0;
+      comp.knee.value = 6;
+      comp.ratio.value = 16;
+      comp.attack.value = 0.002;
+      comp.release.value = 0.15;
       const masterGain = pianoAudioCtx.createGain();
-      masterGain.gain.value = 0.85;
+      masterGain.gain.value = 1.65;
       comp.connect(masterGain);
       masterGain.connect(pianoAudioCtx.destination);
       pianoMasterBus = comp;
@@ -672,17 +671,17 @@ function playPianoNote(noteIdx){
     const freq = 261.6256 * Math.pow(2, noteIdx / 12);
     const filter = pianoAudioCtx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(freq * 6, now);
-    filter.frequency.exponentialRampToValueAtTime(Math.max(freq * 1.5, 380), now + 1.2);
+    filter.frequency.setValueAtTime(freq * 8, now);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(freq * 2.4, 520), now + 1.4);
     filter.Q.value = 1.0;
     filter.connect(pianoMasterBus);
 
     const partials = [
-      { mult: 1, type: 'sine', peak: 0.50, decay: 1.8 },
-      { mult: 1, type: 'triangle', peak: 0.18, decay: 1.4 },
-      { mult: 2, type: 'sine', peak: 0.16, decay: 1.0 },
-      { mult: 3, type: 'sine', peak: 0.06, decay: 0.55 },
-      { mult: 4, type: 'sine', peak: 0.02, decay: 0.3 }
+      { mult: 1, type: 'sine', peak: 0.95, decay: 1.8 },
+      { mult: 1, type: 'triangle', peak: 0.38, decay: 1.4 },
+      { mult: 2, type: 'sine', peak: 0.32, decay: 1.0 },
+      { mult: 3, type: 'sine', peak: 0.14, decay: 0.55 },
+      { mult: 4, type: 'sine', peak: 0.05, decay: 0.3 }
     ];
     partials.forEach(p=>{
       const osc = pianoAudioCtx.createOscillator();
