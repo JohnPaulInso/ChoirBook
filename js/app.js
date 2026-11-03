@@ -926,6 +926,8 @@ const state = {
   sortBy: 'massflow',
   filterCat: 'All',
   filterMassPart: null, // when set, list view is browsing by mass part instead of folder
+  // (2026-07-13) add filterFlag for flag browse mode; prev: none
+  filterFlag: null,
   sidebarOpen: false,
   currentId: null,
   editingDraft: null,
@@ -1858,7 +1860,17 @@ function sortSongsArray(arr, massPart){
 function getFilteredSongsForCurrentView(){
   syncLiturgicalDialogues(false);
   let songs = state.songs.slice();
-  if(state.filterMassPart){
+  // (2026-07-13) filter by flag in flag view mode; prev: mass/cat only
+  if(state.filterFlag){
+    if(state.filterFlag === 'all'){
+      songs = songs.filter(s => getSongFlag(s) !== null);
+    } else {
+      songs = songs.filter(s => {
+        const f = getSongFlag(s);
+        return f && f.key === state.filterFlag;
+      });
+    }
+  } else if(state.filterMassPart){
     songs = songs.filter(s=>(s.massParts||[]).includes(state.filterMassPart));
   } else if(state.filterCat==='Favorites'){
     songs = songs.filter(s=>s.favorite);
@@ -1987,6 +1999,8 @@ function getOrderedSongSections(songs){
 
 // (2026-07-13) include/exclude songs per folder & skip excluded on swipe; prev: checkedSongIds
 function getActiveScopeKey(){
+  // (2026-07-13) scope key for flag browsing mode; prev: mp or cat
+  if(state.filterFlag) return 'flag:' + state.filterFlag;
   return state.filterMassPart ? ('mp:' + state.filterMassPart) : (state.filterCat || 'All');
 }
 function isSongExcluded(s, scopeKey){
@@ -2078,7 +2092,7 @@ function buildSongListRowsHtml(){
     rows += `<div class="song-section-group" data-group-mp="${escapeHtml(sec.massPart||'')}">${secHtml}</div>`;
   });
   if(songs.length===0){
-    rows = `<div class="empty-state">No songs here yet.<br>Tap the + button to add one, or long-press a song to file it in this ${state.filterMassPart?'Mass Part':'folder'}.</div>`;
+    rows = `<div class="empty-state">No songs here yet.<br>Tap the + button to add one, or long-press a song to file it in this ${state.filterFlag?'flag color':(state.filterMassPart?'Mass Part':'folder')}.</div>`;
   }
   return rows;
 }
@@ -2107,19 +2121,34 @@ function renderListView(animateChipScroll){
   const rows = buildSongListRowsHtml();
 
   const cats = ['All', 'Favorites', ...state.categories];
-  const chips = state.filterMassPart
-    ? `<div class="chip active" data-back-to-folders="1">&larr; ${escapeHtml(state.filterMassPart)}</div>`
-    : cats.map(c=>{
-        const ct = getFolderTheme(c);
-        const isActive = state.filterCat === c;
-        const styleAttr = isActive
-          ? `style="background:${ct.dim};border-color:${ct.accent};color:${ct.accent};"`
-          : `style="border-color:${ct.dim};"`;
-        return `<div class="chip ${isActive?'active':''}" data-cat="${escapeHtml(c)}" ${styleAttr}><span class="chip-dot" style="background:${ct.swatch};"></span>${escapeHtml(c)}</div>`;
-      }).join('') + `<button class="chip-palette-btn ${state.showChipColorPicker?'active':''}" id="btn-chip-palette" title="Folder Color Theme">${iconPalette()}</button>`;
+  // (2026-07-13) render flag color chips when in flag browse mode; prev: folder chips only
+  let chips = '';
+  if(state.filterFlag){
+    const allActive = state.filterFlag === 'all';
+    const allChip = `<div class="chip ${allActive?'active':''}" data-flag-chip="all"><span class="chip-dot" style="background:var(--accent);"></span>All Flags</div>`;
+    const flagChips = SONG_FLAGS.map(f=>{
+      const isActive = state.filterFlag === f.key;
+      const styleAttr = isActive
+        ? `style="background:${f.color}26;border-color:${f.color};color:${f.color};"`
+        : `style="border-color:${f.color}55;"`;
+      return `<div class="chip ${isActive?'active':''}" data-flag-chip="${f.key}" ${styleAttr}><span class="chip-dot" style="background:${f.color};"></span>${f.name}</div>`;
+    }).join('');
+    chips = allChip + flagChips;
+  } else if(state.filterMassPart){
+    chips = `<div class="chip active" data-back-to-folders="1">&larr; ${escapeHtml(state.filterMassPart)}</div>`;
+  } else {
+    chips = cats.map(c=>{
+      const ct = getFolderTheme(c);
+      const isActive = state.filterCat === c;
+      const styleAttr = isActive
+        ? `style="background:${ct.dim};border-color:${ct.accent};color:${ct.accent};"`
+        : `style="border-color:${ct.dim};"`;
+      return `<div class="chip ${isActive?'active':''}" data-cat="${escapeHtml(c)}" ${styleAttr}><span class="chip-dot" style="background:${ct.swatch};"></span>${escapeHtml(c)}</div>`;
+    }).join('') + `<button class="chip-palette-btn ${state.showChipColorPicker?'active':''}" id="btn-chip-palette" title="Folder Color Theme">${iconPalette()}</button>`;
+  }
 
   const activeThemeKey = (state.folderColors && state.folderColors[state.filterCat]) || 'gold';
-  const colorBarHtml = state.showChipColorPicker ? `
+  const colorBarHtml = (!state.filterFlag && state.showChipColorPicker) ? `
     <div class="chip-color-bar">
       <span class="chip-color-label">Theme for "${escapeHtml(state.filterCat)}":</span>
       <div class="chip-color-swatches">
@@ -2129,7 +2158,10 @@ function renderListView(animateChipScroll){
       </div>
     </div>` : '';
 
-  const headerTitle = state.filterMassPart ? escapeHtml(state.filterMassPart) : (state.filterCat==='All' ? 'My Songbook' : escapeHtml(state.filterCat));
+  // (2026-07-13) display active flag name or Flags in header; prev: folder only
+  const headerTitle = state.filterFlag
+    ? (state.filterFlag === 'all' ? 'Flags' : `${(SONG_FLAGS.find(x=>x.key===state.filterFlag)||{}).name || ''} Flag`)
+    : (state.filterMassPart ? escapeHtml(state.filterMassPart) : (state.filterCat==='All' ? 'My Songbook' : escapeHtml(state.filterCat)));
   const existingListWrap = document.getElementById('list-wrap');
   const prevListScroll = existingListWrap ? existingListWrap.scrollTop : 0;
 
@@ -2393,8 +2425,16 @@ function renderListView(animateChipScroll){
   }
   document.getElementById('btn-open-sidebar').onclick = ()=>{ state.sidebarOpen = true; renderListView(); };
   // (2026-07-13) persist selected filter category to cache; prev: state only
+  // (2026-07-13) wire flag chip click filtering; prev: none
+  document.querySelectorAll('.chip[data-flag-chip]').forEach(el=>{
+    el.onclick = ()=>{
+      state.filterFlag = el.dataset.flagChip;
+      renderListView(true);
+    };
+  });
   document.querySelectorAll('.chip[data-cat]').forEach(el=>{
     el.onclick = ()=>{
+      state.filterFlag = null;
       state.filterCat = el.dataset.cat;
       localStorage.setItem('ui:filterCat', state.filterCat);
       state.filterMassPart = null;
@@ -2418,7 +2458,7 @@ function renderListView(animateChipScroll){
     }
   }
   const backChip = document.querySelector('[data-back-to-folders]');
-  if(backChip) backChip.onclick = ()=>{ state.filterMassPart = null; state.filterCat = 'All'; applyFolderTheme('All'); renderListView(); };
+  if(backChip) backChip.onclick = ()=>{ state.filterFlag = null; state.filterMassPart = null; state.filterCat = 'All'; applyFolderTheme('All'); renderListView(); };
 
   wireListWrapRows();
   wireSidebar();
@@ -4223,8 +4263,10 @@ function sidebarHtml(){
           <div style="font-weight:800;font-size:16px;">My Songbook</div>
           <button class="icon-btn" id="btn-close-sidebar">${iconClose()}</button>
         </div>
-        <div class="side-item" data-goto-all="1" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;">${iconMusic()}</span><span style="flex:1;text-align:left;">All Songs</span></div>
-        <div class="side-item" data-goto-fav="1" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;color:var(--chord);">${iconStar(true)}</span><span style="flex:1;text-align:left;">Favorites</span></div>
+        <div class="side-item ${!state.filterFlag && !state.filterMassPart && state.filterCat==='All'?'selected':''}" data-goto-all="1" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;">${iconMusic()}</span><span style="flex:1;text-align:left;">All Songs</span></div>
+        <div class="side-item ${!state.filterFlag && !state.filterMassPart && state.filterCat==='Favorites'?'selected':''}" data-goto-fav="1" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;color:var(--chord);">${iconStar(true)}</span><span style="flex:1;text-align:left;">Favorites</span></div>
+        <!-- (2026-07-13) sidebar flags page link with flagged songs badge; prev: none -->
+        <div class="side-item ${state.filterFlag?'selected':''}" data-goto-flags="1" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;"><span class="song-flag-pill" style="background-color:#ef4444;width:13px;height:17px;margin:0 1px 0 0;"></span></span><span style="flex:1;text-align:left;">Flags</span><span class="side-count">${state.songs.filter(s=>getSongFlag(s)).length}</span></div>
         <div class="side-item" data-goto-setlists="1" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;">${iconSetlist()}</span><span style="flex:1;text-align:left;">Setlists / Mass Plans</span><span class="side-count">${state.setlists.length}</span></div>
         <div class="side-section-label" style="display:flex;align-items:center;justify-content:space-between;"><span>FOLDERS / SEASONS</span><span style="font-size:9.5px;color:var(--accent);font-weight:700;letter-spacing:0.5px;">&#9729; Database</span></div>
         ${folderItems}
@@ -4274,14 +4316,19 @@ function wireSidebar(){
     }
   }, {passive:true});
 
-  document.querySelector('[data-goto-all]').onclick = ()=>{ closeSidebar(()=>{ state.filterCat='All'; state.filterMassPart=null; renderListView(); }); };
-  document.querySelector('[data-goto-fav]').onclick = ()=>{ closeSidebar(()=>{ state.filterCat='Favorites'; state.filterMassPart=null; renderListView(); }); };
-  document.querySelector('[data-goto-setlists]').onclick = ()=>{ closeSidebar(()=>{ state.view='setlists'; render(); }); };
+  document.querySelector('[data-goto-all]').onclick = ()=>{ closeSidebar(()=>{ state.filterFlag=null; state.filterCat='All'; state.filterMassPart=null; renderListView(); }); };
+  document.querySelector('[data-goto-fav]').onclick = ()=>{ closeSidebar(()=>{ state.filterFlag=null; state.filterCat='Favorites'; state.filterMassPart=null; renderListView(); }); };
+  // (2026-07-13) wire sidebar navigation to flags page; prev: none
+  const sideFlagsBtn = document.querySelector('[data-goto-flags]');
+  if(sideFlagsBtn){
+    sideFlagsBtn.onclick = ()=>{ closeSidebar(()=>{ state.filterFlag='all'; state.filterCat=null; state.filterMassPart=null; renderListView(); }); };
+  }
+  document.querySelector('[data-goto-setlists]').onclick = ()=>{ closeSidebar(()=>{ state.filterFlag=null; state.view='setlists'; render(); }); };
   // (2026-07-13) wire sidebar folder edit modal; prev: inline swatches
   document.querySelectorAll('[data-goto-folder]').forEach(el=>{
     el.onclick = (e)=>{
       if(e.target.closest('[data-rename-folder],[data-del-folder]')) return;
-      closeSidebar(()=>{ state.filterCat = el.dataset.gotoFolder; state.filterMassPart=null; renderListView(); });
+      closeSidebar(()=>{ state.filterFlag=null; state.filterCat = el.dataset.gotoFolder; state.filterMassPart=null; renderListView(); });
     };
   });
   document.querySelectorAll('[data-rename-folder]').forEach(btn=>{
@@ -4313,7 +4360,7 @@ function wireSidebar(){
     };
   });
   document.querySelectorAll('[data-goto-masspart]').forEach(el=>{
-    el.onclick = ()=>{ closeSidebar(()=>{ state.filterMassPart = el.dataset.gotoMasspart; renderListView(); }); };
+    el.onclick = ()=>{ closeSidebar(()=>{ state.filterFlag=null; state.filterMassPart = el.dataset.gotoMasspart; renderListView(); }); };
   });
   document.getElementById('side-add-folder').onclick = ()=>{ closeSidebar(()=>{ state.modal={type:'categories'}; renderListView(); }); };
   document.getElementById('side-add-masspart').onclick = ()=>{ closeSidebar(()=>{ state.modal={type:'massparts'}; renderListView(); }); };

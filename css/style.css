@@ -376,6 +376,8 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
   letter-spacing:.5px;padding:14px 10px 6px;}
 .side-item{display:flex;align-items:center;justify-content:space-between;padding:12px 10px;border-radius:12px;
   font-size:14px;cursor:pointer;transition:background-color .15s ease, transform .1s ease;}
+/* (2026-07-13) active selected state for sidebar items; prev: none */
+.side-item.selected{background:var(--bg-elev2);color:var(--accent);font-weight:700;}
 .side-item:active{background:var(--bg-elev2);transform:scale(0.98);}
 @media (hover:hover){ .side-item:hover{background:var(--bg-elev2);} }
 .side-count{font-size:11px;color:var(--text-dim);background:var(--bg-elev2);padding:2px 7px;border-radius:10px;}
