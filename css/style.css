@@ -206,9 +206,9 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
 .chart-meta-inline b{color:var(--text);font-weight:700;}
 .chart-meta-inline span{margin-right:12px;display:inline-block;}
 
-/* (2026-07-13) force line breaks on long texts in song notepad; prev: pre */
-.chart-wrap{flex:1;overflow-y:auto;overflow-x:hidden;max-width:100%;box-sizing:border-box;padding:18px 16px 45vh;-webkit-overflow-scrolling:touch;touch-action:pan-y pinch-zoom;
-  scroll-behavior:auto;font-size:15px;}
+/* (2026-07-13) chart-wrap sizing in slider track; prev: flex:1 */
+.chart-wrap{width:100%;min-width:100%;flex-shrink:0;height:100%;overflow-y:auto;overflow-x:hidden;max-width:100%;box-sizing:border-box;padding:18px 16px 45vh;-webkit-overflow-scrolling:touch;touch-action:pan-y pinch-zoom;
+  scroll-behavior:auto;font-size:15px;position:relative;}
 .chart-title{font-family:'Manrope';font-size:1.33em;font-weight:800;margin-bottom:2px;overflow-wrap:anywhere;word-break:break-word;}
 .chart-artist{font-size:0.87em;color:var(--text-dim);margin-bottom:8px;overflow-wrap:anywhere;}
 .chart-meta-inline{font-size:0.77em;color:var(--text-dim);margin-bottom:18px;line-height:1.7;}
@@ -249,8 +249,16 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
 .fav-btn{color:var(--text);transition:color .15s ease;}
 .fav-btn.is-fav{color:var(--chord);filter:drop-shadow(0 0 6px var(--chord)) drop-shadow(0 0 12px var(--chord-dim));}
 
-/* (2026-07-13) add touch-action pinch-zoom to viewer-body; prev: no touch-action */
-.viewer-body{flex:1;display:flex;position:relative;min-height:0;touch-action:pan-y pinch-zoom;}
+/* (2026-07-13) carousel slider track & peek slide panels; prev: none */
+.viewer-body{flex:1;display:flex;position:relative;min-height:0;touch-action:pan-y pinch-zoom;overflow:hidden;}
+.viewer-slider-track{position:relative;flex:1;display:flex;width:100%;height:100%;overflow:visible;min-height:0;will-change:transform;}
+.swipe-peek-slide{position:absolute;top:0;bottom:0;width:100%;box-sizing:border-box;padding:24px 20px;overflow:hidden;pointer-events:none;background:var(--bg);z-index:3;border-left:1px solid rgba(255,255,255,0.08);border-right:1px solid rgba(255,255,255,0.08);box-shadow:inset 0 0 20px rgba(0,0,0,0.5);}
+.swipe-peek-slide.is-prev{left:-100%;}
+.swipe-peek-slide.is-next{left:100%;}
+.peek-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;padding:3px 9px;border-radius:6px;background:rgba(224,142,66,0.14);}
+.peek-song-title{font-size:18px;font-weight:800;color:var(--text);margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:6px;}
+.peek-song-sub{font-size:12px;color:var(--text-dim);margin-bottom:14px;}
+.peek-body-preview{font-family:'JetBrains Mono',monospace;font-size:12px;color:rgba(255,255,255,0.65);white-space:pre-wrap;line-height:1.5;overflow:hidden;max-height:60vh;}
 
 /* (2026-07-13) hideable scroll overlay on speed toggle; prev: always active */
 .scroll-overlay{position:absolute;inset:0;pointer-events:none;z-index:6;}
@@ -263,7 +271,8 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
 .scroll-square.up{top:23%;}
 .scroll-square.down{top:calc(23% + 175px);}
 .scroll-square:active, .scroll-square.is-pressed{background:rgba(255,255,255,0.08);}
-.scroll-square svg{width:42px;height:42px;opacity:0.30;transition:opacity .15s ease;}
+/* (2026-07-13) make scroll overlay triangles more transparent; prev: 0.30 */
+.scroll-square svg{width:42px;height:42px;opacity:0.10;transition:opacity .15s ease;}
 .scroll-square:active svg, .scroll-square.is-pressed svg{opacity:0.90;}
 .scroll-square-label{font-size:14px;font-weight:700;margin-top:6px;opacity:0;transition:opacity .15s ease;color:#ffffff;pointer-events:none;}
 .scroll-square:active .scroll-square-label, .scroll-square.is-pressed .scroll-square-label{opacity:1;}

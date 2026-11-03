@@ -2819,6 +2819,23 @@ function renderIntroMelodySection(introMelody){
     </div>`;
 }
 
+// (2026-07-13) render adjacent peek slide for horizontal carousel swipe; prev: none
+function renderPeekSlide(s, isNext){
+  if(!s) return '';
+  const flag = getSongFlag(s);
+  const flagPill = flag ? `<span class="song-flag-pill" style="background-color:${flag.color};"></span>` : '';
+  const title = cleanSongTitleForDisplay(s.title);
+  const keyLabel = transposeKeyLabel(s.key, s.transposeOffset||0) || '—';
+  const previewLines = (s.body || '').split('\n').slice(0, 14).join('\n');
+  return `
+    <div class="swipe-peek-slide ${isNext?'is-next':'is-prev'}" id="${isNext?'peek-slide-next':'peek-slide-prev'}">
+      <div class="peek-badge">${isNext ? 'Next Song &rarr;' : '&larr; Previous Song'}</div>
+      <div class="peek-song-title">${flagPill}<span>${escapeHtml(title)}</span></div>
+      <div class="peek-song-sub">${escapeHtml(s.artist||'Unknown')} &middot; Key ${escapeHtml(keyLabel)} &middot; Capo ${s.capo||0}</div>
+      <div class="peek-body-preview">${escapeHtml(previewLines)}</div>
+    </div>`;
+}
+
 function renderViewer(){
   const song = currentSong();
   if(!song){ state.view='list'; return renderListView(); }
@@ -2870,28 +2887,33 @@ function renderViewer(){
       <button class="icon-btn" id="btn-adjust" title="Menu">${iconDots()}</button>
     </div>
     <div class="viewer-body">
-      <div class="chart-wrap" id="chart-wrap" style="font-size:${fontSize}px">
-        <!-- (2026-07-13) hardware subpixel scroll content container; prev: direct chart children -->
-        <div class="chart-scroll-content" id="chart-scroll-content">
-          ${renderMassPartCueCard(song)}
-          <div class="chart-title" style="display:flex;align-items:center;gap:6px;">
-            ${(()=>{ const vf = getSongFlag(song); return vf ? `<span class="song-flag-pill" style="background-color:${vf.color};"></span>` : ''; })()}
-            <span>${escapeHtml(cleanSongTitleForDisplay(song.title))}</span>
+      <!-- (2026-07-13) carousel slider track with next/previous slide peek; prev: single wrap -->
+      <div class="viewer-slider-track" id="viewer-slider-track">
+        ${prevSong ? renderPeekSlide(prevSong, false) : ''}
+        <div class="chart-wrap" id="chart-wrap" style="font-size:${fontSize}px">
+          <!-- (2026-07-13) hardware subpixel scroll content container; prev: direct chart children -->
+          <div class="chart-scroll-content" id="chart-scroll-content">
+            ${renderMassPartCueCard(song)}
+            <div class="chart-title" style="display:flex;align-items:center;gap:6px;">
+              ${(()=>{ const vf = getSongFlag(song); return vf ? `<span class="song-flag-pill" style="background-color:${vf.color};"></span>` : ''; })()}
+              <span>${escapeHtml(cleanSongTitleForDisplay(song.title))}</span>
+            </div>
+            <div class="chart-artist">${escapeHtml(song.artist||'')}</div>
+            <div class="chart-meta-inline">
+              <span>Key <b>${escapeHtml(transposeKeyLabel(song.key, offset)||'—')}</b></span>
+              <span>Capo <b>${song.capo||0}</b></span>
+              <span>Tempo <b>${song.tempo||'—'}</b> BPM</span>
+              <span>Time <b>${escapeHtml(song.timeSig||'4/4')}</b></span>
+              <span>Style <b>${escapeHtml(song.style||'—')}</b></span>
+              <span>Instr. <b>${escapeHtml(song.instrument||'—')}</b></span>
+              ${song.referenceUrl ? `<span><a href="${escapeHtml(song.referenceUrl)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;font-weight:700;">&#9654; Reference</a></span>` : ''}
+            </div>
+            ${renderIntroMelodySection(song.introMelody)}
+            <div class="chart-body" id="chart-body">${lines}</div>
+            ${renderMassPartFooterCue(song)}
           </div>
-          <div class="chart-artist">${escapeHtml(song.artist||'')}</div>
-          <div class="chart-meta-inline">
-            <span>Key <b>${escapeHtml(transposeKeyLabel(song.key, offset)||'—')}</b></span>
-            <span>Capo <b>${song.capo||0}</b></span>
-            <span>Tempo <b>${song.tempo||'—'}</b> BPM</span>
-            <span>Time <b>${escapeHtml(song.timeSig||'4/4')}</b></span>
-            <span>Style <b>${escapeHtml(song.style||'—')}</b></span>
-            <span>Instr. <b>${escapeHtml(song.instrument||'—')}</b></span>
-            ${song.referenceUrl ? `<span><a href="${escapeHtml(song.referenceUrl)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;font-weight:700;">&#9654; Reference</a></span>` : ''}
-          </div>
-          ${renderIntroMelodySection(song.introMelody)}
-          <div class="chart-body" id="chart-body">${lines}</div>
-          ${renderMassPartFooterCue(song)}
         </div>
+        ${nextSong ? renderPeekSlide(nextSong, true) : ''}
       </div>
       <!-- (2026-07-13) toggleable scroll overlay & min speed 1; prev: always visible -->
       <div class="scroll-overlay ${state.showSpeedControls === false ? 'hidden' : ''}" id="scroll-overlay">
@@ -3030,13 +3052,14 @@ function renderViewer(){
   const viewerBodyEl = document.querySelector('.viewer-body');
   if(viewerBodyEl){
     let startX = 0, startY = 0, startTime = 0;
-    // (2026-07-13) desktop mouse & touch horizontal swipe navigation with peek; prev: touch only
+    // (2026-07-13) translate carousel slider track to peek adjacent slide; prev: chartWrap
     let isSwipeDrag = false, swipeStartX = 0, swipeStartY = 0, swipeDx = 0, swipeStartT = 0;
+    const sliderTrack = document.getElementById('viewer-slider-track');
     const resetPeek = ()=>{
-      if(chartWrap){
-        chartWrap.style.transition = 'transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1)';
-        chartWrap.style.transform = 'translateX(0)';
-        setTimeout(()=>{ if(chartWrap) chartWrap.style.transition = ''; }, 240);
+      if(sliderTrack){
+        sliderTrack.style.transition = 'transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1)';
+        sliderTrack.style.transform = 'translate3d(0, 0, 0)';
+        setTimeout(()=>{ if(sliderTrack) sliderTrack.style.transition = ''; }, 240);
       }
     };
     const handleSwipeStart = (clientX, clientY, target)=>{
@@ -3048,7 +3071,7 @@ function renderViewer(){
       swipeStartY = clientY;
       swipeDx = 0;
       swipeStartT = Date.now();
-      if(chartWrap) chartWrap.style.transition = 'none';
+      if(sliderTrack) sliderTrack.style.transition = 'none';
       return true;
     };
     const handleSwipeMove = (clientX, clientY)=>{
@@ -3061,9 +3084,9 @@ function renderViewer(){
         return;
       }
       swipeDx = dx;
-      if(chartWrap){
-        const resist = (dx < 0 && !nextSong) || (dx > 0 && !prevSong) ? 0.15 : 0.45;
-        chartWrap.style.transform = `translateX(${(dx * resist).toFixed(1)}px)`;
+      if(sliderTrack){
+        const resist = (dx < 0 && !nextSong) || (dx > 0 && !prevSong) ? 0.18 : 0.82;
+        sliderTrack.style.transform = `translate3d(${(dx * resist).toFixed(1)}px, 0, 0)`;
       }
     };
     const handleSwipeEnd = ()=>{
@@ -3072,12 +3095,18 @@ function renderViewer(){
       const dt = Date.now() - swipeStartT;
       if(dt < 800 && Math.abs(swipeDx) > 55){
         if(swipeDx < 0 && nextSong){
-          if(chartWrap) chartWrap.style.transform = 'translateX(-100%)';
-          setTimeout(()=> openViewer(nextSong.id, state.cameFromSetlistId), 120);
+          if(sliderTrack){
+            sliderTrack.style.transition = 'transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1)';
+            sliderTrack.style.transform = 'translate3d(-100%, 0, 0)';
+          }
+          setTimeout(()=> openViewer(nextSong.id, state.cameFromSetlistId), 180);
           return;
         } else if(swipeDx > 0 && prevSong){
-          if(chartWrap) chartWrap.style.transform = 'translateX(100%)';
-          setTimeout(()=> openViewer(prevSong.id, state.cameFromSetlistId), 120);
+          if(sliderTrack){
+            sliderTrack.style.transition = 'transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1)';
+            sliderTrack.style.transform = 'translate3d(100%, 0, 0)';
+          }
+          setTimeout(()=> openViewer(prevSong.id, state.cameFromSetlistId), 180);
           return;
         }
       }
