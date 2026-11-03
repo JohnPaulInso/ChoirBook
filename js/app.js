@@ -2012,7 +2012,7 @@ function renderSongRowHtml(s, secMassPart){
   const isExcluded = isSongExcluded(s);
   const isChecked = state.checkedSongIds.includes(s.id);
   const flag = getSongFlag(s);
-  const flagPill = flag ? `<span class="song-flag-pill" style="background:${flag.color};" title="${flag.name} Flag"></span>` : '';
+  const flagPill = flag ? `<span class="song-flag-pill" style="background-color:${flag.color};" title="${flag.name} Flag"></span>` : '';
   const displayTitle = cleanSongTitleForDisplay(s.title);
   const leftControl = state.listEditMode
     ? `<button class="song-check-btn ${isChecked?'checked':''}" data-check-id="${s.id}" title="${isChecked?'Deselect':'Select'}">${isChecked?iconCheckSmall():''}</button>`
@@ -2833,7 +2833,7 @@ function renderViewer(){
       <button class="icon-btn" id="btn-back">${iconBack()}</button>
       <button class="icon-btn" id="btn-prev-song" ${prevSong?'':'disabled'} title="${prevSong?escapeHtml(prevSong.title):'No previous song'}">${iconChevronLeft()}</button>
       <h1 style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;font-weight:700;display:flex;align-items:center;gap:6px;">
-        ${(()=>{ const vf = getSongFlag(song); return vf ? `<span class="song-flag-pill" style="background:${vf.color};"></span>` : ''; })()}
+        ${(()=>{ const vf = getSongFlag(song); return vf ? `<span class="song-flag-pill" style="background-color:${vf.color};"></span>` : ''; })()}
         <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(cleanSongTitleForDisplay(song.title))}</span>
       </h1>
       <button class="icon-btn" id="btn-next-song" ${nextSong?'':'disabled'} title="${nextSong?escapeHtml(nextSong.title):'No next song'}">${iconChevronRight()}</button>
@@ -2846,7 +2846,7 @@ function renderViewer(){
       <div class="chart-wrap" id="chart-wrap" style="font-size:${fontSize}px">
         ${renderMassPartCueCard(song)}
         <div class="chart-title" style="display:flex;align-items:center;gap:6px;">
-          ${(()=>{ const vf = getSongFlag(song); return vf ? `<span class="song-flag-pill" style="background:${vf.color};"></span>` : ''; })()}
+          ${(()=>{ const vf = getSongFlag(song); return vf ? `<span class="song-flag-pill" style="background-color:${vf.color};"></span>` : ''; })()}
           <span>${escapeHtml(cleanSongTitleForDisplay(song.title))}</span>
         </div>
         <div class="chart-artist">${escapeHtml(song.artist||'')}</div>
@@ -3468,7 +3468,7 @@ function renderEditor(){
           ${SONG_FLAGS.map(f=>{
             const curFlag = d.flag || (getSongFlag(d)?.key);
             const isSel = curFlag === f.key;
-            return `<button type="button" class="theme-swatch-btn ${isSel?'selected':''}" data-editor-flag="${f.key}" title="${f.name}" style="background:${f.color};width:24px;height:16px;border-radius:4px;border:1.5px solid ${isSel?'#fff':'rgba(255,255,255,0.25)'};cursor:pointer;"></button>`;
+            return `<button type="button" class="flag-swatch-btn ${isSel?'selected':''}" data-editor-flag="${f.key}" title="${f.name}" style="background-color:${f.color};"></button>`;
           }).join('')}
         </div>
       </div>
@@ -4234,7 +4234,7 @@ function modalHtml(){
         <div class="modal">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
             <h3 style="margin:0;display:flex;align-items:center;gap:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px;">
-              ${curFlag ? `<span class="song-flag-pill" style="background:${curFlag.color};"></span>` : ''}
+              ${curFlag ? `<span class="song-flag-pill" style="background-color:${curFlag.color};"></span>` : ''}
               <span>${escapeHtml(cleanSongTitleForDisplay(song.title))}</span>
             </h3>
             <button class="icon-btn" id="modal-x" style="width:28px;height:28px;flex-shrink:0;">${iconClose()}</button>
@@ -4256,7 +4256,7 @@ function modalHtml(){
             <div style="display:flex;align-items:center;gap:8px;padding:4px 0;overflow-x:auto;">
               ${SONG_FLAGS.map(f=>{
                 const isSel = curFlag && curFlag.key === f.key;
-                return `<button type="button" class="theme-swatch-btn ${isSel?'selected':''}" data-ctx-flag="${f.key}" title="${f.name}" style="background:${f.color};width:24px;height:16px;border-radius:4px;border:1.5px solid ${isSel?'#fff':'rgba(255,255,255,0.25)'};cursor:pointer;"></button>`;
+                return `<button type="button" class="flag-swatch-btn ${isSel?'selected':''}" data-ctx-flag="${f.key}" title="${f.name}" style="background-color:${f.color};"></button>`;
               }).join('')}
             </div>
           </div>
