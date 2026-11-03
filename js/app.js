@@ -2915,6 +2915,9 @@ function renderCueChordPills(chordStr, cueId){
 function renderMassPartCueCard(song){
   // (2026-07-13) render piano pitch finder on liturgical dialogue songs; prev: omitted
   if(song.id && String(song.id).startsWith('lit-')){
+    // (2026-07-13) only show piano on dialogue songs with chords; prev: all lit- songs
+    const litHasChords = (song.body || '').split('\n').some(l => classifyLine(l) === 'chord' || l.trim().startsWith('>'));
+    if(!litHasChords) return '';
     const cleanTitle = cleanSongTitleForDisplay(song.title) || 'Liturgical Dialogue';
     if(state.hideCueCard){
       return `
@@ -3034,7 +3037,8 @@ function renderMassPartCueCard(song){
           <button class="cue-toggle-btn" id="btn-toggle-cue" title="Hide Liturgical Cues">${iconCueHide()}<span>Hide</span></button>
         </div>
       </div>
-      ${renderCuePianoFinder()}
+      <!-- (2026-07-13) only render piano when cue has response chords; prev: unconditional -->
+      ${hasAnyChords ? renderCuePianoFinder() : ''}
       <div class="masspart-cue-body">
         ${cueItemsHtml}
         ${postSongHtml}
@@ -3077,7 +3081,6 @@ function renderMassPartFooterCue(song){
           <button class="cue-toggle-btn" id="btn-toggle-doxology" title="Hide Doxology Cue">${iconCueHide()}<span>Hide</span></button>
         </div>
       </div>
-      ${renderCuePianoFinder()}
       <div class="masspart-cue-body">
         <div class="cue-item">
           <div class="cue-line cue-priest"><span class="dialogue-badge priest-badge">${iconPriestCross()} Priest</span><span class="cue-text">${escapeHtml(cue.doxology.priest)}</span></div>
