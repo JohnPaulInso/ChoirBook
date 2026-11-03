@@ -1074,6 +1074,10 @@ async function loadAll(){
       state.songs = cachedItems.map(it=>{
         try{ return normalizeSong(JSON.parse(it.value)); }catch(e){ return null; }
       }).filter(Boolean);
+      // (2026-07-13) auto-assign songs to matching folders by title on load; prev: manual
+      state.songs.forEach(s => {
+        if(autoAssignFoldersByTitle(s, state.categories)) Store.saveSong(s).catch(()=>{});
+      });
       persistMigratedChordSongs();
       state.loading = false;
       render();
@@ -1126,6 +1130,67 @@ function normalizeSetlist(sl){
 }
 
 // (2026-07-13) synchronously hydrate state from local storage; prev: none
+// (2026-07-13) match folder names and keywords inside song titles; prev: none
+function matchFoldersFromTitle(title, categories){
+  if(!title) return [];
+  const t = title.toLowerCase();
+  const matched = [];
+  for(const c of (categories || [])){
+    const cleanCat = c.trim();
+    if(!cleanCat) continue;
+    const candidates = [cleanCat];
+    const stripped = cleanCat.replace(/\s+songs?$/i, '').trim();
+    if(stripped && stripped !== cleanCat) candidates.push(stripped);
+    if(stripped.toLowerCase() === 'lent') candidates.push('lenten');
+
+    for(const cand of candidates){
+      if(cand.length < 3) continue;
+      const escaped = cand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp('\\b' + escaped + '\\b', 'i');
+      if(re.test(t)){
+        matched.push(c);
+        break;
+      }
+    }
+  }
+  return matched;
+}
+
+// (2026-07-13) auto-assign matching folders to a song based on its title; prev: none
+function autoAssignFoldersByTitle(song, categories){
+  if(!song || !song.title) return false;
+  const cats = categories || state.categories || [];
+  if(!cats.length) return false;
+  if(!Array.isArray(song.categories)) song.categories = [];
+  const matched = matchFoldersFromTitle(song.title, cats);
+  let changed = false;
+  for(const c of matched){
+    if(!song.categories.includes(c)){
+      song.categories.push(c);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+// (2026-07-13) bulk auto-assign all songs to matching folders by title; prev: none
+async function autoOrganizeAllSongsByTitle(){
+  let count = 0;
+  for(const song of state.songs){
+    if(autoAssignFoldersByTitle(song, state.categories)){
+      count++;
+      await Store.saveSong(song);
+    }
+  }
+  if(count > 0){
+    showToast(`Auto-filed ${count} song(s) into matching folders`);
+    render();
+  } else {
+    showToast('All songs already sorted into matching folders');
+  }
+  return count;
+}
+
 function hydrateInitialState(){
   try{
     const cachedCats = localStorage.getItem('meta:categories');
@@ -4097,6 +4162,8 @@ function renderEditor(){
       massParts: d.massParts || [],
       body: document.getElementById('f-body').value,
     };
+    // (2026-07-13) auto-assign folders from title on song save; prev: manual
+    autoAssignFoldersByTitle(song, state.categories);
     // (2026-07-13) instant close editor and save in background; prev: awaited save
     const idx = state.songs.findIndex(s=>s.id===song.id);
     if(idx>=0) state.songs[idx] = song; else state.songs.push(song);
@@ -4442,6 +4509,8 @@ function wireSidebar(){
           showToast(`Importing ${toImport.length} song(s)…`);
           for(const draft of toImport){
             const song = { id: uid(), dateAdded: Date.now(), ...draft };
+            // (2026-07-13) auto-assign matching folders from title on import; prev: none
+            autoAssignFoldersByTitle(song, state.categories);
             await Store.saveSong(song);
             state.songs.push(song);
           }
@@ -4559,6 +4628,8 @@ function modalHtml(){
             <button class="sort-chip-btn" id="btn-sort-folders-az">Sort A &rarr; Z</button>
             <button class="sort-chip-btn" id="btn-sort-folders-za">Sort Z &rarr; A</button>
             <button class="sort-chip-btn" id="btn-sort-folders-count">By Song Count</button>
+            <!-- (2026-07-13) bulk auto-sort songs into matching folders by title; prev: none -->
+            <button class="sort-chip-btn" id="btn-auto-sort-titles" style="color:var(--accent);border-color:var(--accent);font-weight:700;">&#10022; Auto-Sort Songs</button>
           </div>
           <!-- (2026-07-13) taller folder list in categories modal; prev: max-height 280px -->
           <div class="cat-list" style="max-height:56vh;overflow-y:auto;margin-bottom:12px;">
@@ -4706,6 +4777,10 @@ function modalHtml(){
   if(state.modal.type==='song-context'){
     const song = state.songs.find(s=>s.id===state.modal.id);
     if(!song) return '';
+    // (2026-07-13) auto-assign matching folders from title on modal open; prev: none
+    if(autoAssignFoldersByTitle(song, state.categories)){
+      Store.saveSong(song).catch(()=>{});
+    }
     const isExcluded = isSongExcluded(song);
     const scopeLabel = state.filterMassPart || state.filterCat || 'All';
     const curFlag = getSongFlag(song);
@@ -5218,6 +5293,13 @@ function wireModal(){
     };
   });
   // (2026-07-13) wire mass parts & folder sorting with database persistence; prev: basic
+  // (2026-07-13) wire auto-sort songs by title in folders modal; prev: none
+  const btnAutoSort = document.getElementById('btn-auto-sort-titles');
+  if(btnAutoSort){
+    btnAutoSort.onclick = async ()=>{
+      await autoOrganizeAllSongsByTitle();
+    };
+  }
   const sortAzBtn = document.getElementById('btn-sort-folders-az');
   if(sortAzBtn) sortAzBtn.onclick = async ()=>{
     state.categories.sort((a,b)=>a.localeCompare(b));
