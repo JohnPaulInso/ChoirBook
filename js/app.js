@@ -3151,26 +3151,26 @@ function stopActiveMelodyPlayback(){
   activeMelodyPlayback = null;
 }
 
+// (2026-07-13) single play button melody player working in viewer & edit mode; prev: multi-button
 function handleStaffPlayClick(btn){
+  try{
+    if(!pianoAudioCtx) pianoAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if(pianoAudioCtx.state === 'suspended') pianoAudioCtx.resume();
+  }catch(e){}
+
   if(activeMelodyPlayback && activeMelodyPlayback.btn === btn){
     stopActiveMelodyPlayback();
     return;
   }
   stopActiveMelodyPlayback();
 
-  let container = null;
-  if(btn.dataset.playStaffIdx !== undefined){
-    const blockIdx = btn.dataset.playStaffIdx;
-    container = btn.closest('.intro-melody-box')?.querySelector(`[data-staff-block="${blockIdx}"]`);
-  }else{
-    container = btn.closest('.intro-melody-box') || btn.closest('.melody-staff-section') || document.getElementById('f-intro-melody-preview');
-  }
-  if(!container) return;
-
+  const container = btn.closest('.intro-melody-box') || btn.closest('#f-intro-melody-preview') || document.getElementById('f-intro-melody-preview') || document;
   const noteEls = Array.from(container.querySelectorAll('.staff-note-group[data-staff-note]'));
   if(!noteEls.length) return;
 
-  const bpm = (state.song && state.song.tempo) ? (parseInt(state.song.tempo, 10) || 90) : 90;
+  const tempoVal = document.getElementById('f-tempo')?.value;
+  const curSong = currentSong();
+  const bpm = tempoVal ? (parseInt(tempoVal, 10) || 90) : (curSong?.tempo ? (parseInt(curSong.tempo, 10) || 90) : 90);
   const intervalMs = Math.max(280, Math.min(500, Math.round(36000 / bpm)));
 
   btn.classList.add('is-playing');
@@ -3209,11 +3209,8 @@ function renderIntroMelodySection(introMelody){
   const staffsHtml = parsedStaffs.map((staffHtml, idx)=>`
     <div class="intro-staff-block" data-staff-block="${idx}" style="margin-bottom:${idx < parsedStaffs.length - 1 ? '16px' : '4px'};">
       ${parsedStaffs.length > 1 ? `
-        <div class="intro-staff-label" style="display:flex;align-items:center;justify-content:space-between;font-size:10px;font-weight:800;color:var(--text-dim);letter-spacing:1px;margin-bottom:4px;text-transform:uppercase;">
+        <div class="intro-staff-label" style="font-size:10px;font-weight:800;color:var(--text-dim);letter-spacing:1px;margin-bottom:4px;text-transform:uppercase;">
           <span>STAFF ${idx + 1}</span>
-          <button type="button" class="staff-play-btn" data-play-staff-idx="${idx}" title="Play Staff ${idx + 1}">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> <span>Play</span>
-          </button>
         </div>` : ''}
       ${staffHtml}
     </div>
@@ -6159,8 +6156,23 @@ if(typeof window !== 'undefined' && window.Capacitor && window.Capacitor.Plugins
 }
 
 
-// (2026-07-13) delegated click listener for staff play button; prev: no play button
+// (2026-07-13) delegated click/pointer for staff play button & note audio; prev: viewer-only
+document.addEventListener('pointerdown', (e)=>{
+  if(e.target.closest('.staff-play-btn, [data-staff-note]')){
+    try{
+      if(!pianoAudioCtx) pianoAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if(pianoAudioCtx.state === 'suspended') pianoAudioCtx.resume();
+    }catch(err){}
+  }
+}, {passive:true});
+
 document.addEventListener('click', (e)=>{
+  const noteEl = e.target.closest('[data-staff-note]');
+  if(noteEl){
+    const semi = parseInt(noteEl.dataset.staffNote, 10);
+    if(!isNaN(semi)) playPianoNote(semi);
+    return;
+  }
   const btn = e.target.closest('.staff-play-btn');
   if(!btn) return;
   e.preventDefault();
