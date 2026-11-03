@@ -6534,51 +6534,68 @@ function wireModal(){
     closeActiveModal();
     openEditor(id);
   };
-  // (2026-07-13) persist transpose offset to state & database on change; prev: missing state array sync
+  // (2026-07-13) instant transpose without modal reload; prev: awaited save & render
+  let saveAdjSongDebounce = null;
+  const scheduleSaveAdjSong = (song)=>{
+    clearTimeout(saveAdjSongDebounce);
+    saveAdjSongDebounce = setTimeout(()=>{ Store.saveSong(song).catch(()=>{}); }, 300);
+  };
+  const updateTransposeUi = (song)=>{
+    const offset = song.transposeOffset || 0;
+    const deltaEl = document.querySelector('.transpose-readout .transpose-delta');
+    const keyEl = document.querySelector('.transpose-readout .transpose-key');
+    if(deltaEl) deltaEl.textContent = offset === 0 ? '\u00b10' : (offset > 0 ? '+' : '') + offset;
+    if(keyEl) keyEl.textContent = transposeKeyLabel(getEffectiveSongKey(song), offset) || '—';
+    const chartWrap = document.getElementById('chart-wrap');
+    const prevTop = chartWrap ? chartWrap.scrollTop : 0;
+    const chartContent = document.getElementById('chart-scroll-content');
+    if(chartContent) chartContent.innerHTML = renderSongSheetContent(song, false);
+    if(chartWrap && prevTop > 0) chartWrap.scrollTop = prevTop;
+    scheduleSaveAdjSong(song);
+  };
+  const handleTransposeChange = (delta, isReset = false)=>{
+    const song = getAdjSong();
+    if(!song) return;
+    song.transposeOffset = isReset ? 0 : (song.transposeOffset || 0) + delta;
+    const idx = state.songs.findIndex(s=>s.id===song.id);
+    if(idx >= 0) state.songs[idx] = song;
+    updateTransposeUi(song);
+  };
   const adjDown = document.getElementById('adj-down');
-  if(adjDown) adjDown.onclick = async ()=>{
-    const song = getAdjSong();
-    if(!song) return;
-    song.transposeOffset = (song.transposeOffset||0)-1;
-    const idx = state.songs.findIndex(s=>s.id===song.id);
-    if(idx>=0) state.songs[idx] = song;
-    await Store.saveSong(song); render();
-  };
+  if(adjDown) adjDown.onclick = (e)=>{ e.preventDefault(); handleTransposeChange(-1); };
   const adjUp = document.getElementById('adj-up');
-  if(adjUp) adjUp.onclick = async ()=>{
-    const song = getAdjSong();
-    if(!song) return;
-    song.transposeOffset = (song.transposeOffset||0)+1;
-    const idx = state.songs.findIndex(s=>s.id===song.id);
-    if(idx>=0) state.songs[idx] = song;
-    await Store.saveSong(song); render();
-  };
+  if(adjUp) adjUp.onclick = (e)=>{ e.preventDefault(); handleTransposeChange(1); };
   const adjReset = document.getElementById('adj-reset');
-  if(adjReset) adjReset.onclick = async ()=>{
-    const song = getAdjSong();
-    if(!song) return;
-    song.transposeOffset = 0;
-    const idx = state.songs.findIndex(s=>s.id===song.id);
-    if(idx>=0) state.songs[idx] = song;
-    await Store.saveSong(song); render();
+  if(adjReset) adjReset.onclick = (e)=>{ e.preventDefault(); handleTransposeChange(0, true); };
+
+  const updateZoomUi = (song)=>{
+    const size = song.viewerFontSize || 15;
+    const chartWrap = document.getElementById('chart-wrap');
+    if(chartWrap) chartWrap.style.fontSize = size + 'px';
+    const zoomField = document.getElementById('adj-zoom-up')?.closest('.field');
+    const zoomLabel = zoomField ? zoomField.querySelector('label') : null;
+    if(zoomLabel) zoomLabel.textContent = `Text size (${size}px)`;
+    scheduleSaveAdjSong(song);
   };
   const adjZoomUp = document.getElementById('adj-zoom-up');
-  if(adjZoomUp) adjZoomUp.onclick = async ()=>{
+  if(adjZoomUp) adjZoomUp.onclick = (e)=>{
+    e.preventDefault();
     const song = getAdjSong();
     if(!song) return;
     song.viewerFontSize = Math.min(36, (song.viewerFontSize||15)+2);
     const idx = state.songs.findIndex(s=>s.id===song.id);
     if(idx>=0) state.songs[idx] = song;
-    await Store.saveSong(song); render();
+    updateZoomUi(song);
   };
   const adjZoomDown = document.getElementById('adj-zoom-down');
-  if(adjZoomDown) adjZoomDown.onclick = async ()=>{
+  if(adjZoomDown) adjZoomDown.onclick = (e)=>{
+    e.preventDefault();
     const song = getAdjSong();
     if(!song) return;
     song.viewerFontSize = Math.max(10, (song.viewerFontSize||15)-2);
     const idx = state.songs.findIndex(s=>s.id===song.id);
     if(idx>=0) state.songs[idx] = song;
-    await Store.saveSong(song); render();
+    updateZoomUi(song);
   };
   const adjSpeedSlider = document.getElementById('adj-speed-slider');
   if(adjSpeedSlider){

@@ -184,9 +184,11 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
   padding-bottom:calc(8px + env(safe-area-inset-bottom));}
 .tb-group{display:flex;align-items:center;gap:6px;}
 .tb-sep{width:1px;align-self:stretch;background:var(--line);margin:6px 6px;flex-shrink:0;}
+/* (2026-07-13) instant touch response for tool buttons; prev: default delay */
 .toolbtn{background:var(--bg-elev2);border:1.5px solid var(--line);color:var(--text);border-radius:11px;
   width:44px;height:44px;font-size:13.5px;font-weight:700;cursor:pointer;white-space:nowrap;display:flex;
   align-items:center;justify-content:center;gap:5px;font-family:inherit;flex-shrink:0;
+  touch-action:manipulation;-webkit-tap-highlight-color:transparent;user-select:none;
   transition:background-color .15s ease, border-color .15s ease, transform .1s ease;}
 .toolbtn:active{transform:scale(0.90);background:var(--bg-elev3);}
 .toolbtn.wide{width:auto;padding:0 14px;}
