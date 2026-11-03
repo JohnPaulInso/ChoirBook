@@ -921,6 +921,7 @@ const state = {
   loading: false,
   authChecked: false,
   search: '',
+  searchActive: false,
   // (2026-07-13) default sortBy to massflow order; prev: sortBy: 'title'
   sortBy: 'massflow',
   filterCat: 'All',
@@ -2132,34 +2133,39 @@ function renderListView(animateChipScroll){
   const existingListWrap = document.getElementById('list-wrap');
   const prevListScroll = existingListWrap ? existingListWrap.scrollTop : 0;
 
-  // (2026-07-13) add batch-folder button & default none selected in edit mode; prev: delete only
+  // (2026-07-13) topbar inline search & solid colored done button; prev: separate searchrow
+  const isSearching = state.searchActive || !!(state.search && state.search.trim());
   app.innerHTML = `
     <div class="topbar">
       <button class="icon-btn" id="btn-open-sidebar">${iconMenu()}</button>
-      <h1>${headerTitle}</h1>
-      <div style="display:flex;align-items:center;gap:2px;position:relative;">
+      ${isSearching ? `
+        <div class="topbar-search-box">
+          <span style="color:var(--text-dim);display:flex;align-items:center;margin-right:6px;flex-shrink:0;">${iconSearch()}</span>
+          <input id="search-input" placeholder="Search title or artist..." value="${escapeHtml(state.search)}" autocomplete="off" spellcheck="false"/>
+          ${state.search ? `
+            <button type="button" class="search-clear-btn" id="btn-clear-search" title="Clear search">${iconClose()}</button>
+          ` : `
+            <button type="button" class="search-clear-btn" id="btn-close-search" title="Close search">${iconClose()}</button>
+          `}
+        </div>
+      ` : `
+        <h1>${headerTitle}</h1>
+      `}
+      <div style="display:flex;align-items:center;gap:3px;position:relative;">
         ${state.listEditMode && state.checkedSongIds.length > 0 ? `
           <button class="icon-btn" id="btn-add-checked-to-folder" title="Add Selected Songs to Folder" style="color:var(--accent);">${iconFolder()}</button>
           <button class="icon-btn" id="btn-delete-checked" title="Delete Checked Songs" style="color:var(--danger);">${iconTrash()}</button>
         ` : ''}
-        <button class="icon-btn ${state.listEditMode?'active-edit':''}" id="btn-edit-list" title="${state.listEditMode?'Done Editing':'Edit & Reorder Songs'}">${state.listEditMode ? iconCheck() : iconEdit()}</button>
-        <button class="icon-btn" id="btn-manage-cats" title="Folders">${iconFolder()}</button>
+        ${!state.listEditMode ? `
+          <button class="icon-btn ${isSearching?'active':''}" id="btn-search-toggle" title="Search Songs">${iconSearch()}</button>
+        ` : ''}
+        <button class="${state.listEditMode?'btn-done-edit':'icon-btn'}" id="btn-edit-list" title="${state.listEditMode?'Done Editing':'Edit & Reorder Songs'}" ${state.listEditMode ? 'style="background:var(--accent);color:#0f1115;border:none;font-weight:800;font-size:12px;padding:5px 12px;border-radius:16px;min-height:30px;display:inline-flex;align-items:center;gap:4px;cursor:pointer;box-shadow:0 2px 8px var(--accent-dim);"' : ''}>
+          ${state.listEditMode ? `${iconCheck()}<span>Done</span>` : iconEdit()}
+        </button>
+        ${!state.listEditMode ? `<button class="icon-btn" id="btn-manage-cats" title="Folders">${iconFolder()}</button>` : ''}
         <button class="profile-btn" id="btn-profile-menu" title="Profile & Settings">${profileAvatarHtml()}</button>
         ${profileDropdownHtml()}
       </div>
-    </div>
-    <div class="searchrow">
-      <input id="search-input" placeholder="Search title or artist…" value="${escapeHtml(state.search)}"/>
-      <!-- (2026-07-13) add alphabetical A-Z and Z-A sort options; prev: Title only -->
-      <select id="sort-select">
-        <option value="massflow" ${state.sortBy==='massflow'||!state.sortBy?'selected':''}>Mass Flow / Order</option>
-        <option value="code" ${state.sortBy==='code'?'selected':''}>Code / Number</option>
-        <option value="title" ${state.sortBy==='title'?'selected':''}>Alphabetical (A &rarr; Z)</option>
-        <option value="title-desc" ${state.sortBy==='title-desc'?'selected':''}>Alphabetical (Z &rarr; A)</option>
-        <option value="artist" ${state.sortBy==='artist'?'selected':''}>Artist</option>
-        <option value="date" ${state.sortBy==='date'?'selected':''}>Recent</option>
-        <option value="key" ${state.sortBy==='key'?'selected':''}>Key</option>
-      </select>
     </div>
     <div class="chiprow">${chips}</div>
     ${colorBarHtml}
@@ -2180,7 +2186,20 @@ function renderListView(animateChipScroll){
   const initialLw = document.getElementById('list-wrap');
   if(initialLw && prevListScroll > 0) initialLw.scrollTop = prevListScroll;
 
-  // (2026-07-13) keep search-input focused & highlighted while typing; prev: renderListView()
+  // (2026-07-13) wire search toggle, live search input & clear buttons; prev: sort row
+  const searchToggleBtn = document.getElementById('btn-search-toggle');
+  if(searchToggleBtn){
+    searchToggleBtn.onclick = ()=>{
+      state.searchActive = !state.searchActive;
+      if(!state.searchActive) state.search = '';
+      renderListView();
+      if(state.searchActive){
+        const inp = document.getElementById('search-input');
+        if(inp) inp.focus();
+      }
+    };
+  }
+
   const searchInp = document.getElementById('search-input');
   if(searchInp){
     searchInp.oninput = e=>{
@@ -2190,16 +2209,53 @@ function renderListView(animateChipScroll){
         lw.innerHTML = buildSongListRowsHtml();
         wireListWrapRows();
       }
+      const clearBtn = document.getElementById('btn-clear-search') || document.getElementById('btn-close-search');
+      if(clearBtn){
+        clearBtn.id = state.search ? 'btn-clear-search' : 'btn-close-search';
+      }
+    };
+    searchInp.onkeydown = e=>{
+      if(e.key === 'Escape'){
+        state.search = '';
+        state.searchActive = false;
+        renderListView();
+      }
+    };
+    if(state.searchActive && !wasSearchFocused){
+      searchInp.focus();
+    }
+  }
+
+  const clearSearchBtn = document.getElementById('btn-clear-search');
+  if(clearSearchBtn){
+    clearSearchBtn.onclick = ()=>{
+      state.search = '';
+      const inp = document.getElementById('search-input');
+      if(inp){ inp.value = ''; inp.focus(); }
+      const lw = document.getElementById('list-wrap');
+      if(lw){
+        lw.innerHTML = buildSongListRowsHtml();
+        wireListWrapRows();
+      }
+      renderListView();
     };
   }
+
+  const closeSearchBtn = document.getElementById('btn-close-search');
+  if(closeSearchBtn){
+    closeSearchBtn.onclick = ()=>{
+      state.search = '';
+      state.searchActive = false;
+      renderListView();
+    };
+  }
+
   if(wasSearchFocused && searchInp){
     searchInp.focus();
     try{
       if(searchSelStart !== null) searchInp.setSelectionRange(searchSelStart, searchSelEnd);
     }catch(e){}
   }
-  const sortSel = document.getElementById('sort-select');
-  if(sortSel) sortSel.onchange = e=>{ state.sortBy = e.target.value; renderListView(); };
   // (2026-07-13) null check fab-add in edit mode; prev: direct onclick assignment
   const fabAdd = document.getElementById('fab-add');
   if(fabAdd) fabAdd.onclick = ()=> openEditor(null);
@@ -5493,6 +5549,8 @@ function iconChevronDown(){ return `<svg viewBox="0 0 24 24" fill="none"><path d
 function iconCheck(){ return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`; }
 function iconCheckSmall(){ return `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`; }
 function iconDragBars(){ return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>`; }
+// (2026-07-13) add search icon; prev: none
+function iconSearch(){ return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`; }
 function iconPalette(){ return `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.65-.75 1.65-1.69 0-.44-.18-.84-.44-1.13-.29-.29-.44-.65-.44-1.12a1.64 1.64 0 0 1 1.67-1.67h1.99c3.05 0 5.55-2.5 5.55-5.55C21.97 6.01 17.46 2 12 2z"/></svg>`; }
 function iconPriestCross(){ return `<svg class="badge-svg" viewBox="0 0 16 16" width="11" height="11" fill="currentColor"><path d="M6.8 1h2.4v4h3.8v2.4H9.2v7.6H6.8V7.4H3V5h3.8V1z"/></svg>`; }
 function iconPeopleGroup(){ return `<svg class="badge-svg" viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M5.5 7a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zm5.5-.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM5.5 8.5C2.8 8.5 1 9.9 1 11.8V13h9v-1.2c0-1.9-1.8-3.3-4.5-3.3zm5.5.5c-.5 0-1 .1-1.5.2.9.7 1.5 1.6 1.5 2.6V13h4v-1c0-1.6-1.5-3-4-3z"/></svg>`; }
