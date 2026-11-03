@@ -1215,6 +1215,7 @@ const MASS_PART_CUES = {
       sing: 'Sing the Doxology (Kay Imo Man ang Gingharian)'
     }
   },
+  // (2026-07-13) remove after-lamb-of-god communion invitation cue; prev: included
   'lamb of god': {
     title: 'Ang Kalinaw & Kordero sa Dios',
     cues: [
@@ -1222,22 +1223,16 @@ const MASS_PART_CUES = {
       { id: 'lamb-1', priest: 'Ang kalinaw sa Ginoo maanaa kaninyo.', chords: '        D     G      A    D', response: 'Maanaa usab kanimo.' },
       { id: 'lamb-2', priest: 'Ipaambit ta ang kalinaw sa panagigsoonay...' }
     ],
-    sing: 'Sing the Lamb of God / Kordero sa Dios',
-    communionInvite: {
-      priest: 'Mao kini ang Kordero sa Dios nga nagawagtang sa mga sala sa kalibutan. Bulahan ang mga gidapit alang sa bangkete sa Ginoo.',
-      response: 'Ginoo, dili ako angay nga mokalawat kanimo, apan ipamulong lamang ug mamaayo ako. (bell)',
-      priest2: 'Ang lawas ni Cristo.',
-      response2: 'Amen.'
-    }
+    sing: 'Sing the Lamb of God / Kordero sa Dios'
   },
+  // (2026-07-13) remove after-song collect prayer from communion cue; prev: included
   'communion': {
     title: 'Pangalawat (Communion)',
     cues: [
       { id: 'comm-0', priest: 'Mao kini ang Kordero sa Dios nga nagawagtang sa mga sala sa kalibutan. Bulahan ang mga gidapit alang sa bangkete sa Ginoo.', response: 'Ginoo, dili ako angay nga mokalawat kanimo, apan ipamulong lamang ug mamaayo ako. (bell)' },
       { id: 'comm-1', priest: 'Ang lawas ni Cristo.', chords: '        D     G  D', response: 'Amen.' }
     ],
-    sing: 'Sing the Communion Song / Pangalawat',
-    postPrayer: { id: 'comm-post', priest: 'Mag-ampo kita... (Pag-ampo human sa Pangalawat)... hangtod sa kahangturan.', chords: '        D     G  D', response: 'Amen.' }
+    sing: 'Sing the Communion Song / Pangalawat'
   },
   'recessional': {
     title: 'Panapos nga Rito (Concluding Rites)',
@@ -1627,7 +1622,24 @@ async function loadAll(){
     if(parts){ state.massParts = parts; LocalAdapter.set('meta:massparts', JSON.stringify(parts)); }
     if(fColors){ state.folderColors = fColors; LocalAdapter.set('meta:folderColors', JSON.stringify(fColors)); }
     if(cChords){ state.cueChords = cChords; LocalAdapter.set('meta:cueChordsV2', JSON.stringify(cChords)); }
-    if(cCues){ state.customCues = cCues; LocalAdapter.set('meta:customCues', JSON.stringify(cCues)); }
+    if(cCues){
+      state.customCues = cCues;
+      let dirtyCustom = false;
+      if(state.customCues['lambofgod'] && state.customCues['lambofgod'].communionInvite){
+        delete state.customCues['lambofgod'].communionInvite;
+        dirtyCustom = true;
+      }
+      if(state.customCues['lamb of god'] && state.customCues['lamb of god'].communionInvite){
+        delete state.customCues['lamb of god'].communionInvite;
+        dirtyCustom = true;
+      }
+      if(state.customCues['communion'] && state.customCues['communion'].postPrayer){
+        delete state.customCues['communion'].postPrayer;
+        dirtyCustom = true;
+      }
+      LocalAdapter.set('meta:customCues', JSON.stringify(state.customCues));
+      if(dirtyCustom) Store.saveCustomCues(state.customCues).catch(()=>{});
+    }
     applyFolderTheme(state.filterCat);
     if(rawSetlists) state.setlists = rawSetlists.map(normalizeSetlist);
     ensureGreatAmenMigration();
@@ -1737,7 +1749,12 @@ function hydrateInitialState(){
     if(cachedCues){
       try{
         const parsed = JSON.parse(cachedCues);
-        if(parsed && typeof parsed === 'object') state.customCues = parsed;
+        if(parsed && typeof parsed === 'object'){
+          state.customCues = parsed;
+          if(state.customCues['lambofgod']) delete state.customCues['lambofgod'].communionInvite;
+          if(state.customCues['lamb of god']) delete state.customCues['lamb of god'].communionInvite;
+          if(state.customCues['communion']) delete state.customCues['communion'].postPrayer;
+        }
       }catch(e){}
     }
     const savedFilter = localStorage.getItem('ui:filterCat');
@@ -1869,52 +1886,6 @@ function getLiturgicalDialogueSongs(){
 \u27a4 Priest: Magpasalamat kita sa Ginoo nga atong Dios.
 >        A     D     G  A   D
 \u2669 Response: Angay ug matarung.`
-    },
-    {
-      id: 'lit-communion-invite', title: 'Pangalawat (Invitation to Communion)', artist: 'Misal Romano (Bisaya)', key: 'D', capo: 0, tempo: 70,
-      timeSig: '4/4', style: 'Liturgy', instrument: 'Guitar / Vocal', categories: [],
-      massParts: ['Communion'],
-      sectionTitle: 'Pangalawat Dialogue \u2022 Before Communion',
-      anchorPart: 'Communion', anchorPos: 'before', optionalLit: true, litVersion: 4,
-      favorite: false, transposeOffset: 0, dateAdded: Date.now() - 2000,
-      viewerFontSize: 15, viewerScrollSpeed: 30,
-      body:
-`(Pangalawat / Invitation to Communion)
-\u27a4 Priest: Mao kini ang Kordero sa Dios nga nagawagtang sa mga sala sa kalibutan. Bulahan ang mga gidapit alang sa bangkete sa Ginoo.
-
-\u211f Response: Ginoo, dili ako angay nga mokalawat kanimo, apan ipamulong lamang ug mamaayo ako. (bell)
-
-\u27a4 Priest: Ang lawas ni Cristo.
-\u211f Response: Amen.`
-    },
-    {
-      id: 'lit-concluding', title: 'Panapos nga Rito (Concluding Rites & Dismissal)', artist: 'Misal Romano (Bisaya)', key: 'D', capo: 0, tempo: 75,
-      timeSig: '4/4', style: 'Chant', instrument: 'Guitar / Vocal', categories: [],
-      massParts: ['Recessional'],
-      sectionTitle: 'Panapos nga Rito (Concluding Rites) \u2022 Before Recessional',
-      anchorPart: 'Recessional', anchorPos: 'before', litVersion: 4,
-      favorite: false, transposeOffset: 0, dateAdded: Date.now() - 1000,
-      viewerFontSize: 15, viewerScrollSpeed: 30,
-      body:
-`(Pag-ampo human sa Pangalawat)
-\u27a4 Priest: Mag-ampo kita... (Pag-ampo human sa Pangalawat)... hangtod sa kahangturan.
->        D     G  D
-\u2669 Response: Amen.
-====================================
-(Panapos nga Rito / Concluding Rites)
-Manindog alang sa panalangin.
-
-\u27a4 Priest: Ang Ginoo maanaa kaninyo.
->        D     G      A    D
-\u2669 Response: Maanaa usab kanimo.
-
-\u27a4 Priest: Manalangin kaninyo ang Dios nga makagagahum sa tanan, ang Amahan, ug ang Anak, ug ang Espiritu Santo.
->        D     G  D
-\u2669 Response: Amen.
-
-\u27a4 Priest: Tapos na ang Misa. Lakaw kamo diha sa kalinaw ni Cristo.
->        G     D          G
-\u2669 Response: Salamat sa Dios.`
     }
   ];
 }
@@ -1927,14 +1898,17 @@ function isSeededDefaultSong(s){
   return false;
 }
 
+// (2026-07-13) purge decommissioned communion & concluding pages; prev: sync only
 function syncLiturgicalDialogues(persist){
-  const toRemove = state.songs.filter(isSeededDefaultSong);
+  const purgeIds = ['lit-communion-invite', 'lit-concluding'];
+  const toRemove = state.songs.filter(s => purgeIds.includes(s.id) || isSeededDefaultSong(s));
   if(toRemove.length > 0){
-    state.songs = state.songs.filter(s=>!isSeededDefaultSong(s));
+    state.songs = state.songs.filter(s => !purgeIds.includes(s.id) && !isSeededDefaultSong(s));
     toRemove.forEach(s=>{
       LocalAdapter.delete('song:'+s.id);
       if(persist) Store.deleteSong(s.id).catch(()=>{});
     });
+    purgeIds.forEach(id => markSongAsDeleted(id));
   }
   const litSongs = getLiturgicalDialogueSongs();
   litSongs.forEach(ls=>{
@@ -3647,8 +3621,9 @@ function renderMassPartCueCard(song){
     </div>`;
   }).join('');
 
+  // (2026-07-13) remove after song prayer from communion & after lamb cue; prev: displayed
   let postSongHtml = '';
-  if(cue.postPrayer){
+  if(cue.postPrayer && currentPart.toLowerCase() !== 'communion'){
     const postCid = cue.postPrayer.id || `${currentPart.toLowerCase()}-post`;
     postSongHtml += `
       <div class="cue-item cue-sub-section">
@@ -3659,15 +3634,6 @@ function renderMassPartCueCard(song){
           <span class="dialogue-badge response-badge">${iconPeopleGroup()} Response</span>
           <span class="cue-text">${escapeHtml(cue.postPrayer.response)}</span>
         </div>
-      </div>`;
-  }
-
-  if(cue.communionInvite){
-    postSongHtml += `
-      <div class="cue-item cue-sub-section">
-        <div class="cue-sub-title">After Lamb of God &bull; Invitation to Communion</div>
-        <div class="cue-line cue-priest"><span class="dialogue-badge priest-badge">${iconPriestCross()} Priest</span><span class="cue-text">${escapeHtml(cue.communionInvite.priest)}</span></div>
-        <div class="cue-line cue-response"><span class="dialogue-badge response-badge">${iconPeopleGroup()} Response</span><span class="cue-text">${escapeHtml(cue.communionInvite.response)}</span></div>
       </div>`;
   }
 
