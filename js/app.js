@@ -2811,12 +2811,10 @@ function renderMassPartCueCard(song){
     <div class="cue-item">
       <div class="cue-line cue-priest"><span class="dialogue-badge priest-badge">${iconPriestCross()} Priest</span><span class="cue-text">${escapeHtml(c.priest)}</span></div>
       ${c.response ? `
+        ${c.chords ? renderCueChordPills(c.chords, cid) : ''}
         <div class="cue-line cue-response">
           <span class="dialogue-badge response-badge">${iconPeopleGroup()} Response</span>
-          <div class="cue-response-content">
-            ${renderCueChordPills(c.chords, cid)}
-            <span class="cue-text">${escapeHtml(c.response)}</span>
-          </div>
+          <span class="cue-text">${escapeHtml(c.response)}</span>
         </div>
       ` : renderCueChordPills(c.chords, cid)}
     </div>`;
@@ -2829,12 +2827,10 @@ function renderMassPartCueCard(song){
       <div class="cue-item cue-sub-section">
         <div class="cue-sub-title">After Song &bull; Collect Prayer</div>
         <div class="cue-line cue-priest"><span class="dialogue-badge priest-badge">${iconPriestCross()} Priest</span><span class="cue-text">${escapeHtml(cue.postPrayer.priest)}</span></div>
+        ${cue.postPrayer.chords ? renderCueChordPills(cue.postPrayer.chords, postCid) : ''}
         <div class="cue-line cue-response">
           <span class="dialogue-badge response-badge">${iconPeopleGroup()} Response</span>
-          <div class="cue-response-content">
-            ${renderCueChordPills(cue.postPrayer.chords, postCid)}
-            <span class="cue-text">${escapeHtml(cue.postPrayer.response)}</span>
-          </div>
+          <span class="cue-text">${escapeHtml(cue.postPrayer.response)}</span>
         </div>
       </div>`;
   }
@@ -3052,24 +3048,30 @@ function renderSongSheetContent(s, isPeek){
 
       if(respLine){
         const rData = extractResponseData(respLine);
+        const mSpaces = chordLine ? chordLine.match(/^>\s*/) : null;
+        const leadCount = mSpaces ? (mSpaces[0].length - 1) : 0;
+        const alignedChordLine = chordLine ? (leadCount < 8 ? ('>' + ' '.repeat(8 - leadCount) + chordLine.replace(/^>\s*/, '')) : chordLine) : null;
+        // (2026-07-13) place response chip on left of text & chords above; prev: on chord
         renderedLines.push(`
           <div class="cue-item dialogue-cue-item">
             <div class="cue-line cue-priest"><span class="dialogue-badge priest-badge">${iconPriestCross()} ${escapeHtml(pData.role)}</span><span class="cue-text">${escapeHtml(pData.text)}</span></div>
+            ${alignedChordLine ? `<div class="cue-chord-row">${renderChordLine(alignedChordLine)}</div>` : ''}
             <div class="cue-line cue-response">
               <span class="dialogue-badge response-badge">${iconPeopleGroup()} ${escapeHtml(rData.role)}</span>
-              ${chordLine ? `
-                <div class="cue-response-content">
-                  <div class="cue-chord-row">${renderChordLine('>' + chordLine.replace(/^>\s*/, ''))}</div>
-                  <span class="cue-text">${escapeHtml(rData.text)}</span>
-                </div>
-              ` : `<span class="cue-text">${escapeHtml(rData.text)}</span>`}
+              <span class="cue-text">${escapeHtml(rData.text)}</span>
             </div>
           </div>`);
+        while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){
+          i++;
+        }
       } else {
         renderedLines.push(`
           <div class="cue-item dialogue-cue-item">
             <div class="cue-line cue-priest"><span class="dialogue-badge priest-badge">${iconPriestCross()} ${escapeHtml(pData.role)}</span><span class="cue-text">${escapeHtml(pData.text)}</span></div>
           </div>`);
+        while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){
+          i++;
+        }
       }
     } else if(cls === 'chord'){
       let nextIdx = i + 1;
@@ -3077,16 +3079,20 @@ function renderSongSheetContent(s, isPeek){
       if(nextIdx < rawLines.length && classifyLine(rawLines[nextIdx]) === 'response'){
         const rData = extractResponseData(rawLines[nextIdx]);
         i = nextIdx;
+        const mSpaces = line.match(/^>\s*/);
+        const leadCount = mSpaces ? (mSpaces[0].length - 1) : 0;
+        const alignedChordLine = leadCount < 8 ? ('>' + ' '.repeat(8 - leadCount) + line.replace(/^>\s*/, '')) : line;
         renderedLines.push(`
           <div class="cue-item dialogue-cue-item">
+            <div class="cue-chord-row">${renderChordLine(alignedChordLine)}</div>
             <div class="cue-line cue-response">
               <span class="dialogue-badge response-badge">${iconPeopleGroup()} ${escapeHtml(rData.role)}</span>
-              <div class="cue-response-content">
-                <div class="cue-chord-row">${renderChordLine('>' + line.replace(/^>\s*/, ''))}</div>
-                <span class="cue-text">${escapeHtml(rData.text)}</span>
-              </div>
+              <span class="cue-text">${escapeHtml(rData.text)}</span>
             </div>
           </div>`);
+        while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){
+          i++;
+        }
       } else {
         renderedLines.push(`<div class="lyric-line">${renderChordLine(line)}</div>`);
       }
@@ -3099,6 +3105,9 @@ function renderSongSheetContent(s, isPeek){
             <span class="cue-text">${escapeHtml(rData.text)}</span>
           </div>
         </div>`);
+      while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){
+        i++;
+      }
     } else if(cls === 'blank'){
       renderedLines.push(`<div>&nbsp;</div>`);
     } else {
