@@ -2488,58 +2488,95 @@ function renderSongRowHtml(s, secMassPart){
     </div>`;
 }
 
-// (2026-07-13) update only list-wrap on search input so input keeps focus; prev: full innerHTML
+// (2026-07-13) resolve current view section title for dividers; prev: none
+function getCurrentViewSectionTitle(){
+  if(state.filterMassPart) return state.filterMassPart;
+  if(state.filterFlag){
+    if(state.filterFlag === 'all') return 'Flagged Songs';
+    const f = SONG_FLAGS.find(x => x.key === state.filterFlag);
+    return (f ? f.name : state.filterFlag) + ' Flagged Songs';
+  }
+  if(state.filterCat && state.filterCat !== 'All') return state.filterCat;
+  if(state.search && state.search.trim()) return 'Search Results';
+  return 'All Songs';
+}
+
+// (2026-07-13) always retain letter-divider with fav pill when empty; prev: divider lost
 function buildSongListRowsHtml(){
   const songs = getFilteredSongsForCurrentView();
   const sections = getOrderedSongSections(songs);
   let rows = '';
-  sections.forEach((sec, secIdx)=>{
-    let secHtml = '';
-    const isFirstSection = secIdx === 0;
-    // (2026-07-13) sticky favorited only toggle on first letter divider; prev: none
-    const favToggleBtn = isFirstSection ? `
-      <button type="button" class="fav-toggle-pill ${state.favOnly?'is-active':''}" id="btn-toggle-fav-only" title="${state.favOnly?'Show all songs':'Show favorited only'}" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:10.5px;font-weight:700;letter-spacing:0.2px;border-radius:12px;border:1px solid ${state.favOnly?'var(--chord)':'rgba(255,255,255,0.18)'};background:${state.favOnly?'rgba(234,179,8,0.2)':'transparent'};color:${state.favOnly?'var(--chord)':'var(--text-dim)'};cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all 0.15s ease;">
-        <span style="display:flex;align-items:center;font-size:12px;color:${state.favOnly?'var(--chord)':'inherit'};">${iconStar(state.favOnly)}</span>
-        <span>${state.favOnly?'Favorites':'All'}</span>
-      </button>` : '';
 
-    if(sec.optionalLit){
-      const hidden = !!state.hideOptionalCommunionLit;
-      secHtml += `
-        <div class="letter-divider" style="display:flex;align-items:center;justify-content:space-between;">
-          <span>&#10022; ${escapeHtml(sec.title)}</span>
-          <div style="display:flex;align-items:center;gap:6px;">
-            ${favToggleBtn}
-            <button class="cue-toggle-btn" data-toggle-opt-lit="${escapeHtml(sec.litId)}" style="padding:1px 7px;font-size:10px;">${hidden ? 'Show Page' : 'Hide Page'}</button>
-          </div>
-        </div>`;
-      if(!hidden){
+  const favToggleBtn = `
+    <button type="button" class="fav-toggle-pill ${state.favOnly?'is-active':''}" id="btn-toggle-fav-only" title="${state.favOnly?'Show all songs':'Show favorited only'}" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:10.5px;font-weight:700;letter-spacing:0.2px;border-radius:12px;border:1px solid ${state.favOnly?'var(--chord)':'rgba(255,255,255,0.18)'};background:${state.favOnly?'rgba(234,179,8,0.2)':'transparent'};color:${state.favOnly?'var(--chord)':'var(--text-dim)'};cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all 0.15s ease;">
+      <span style="display:flex;align-items:center;font-size:12px;color:${state.favOnly?'var(--chord)':'inherit'};">${iconStar(state.favOnly)}</span>
+      <span>${state.favOnly?'Favorites':'All'}</span>
+    </button>`;
+
+  if(sections.length > 0){
+    sections.forEach((sec, secIdx)=>{
+      let secHtml = '';
+      const isFirstSection = secIdx === 0;
+      const toggle = isFirstSection ? favToggleBtn : '';
+
+      if(sec.optionalLit){
+        const hidden = !!state.hideOptionalCommunionLit;
+        secHtml += `
+          <div class="letter-divider" style="display:flex;align-items:center;justify-content:space-between;">
+            <span>&#10022; ${escapeHtml(sec.title)}</span>
+            <div style="display:flex;align-items:center;gap:6px;">
+              ${toggle}
+              <button class="cue-toggle-btn" data-toggle-opt-lit="${escapeHtml(sec.litId)}" style="padding:1px 7px;font-size:10px;">${hidden ? 'Show Page' : 'Hide Page'}</button>
+            </div>
+          </div>`;
+        if(!hidden){
+          sec.songs.forEach(s=>{ secHtml += renderSongRowHtml(s, sec.massPart); });
+        }
+      } else {
+        secHtml += `
+          <div class="letter-divider" style="${isFirstSection?'display:flex;align-items:center;justify-content:space-between;':''}">
+            <span>${sec.isLiturgical ? '&#10022; ' : ''}${escapeHtml(sec.title)}</span>
+            ${toggle}
+          </div>`;
         sec.songs.forEach(s=>{ secHtml += renderSongRowHtml(s, sec.massPart); });
       }
-    } else {
-      secHtml += `
-        <div class="letter-divider" style="${isFirstSection?'display:flex;align-items:center;justify-content:space-between;':''}">
-          <span>${sec.isLiturgical ? '&#10022; ' : ''}${escapeHtml(sec.title)}</span>
+      rows += `<div class="song-section-group" data-group-mp="${escapeHtml(sec.massPart||'')}">${secHtml}</div>`;
+    });
+  } else {
+    const viewTitle = getCurrentViewSectionTitle();
+    rows = `
+      <div class="song-section-group">
+        <div class="letter-divider" style="display:flex;align-items:center;justify-content:space-between;">
+          <span>${escapeHtml(viewTitle)}</span>
           ${favToggleBtn}
-        </div>`;
-      sec.songs.forEach(s=>{ secHtml += renderSongRowHtml(s, sec.massPart); });
-    }
-    rows += `<div class="song-section-group" data-group-mp="${escapeHtml(sec.massPart||'')}">${secHtml}</div>`;
-  });
-  if(songs.length===0){
-    rows = `<div class="empty-state">${state.favOnly ? 'No favorited songs found in this view.' : 'No songs here yet.<br>Tap the + button to add one, or long-press a song to file it in this ' + (state.filterFlag?'flag color':(state.filterMassPart?'Mass Part':'folder')) + '.'}</div>`;
+        </div>
+        <div class="empty-state">
+          ${state.favOnly
+            ? 'No favorited songs found in this view.<br><button type="button" class="btn btn-secondary" id="btn-empty-clear-fav" style="margin-top:12px;font-size:12px;padding:6px 14px;border-radius:16px;">Show All Songs</button>'
+            : 'No songs here yet.<br>Tap the + button to add one, or long-press a song to file it in this ' + (state.filterFlag?'flag color':(state.filterMassPart?'Mass Part':'folder')) + '.'}
+        </div>
+      </div>`;
   }
   return rows;
 }
 
+// (2026-07-13) wire favorited-only divider toggle & empty state reset; prev: toggle only
 function wireListWrapRows(){
-  // (2026-07-13) wire favorited-only divider toggle; prev: none
   const btnFavOnly = document.getElementById('btn-toggle-fav-only');
   if(btnFavOnly){
     btnFavOnly.onclick = (e)=>{
       e.stopPropagation();
       e.preventDefault();
       state.favOnly = !state.favOnly;
+      renderListView();
+    };
+  }
+  const btnEmptyClear = document.getElementById('btn-empty-clear-fav');
+  if(btnEmptyClear){
+    btnEmptyClear.onclick = (e)=>{
+      e.stopPropagation();
+      e.preventDefault();
+      state.favOnly = false;
       renderListView();
     };
   }
