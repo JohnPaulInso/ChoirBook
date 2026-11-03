@@ -529,6 +529,7 @@ function renderMelodyStaffLine(line){
     }
     const subToks = isChord ? inner.split(/[\s,]+/).map(s=>s.trim()).filter(Boolean) : [raw.replace(/^[>]/, '')];
     const parsedNotes = [];
+    // (2026-07-13) omit +/- octave signs from staff note labels; prev: showed +/-
     subToks.forEach(st=>{
       const cleanTok = st.replace(/^[>]/, '');
       const nm = /^([-+])?([a-gA-G])(#|b)?\.?$/.exec(cleanTok);
@@ -536,6 +537,7 @@ function renderMelodyStaffLine(line){
       const octSign = nm[1] || '';
       const letter = nm[2];
       const acc = nm[3] || '';
+      const displayTok = letter + acc;
       const stepOffset = octSign === '-' ? -7 : (octSign === '+' ? 7 : 0);
       const semiOffset = octSign === '-' ? -12 : (octSign === '+' ? 12 : 0);
       let step = (stepMap[letter] !== undefined ? stepMap[letter] : 0) + stepOffset;
@@ -544,7 +546,7 @@ function renderMelodyStaffLine(line){
       if(acc === 'b') semi -= 1;
       const yPx = 40 - step * 4.5;
       const accSym = acc === '#' ? '&#9839;' : (acc === 'b' ? '&#9837;' : '');
-      parsedNotes.push({ tok: cleanTok, step, semi, yPx, accSym });
+      parsedNotes.push({ tok: displayTok, rawTok: cleanTok, step, semi, yPx, accSym });
     });
     if(!parsedNotes.length) return;
 
