@@ -1,6 +1,6 @@
 // (2026-07-13) bump sw shell cache to v49; prev: v48
-// (2026-07-13) bump cache name to v58; prev: v57
-const CACHE_NAME = 'songbook-shell-v58';
+// (2026-07-13) bump cache name to v59; prev: v58
+const CACHE_NAME = 'songbook-shell-v59';
 const SHELL_FILES = [
   './index.html',
   './css/style.css',

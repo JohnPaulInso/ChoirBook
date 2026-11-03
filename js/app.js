@@ -3868,19 +3868,19 @@ function renderEditor(){
       massParts: d.massParts || [],
       body: document.getElementById('f-body').value,
     };
-    try{
-      await Store.saveSong(song);
-      const idx = state.songs.findIndex(s=>s.id===song.id);
-      if(idx>=0) state.songs[idx] = song; else state.songs.push(song);
-      state.currentId = song.id;
-      closeEditorOverlay(()=>{
-        state.view = 'viewer';
-        render();
-        showToast('Saved');
-      });
-    }catch(e){
-      alert('Could not save — please try again.');
-    }
+    // (2026-07-13) instant close editor and save in background; prev: awaited save
+    const idx = state.songs.findIndex(s=>s.id===song.id);
+    if(idx>=0) state.songs[idx] = song; else state.songs.push(song);
+    state.currentId = song.id;
+    closeEditorOverlay(()=>{
+      state.view = 'viewer';
+      render();
+      showToast('Saved');
+    });
+    Store.saveSong(song).catch(e=>{
+      console.error('Background save failed:', e);
+      showToast('Could not save to cloud');
+    });
   };
 }
 
