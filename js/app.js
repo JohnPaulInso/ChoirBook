@@ -4339,6 +4339,48 @@ function renderSetlistEditor(){
 }
 
 
+// (2026-07-13) dedicated liturgical SVG icons for Mass Parts; prev: text only
+function iconForMassPart(name){
+  const n = (name || '').toLowerCase().trim();
+  if(n === 'entrance') {
+    return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>`;
+  }
+  if(n === 'kyrie') {
+    return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M6 8h12"/><circle cx="12" cy="8" r="2.5" fill="none"/></svg>`;
+  }
+  if(n === 'gloria') {
+    return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"/></svg>`;
+  }
+  if(n === 'responsorial psalm' || n.includes('psalm')) {
+    return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`;
+  }
+  if(n === 'gospel acclamation' || n.includes('gospel') || n.includes('alleluia')) {
+    return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="12" y1="6" x2="12" y2="12"/><line x1="9.5" y1="8.5" x2="14.5" y2="8.5"/></svg>`;
+  }
+  if(n === 'offertory') {
+    return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12v10H4V12"/><path d="M2 7h20v5H2z"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></svg>`;
+  }
+  if(n === 'sanctus' || n.includes('holy')) {
+    return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/><line x1="12" y1="2" x2="12" y2="4"/></svg>`;
+  }
+  if(n === 'memorial acclamation' || n.includes('memorial')) {
+    return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>`;
+  }
+  if(n === 'our father' || n.includes('father') || n.includes('amahan')) {
+    return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a9 9 0 0 1 9 9c0 4-3 7-9 11C6 18 3 15 3 11a9 9 0 0 1 9-9z"/><path d="M12 6v6M9 9h6"/></svg>`;
+  }
+  if(n === 'lamb of god' || n.includes('lamb') || n.includes('kordero')) {
+    return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/><line x1="12" y1="7" x2="12" y2="13"/><line x1="9" y1="9.5" x2="15" y2="9.5"/></svg>`;
+  }
+  if(n === 'communion' || n.includes('kalawat')) {
+    return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h14v4c0 3.87-3.13 7-7 7s-7-3.13-7-7V4z"/><path d="M12 15v5"/><path d="M8 20h8"/><circle cx="12" cy="2.5" r="1.5" fill="currentColor"/></svg>`;
+  }
+  if(n === 'recessional' || n.includes('exit') || n.includes('ending') || n.includes('panapos')) {
+    return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>`;
+  }
+  return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>`;
+}
+
 // (2026-07-13) left-align sidebar top labels & keep folder rows clean; prev: space-between
 function sidebarHtml(){
   const folderItems = state.categories.map(c=>{
@@ -4367,7 +4409,14 @@ function sidebarHtml(){
   });
   const massPartItems = orderedParts.map(mp=>{
     const count = state.songs.filter(s=>(s.massParts||[]).includes(mp)).length;
-    return `<div class="side-item" data-goto-masspart="${escapeHtml(mp)}"><span>${escapeHtml(mp)}</span><span class="side-count">${count}</span></div>`;
+    const isSelected = state.filterMassPart === mp;
+    // (2026-07-13) add liturgical icons to mass part items; prev: text only
+    return `
+      <div class="side-item ${isSelected?'selected':''}" data-goto-masspart="${escapeHtml(mp)}" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;">
+        <span style="display:flex;align-items:center;flex-shrink:0;color:var(--chord);opacity:0.95;">${iconForMassPart(mp)}</span>
+        <span style="flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(mp)}</span>
+        <span class="side-count">${count}</span>
+      </div>`;
   }).join('');
   return `
     <div class="sidebar-backdrop ${state.sidebarOpen?'active':''}" id="sidebar-backdrop">
