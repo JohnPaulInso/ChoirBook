@@ -192,7 +192,8 @@ function normalizeBodyChordLines(body){
     if(!trimmed) return line;
     if(/^[=\-_]{3,}$/.test(trimmed)) return line;
     if(/^([\u27a4>]\s*)?(Priest|Presider|Celebrant)(\/Reader)?\b\s*:?\s*/i.test(trimmed)) return line;
-    if(/^([\u2669\u211fR]\s*)?(Response|People|All)\b\s*:?\s*/i.test(trimmed)) return line;
+    // (2026-07-13) require colon or symbol for All in body lines; prev: matched any all
+    if(/^(?:[\u2669\u211fR]\s*)?(?:Response|People)\b\s*:?\s*|^(?:[\u2669\u211fR]\s*)?All\s*:\s*|^[\u2669\u211fR]\s*All\b\s*:?\s*/i.test(trimmed)) return line;
     if(trimmed.startsWith('<>')) return line;
     if(line.startsWith('>')){
       const stripped = line.slice(1).trim();
@@ -323,7 +324,8 @@ function classifyLine(line){
   if(trimmed.startsWith('<>') || line.replace(/^>\s*/, '').trim().startsWith('<>')) return 'melody';
   if(/^[=\-_]{4,}$/.test(trimmed)) return 'divider';
   if(/^([\u27a4>]\s*)?(Priest|Presider|Celebrant)(\/Reader)?\b\s*:?\s*/i.test(trimmed)) return 'priest';
-  if(/^([\u2669\u211fR]\s*)?(Response|People|All)\b\s*:?\s*/i.test(trimmed)) return 'response';
+  // (2026-07-13) require colon or symbol for All in classifyLine; prev: any all word
+  if(/^(?:[\u2669\u211fR]\s*)?(?:Response|People)\b\s*:?\s*|^(?:[\u2669\u211fR]\s*)?All\s*:\s*|^[\u2669\u211fR]\s*All\b\s*:?\s*/i.test(trimmed)) return 'response';
   if(isMelodyNoteLine(line)) return 'melody';
   if(line.startsWith('>')) return 'chord';
   if(/^\[.+\]$/.test(trimmed) || /^\(.+\)$/.test(trimmed)) return 'section';
@@ -341,12 +343,52 @@ function renderPriestLine(line){
   const text = m ? (m[3] || '') : line;
   return `<div class="lyric-line"><span class="dialogue-badge priest-badge">${iconPriestCross()} ${escapeHtml(role)}</span> ${escapeHtml(text)}</div>`;
 }
+// (2026-07-13) parse All dialogue line requiring colon or symbol; prev: matched any all
 function renderResponseLine(line){
-  const m = /^([\u2669\u211fR]\s*)?(Response|People|All)\s*:?\s*(.*)$/i.exec(line.trim());
-  const role = (m && m[2]) ? m[2] : 'Response';
-  const text = m ? (m[3] || '') : line;
+  const trimmed = line.trim();
+  let role = 'Response', text = trimmed;
+  const m = /^(?:([\u2669\u211fR]\s*)?(Response|People)\s*:?\s*(.*)|(?:[\u2669\u211fR]\s*)?(All)\s*:\s*(.*)|([\u2669\u211fR])\s*(All)\s*:?\s*(.*))$/i.exec(trimmed);
+  if(m){
+    role = m[2] || m[4] || m[7] || 'Response';
+    text = m[3] !== undefined ? m[3] : (m[5] !== undefined ? m[5] : (m[8] !== undefined ? m[8] : ''));
+  }
   return `<div class="lyric-line"><span class="dialogue-badge response-badge">${iconPeopleGroup()} ${escapeHtml(role)}</span> ${escapeHtml(text)}</div>`;
 }
+
+// (2026-07-13) song flag palette & display helpers; prev: emoji title typing
+const SONG_FLAGS = [
+  { key: 'red', name: 'Red', color: '#ef4444' },
+  { key: 'orange', name: 'Orange', color: '#f97316' },
+  { key: 'yellow', name: 'Yellow', color: '#eab308' },
+  { key: 'green', name: 'Green', color: '#10b981' },
+  { key: 'blue', name: 'Blue', color: '#3b82f6' },
+  { key: 'purple', name: 'Purple', color: '#a855f7' },
+  { key: 'pink', name: 'Pink', color: '#ec4899' },
+  { key: 'white', name: 'White', color: '#f3f4f6' }
+];
+
+function getSongFlag(song){
+  if(!song) return null;
+  if(song.flag && song.flag !== 'none'){
+    const f = SONG_FLAGS.find(x => x.key === song.flag);
+    if(f) return f;
+  }
+  const t = song.title || '';
+  if(/[\u{1F7E5}\u{1F534}🟥🔴]/u.test(t)) return SONG_FLAGS.find(x=>x.key==='red');
+  if(/[\u{1F7E7}\u{1F7E4}🟧🟠]/u.test(t)) return SONG_FLAGS.find(x=>x.key==='orange');
+  if(/[\u{1F7E8}\u{1F7E1}🟨🟡]/u.test(t)) return SONG_FLAGS.find(x=>x.key==='yellow');
+  if(/[\u{1F7E9}\u{1F7E2}🟩🟢]/u.test(t)) return SONG_FLAGS.find(x=>x.key==='green');
+  if(/[\u{1F7E6}\u{1F535}🟦🔵]/u.test(t)) return SONG_FLAGS.find(x=>x.key==='blue');
+  if(/[\u{1F7EA}\u{1F7E3}🟪🟣]/u.test(t)) return SONG_FLAGS.find(x=>x.key==='purple');
+  if(/[\u{2B1C}\u{26AA}\u{25FB}\u{25FD}⬜⚪]/u.test(t)) return SONG_FLAGS.find(x=>x.key==='white');
+  return null;
+}
+
+function cleanSongTitleForDisplay(title){
+  if(!title) return '';
+  return title.replace(/[\u{1F7E5}-\u{1F7EB}\u{1F534}\u{1F535}\u{2B1C}\u{26AA}\u{25FB}\u{25FD}🟥🟧🟨🟩🟦🟪🟫⬛⬜🔴🟠🟡🟢🔵🟣⚪]/gu, '').replace(/\s{2,}/g, ' ').trim();
+}
+
 function renderChordLine(line){
   const cleanedLine = line.replace(/^> (?=\S)/, '').replace(/^>/, '');
   const re = /(\S+)/g;
@@ -1986,9 +2028,13 @@ function toggleSongChecked(id){
 }
 
 // (2026-07-13) default none checked in edit mode & select specific songs; prev: checked all
+// (2026-07-13) render wide song flag pill & cleaned title; prev: raw title
 function renderSongRowHtml(s, secMassPart){
   const isExcluded = isSongExcluded(s);
   const isChecked = state.checkedSongIds.includes(s.id);
+  const flag = getSongFlag(s);
+  const flagPill = flag ? `<span class="song-flag-pill" style="background:${flag.color};" title="${flag.name} Flag"></span>` : '';
+  const displayTitle = cleanSongTitleForDisplay(s.title);
   const leftControl = state.listEditMode
     ? `<button class="song-check-btn ${isChecked?'checked':''}" data-check-id="${s.id}" title="${isChecked?'Deselect':'Select'}">${isChecked?iconCheckSmall():''}</button>`
     : `<span class="fav" style="display:flex;align-items:center;">${s.favorite ? iconStar(true) : iconStar(false)}</span>`;
@@ -2000,7 +2046,7 @@ function renderSongRowHtml(s, secMassPart){
     <div class="song-row ${state.listEditMode?'edit-mode':''} ${isChecked?'is-checked':''} ${isExcluded?'is-excluded':''}" data-id="${s.id}" data-section-mp="${escapeHtml(secMassPart||'')}">
       ${leftControl}
       <div style="flex:1;min-width:0;">
-        <div class="song-title">${escapeHtml(s.title)}${excludedBadge}</div>
+        <div class="song-title" style="display:flex;align-items:center;min-width:0;">${flagPill}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(displayTitle)}</span>${excludedBadge}</div>
         <div class="song-sub">${escapeHtml(s.artist||'Unknown')} &middot; Key ${escapeHtml(transposeKeyLabel(s.key, s.transposeOffset||0)||'—')}${(s.categories&&s.categories.length)?' &middot; '+escapeHtml(s.categories.join(', ')):''}</div>
       </div>
       ${rightControl}
@@ -2117,10 +2163,10 @@ function renderListView(animateChipScroll){
     </div>
     <div class="chiprow">${chips}</div>
     ${colorBarHtml}
-    <div class="list-wrap" id="list-wrap">${rows}</div>
-    ${/* (2026-07-13) hide batch bar when modal open; prev: text comment in html */ ''}
+    <!-- (2026-07-13) padding-bottom for edit mode & refined batch action bar; prev: overlap -->
+    <div class="list-wrap ${state.listEditMode?'in-edit-mode':''}" id="list-wrap">${rows}</div>
     ${!state.modal && state.listEditMode && state.checkedSongIds.length > 0 ? `
-      <div class="batch-action-bar" id="batch-action-bar" style="position:fixed;bottom:calc(18px + env(safe-area-inset-bottom, 0px));left:50%;transform:translateX(-50%);background:var(--bg-elev2);border:1.5px solid var(--accent);border-radius:18px;padding:8px 18px;display:flex;align-items:center;gap:12px;box-shadow:0 12px 36px rgba(0,0,0,0.7);z-index:15;">
+      <div class="batch-action-bar" id="batch-action-bar">
         <span style="font-size:13px;font-weight:700;color:var(--accent);">${state.checkedSongIds.length} selected</span>
         <button class="btn btn-primary" id="btn-batch-add-folder" style="padding:7px 16px;min-height:36px;font-size:13px;flex:0 0 auto;">Add to Folder</button>
         <button class="btn btn-secondary" id="btn-batch-export" style="padding:7px 14px;min-height:36px;font-size:13px;flex:0 0 auto;">Export</button>
@@ -2434,23 +2480,23 @@ function wireSongRowInteractions(el, id, sectionMassPart){
     favEl.addEventListener('mouseup', (e)=>e.stopPropagation());
   }
 
-  // (2026-07-13) suppress ghost touch click-through on long-press; prev: clicked modal
+  // (2026-07-13) suppress ghost touches on long-press release; prev: clicked modal button
   const start = (e)=>{
     if(e.target.closest('.fav, .song-check-btn, .song-drag-handle')) return;
     moved = false; longFired = false;
     pressTimer = setTimeout(()=>{
       longFired = true;
       if(navigator.vibrate) navigator.vibrate(15);
-      const suppressGhost = (ev)=>{
-        ev.stopPropagation();
+      const swallowGhost = (ev)=>{
+        ev.stopImmediatePropagation();
         ev.preventDefault();
       };
-      window.addEventListener('touchend', suppressGhost, {capture:true, once:true});
-      window.addEventListener('click', suppressGhost, {capture:true, once:true});
+      window.addEventListener('click', swallowGhost, {capture:true, once:true});
+      window.addEventListener('touchend', swallowGhost, {capture:true, once:true});
       setTimeout(()=>{
-        window.removeEventListener('touchend', suppressGhost, {capture:true});
-        window.removeEventListener('click', suppressGhost, {capture:true});
-      }, 500);
+        window.removeEventListener('click', swallowGhost, {capture:true});
+        window.removeEventListener('touchend', swallowGhost, {capture:true});
+      }, 400);
       state.modal = {type:'song-context', id, openedAt: performance.now()};
       renderListView();
     }, 480);
@@ -2461,7 +2507,12 @@ function wireSongRowInteractions(el, id, sectionMassPart){
   el.addEventListener('touchend', (e)=>{
     if(e.target.closest('.fav, .song-check-btn, .song-drag-handle')) return;
     cancel();
-    if(!moved && !longFired){
+    if(longFired){
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if(!moved){
       if(state.listEditMode){
         // (2026-07-13) tap row to toggle batch selection in edit mode; prev: exclude
         toggleSongChecked(id);
@@ -2474,12 +2525,15 @@ function wireSongRowInteractions(el, id, sectionMassPart){
   el.addEventListener('mouseup', (e)=>{
     if(e.target.closest('.fav, .song-check-btn, .song-drag-handle')) return;
     cancel();
-    if(!longFired){
-      if(state.listEditMode){
-        toggleSongChecked(id);
-      } else {
-        openViewer(id, null, sectionMassPart);
-      }
+    if(longFired){
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if(state.listEditMode){
+      toggleSongChecked(id);
+    } else {
+      openViewer(id, null, sectionMassPart);
     }
   });
   el.addEventListener('mouseleave', cancel);
@@ -2779,7 +2833,10 @@ function renderViewer(){
     <div class="topbar" id="viewer-topbar">
       <button class="icon-btn" id="btn-back">${iconBack()}</button>
       <button class="icon-btn" id="btn-prev-song" ${prevSong?'':'disabled'} title="${prevSong?escapeHtml(prevSong.title):'No previous song'}">${iconChevronLeft()}</button>
-      <h1 style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;font-weight:700;">${escapeHtml(song.title)}</h1>
+      <h1 style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;font-weight:700;display:flex;align-items:center;gap:6px;">
+        ${(()=>{ const vf = getSongFlag(song); return vf ? `<span class="song-flag-pill" style="background:${vf.color};"></span>` : ''; })()}
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(cleanSongTitleForDisplay(song.title))}</span>
+      </h1>
       <button class="icon-btn" id="btn-next-song" ${nextSong?'':'disabled'} title="${nextSong?escapeHtml(nextSong.title):'No next song'}">${iconChevronRight()}</button>
       <button class="icon-btn" id="btn-speed-toggle" title="Speed Controls">${iconSpeedArrows()}</button>
       <button class="icon-btn playbar-play" id="btn-playpause" title="Play/Pause">${isActivelyScrolling ? iconPause() : iconPlay()}</button>
@@ -2789,7 +2846,10 @@ function renderViewer(){
     <div class="viewer-body">
       <div class="chart-wrap" id="chart-wrap" style="font-size:${fontSize}px">
         ${renderMassPartCueCard(song)}
-        <div class="chart-title">${escapeHtml(song.title)}</div>
+        <div class="chart-title" style="display:flex;align-items:center;gap:6px;">
+          ${(()=>{ const vf = getSongFlag(song); return vf ? `<span class="song-flag-pill" style="background:${vf.color};"></span>` : ''; })()}
+          <span>${escapeHtml(cleanSongTitleForDisplay(song.title))}</span>
+        </div>
         <div class="chart-artist">${escapeHtml(song.artist||'')}</div>
         <div class="chart-meta-inline">
           <span>Key <b>${escapeHtml(transposeKeyLabel(song.key, offset)||'—')}</b></span>
@@ -3339,11 +3399,10 @@ function closeEditorOverlay(afterClose){
   }, 340);
 }
 
-// (2026-07-13) remove stuck modal backdrop when opening editor; prev: stuck modal
+// (2026-07-13) universal modal cleanup on openEditor; prev: stuck modal backdrop
 function openEditor(id){
-  const mBg = document.getElementById('modal-bg');
-  if(mBg) mBg.remove();
   state.modal = null;
+  document.querySelectorAll('.modal-backdrop, #modal-bg').forEach(el=>el.remove());
   const song = id ? state.songs.find(s=>s.id===id) : null;
   state.editingDraft = song ? {...song} : {
     id: uid(), title:'', artist:'', key:'C', capo:0, tempo:90, timeSig:'4/4', style:'', instrument:'',
@@ -3399,6 +3458,20 @@ function renderEditor(){
         <div class="field"><label>Style / genre</label><input id="f-style" value="${escapeHtml(d.style)}" placeholder="e.g. Ballad, Rock, Hymn"/></div>
         <div class="field"><label>Instrument / voice</label><input id="f-instrument" value="${escapeHtml(d.instrument)}" placeholder="e.g. Guitar, Piano, Vocal"/></div>
       </div>
+      <!-- (2026-07-13) song flag selector palette in editor; prev: none -->
+      <div class="field" style="margin-bottom:12px;">
+        <label style="display:flex;align-items:center;justify-content:space-between;">
+          <span>Song Flag</span>
+          <button type="button" class="btn-text-link" id="ed-clear-flag" style="font-size:11px;color:var(--text-dim);background:none;border:none;cursor:pointer;padding:0;">No Flag</button>
+        </label>
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 0;overflow-x:auto;">
+          ${SONG_FLAGS.map(f=>{
+            const curFlag = d.flag || (getSongFlag(d)?.key);
+            const isSel = curFlag === f.key;
+            return `<button type="button" class="theme-swatch-btn ${isSel?'selected':''}" data-editor-flag="${f.key}" title="${f.name}" style="background:${f.color};width:24px;height:16px;border-radius:4px;border:1.5px solid ${isSel?'#fff':'rgba(255,255,255,0.25)'};cursor:pointer;"></button>`;
+          }).join('')}
+        </div>
+      </div>
       <div class="field" id="field-massparts">
         <label>Mass Part <span class="req">*</span></label>
         <div class="cat-toggle-wrap" id="mp-toggle-wrap">
@@ -3443,6 +3516,18 @@ function renderEditor(){
   };
   document.getElementById('btn-cancel').onclick = back;
   document.getElementById('btn-cancel2').onclick = back;
+  document.querySelectorAll('[data-editor-flag]').forEach(btn=>{
+    btn.onclick = ()=>{
+      d.flag = btn.dataset.editorFlag;
+      renderEditor();
+    };
+  });
+  const edClearFlag = document.getElementById('ed-clear-flag');
+  if(edClearFlag) edClearFlag.onclick = ()=>{
+    d.flag = 'none';
+    d.title = cleanSongTitleForDisplay(d.title);
+    renderEditor();
+  };
   document.getElementById('f-timesig').onchange = e=>{
     document.getElementById('custom-timesig-wrap').style.display = e.target.value==='custom' ? 'block':'none';
   };
@@ -3531,8 +3616,10 @@ function renderEditor(){
 
     const timeSel = document.getElementById('f-timesig').value;
     const timeVal = timeSel==='custom' ? (document.getElementById('f-timesig-custom').value.trim()||'4/4') : timeSel;
+    // (2026-07-13) persist song flag in song object; prev: none
     const song = {
       ...d,
+      flag: d.flag || (getSongFlag(d)?.key) || 'none',
       title: titleVal,
       artist: document.getElementById('f-artist').value.trim(),
       key: document.getElementById('f-key').value.trim(),
@@ -4115,12 +4202,13 @@ function modalHtml(){
         </div>
       </div>`;
   }
-  // (2026-07-13) color folder chips by theme in song-context modal; prev: default orange
+  // (2026-07-13) song-context modal with flags, close X & clean title; prev: stuck modal
   if(state.modal.type==='song-context'){
     const song = state.songs.find(s=>s.id===state.modal.id);
     if(!song) return '';
     const isExcluded = isSongExcluded(song);
     const scopeLabel = state.filterMassPart || state.filterCat || 'All';
+    const curFlag = getSongFlag(song);
     const folderToggles = state.categories.map(c=>{
       const ct = getFolderTheme(c);
       const isSel = (song.categories||[]).includes(c);
@@ -4130,25 +4218,44 @@ function modalHtml(){
     return `
       <div class="modal-backdrop" id="modal-bg">
         <div class="modal">
-          <h3>${escapeHtml(song.title)}</h3>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <h3 style="margin:0;display:flex;align-items:center;gap:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px;">
+              ${curFlag ? `<span class="song-flag-pill" style="background:${curFlag.color};"></span>` : ''}
+              <span>${escapeHtml(cleanSongTitleForDisplay(song.title))}</span>
+            </h3>
+            <button class="icon-btn" id="modal-x" style="width:28px;height:28px;flex-shrink:0;">${iconClose()}</button>
+          </div>
           <div style="display:flex;gap:10px;margin-bottom:10px;">
             <button class="btn btn-secondary" id="ctx-edit">Edit song</button>
             <button class="btn btn-danger" id="ctx-delete">Delete</button>
           </div>
-          <div style="margin-bottom:16px;">
+          <div style="margin-bottom:14px;">
             <button class="btn ${isExcluded?'btn-primary':'btn-secondary'}" id="ctx-toggle-exclude" style="width:100%;min-height:42px;padding:10px;">
               ${isExcluded ? `Include in "${escapeHtml(scopeLabel)}" Swipe Order` : `Exclude (Skip on Swipe in "${escapeHtml(scopeLabel)}")`}
             </button>
           </div>
-          <div class="field">
+          <div class="field" style="margin-bottom:14px;">
+            <label style="display:flex;align-items:center;justify-content:space-between;">
+              <span>Song Flag</span>
+              ${curFlag ? `<button type="button" class="btn-text-link" id="ctx-clear-flag" style="font-size:11px;color:var(--text-dim);background:none;border:none;cursor:pointer;padding:0;">Clear Flag</button>` : ''}
+            </label>
+            <div style="display:flex;align-items:center;gap:8px;padding:4px 0;overflow-x:auto;">
+              ${SONG_FLAGS.map(f=>{
+                const isSel = curFlag && curFlag.key === f.key;
+                return `<button type="button" class="theme-swatch-btn ${isSel?'selected':''}" data-ctx-flag="${f.key}" title="${f.name}" style="background:${f.color};width:24px;height:16px;border-radius:4px;border:1.5px solid ${isSel?'#fff':'rgba(255,255,255,0.25)'};cursor:pointer;"></button>`;
+              }).join('')}
+            </div>
+          </div>
+          <div class="field" style="margin-bottom:14px;">
             <label>Add to folder(s)</label>
             <div class="cat-toggle-wrap">${folderToggles}</div>
             <div class="hint">Tap any folder to file this same song there too — it's still one song, edited in one place.</div>
           </div>
+          <button class="btn btn-secondary" id="ctx-done" style="width:100%;min-height:40px;">Done</button>
         </div>
       </div>`;
   }
-  // (2026-07-13) modal for batch adding selected songs to a folder; prev: none
+  // (2026-07-13) batch-add-folder modal with + Add New Folder option; prev: existing only
   if(state.modal.type==='batch-add-folder'){
     const count = (state.modal.songIds || []).length;
     const folderChips = state.categories.map(c=>{
@@ -4163,8 +4270,17 @@ function modalHtml(){
             <button class="icon-btn" id="modal-x" style="width:28px;height:28px;">${iconClose()}</button>
           </div>
           <div style="font-size:12px;color:var(--text-dim);margin-bottom:14px;">Select destination folder for <strong>${count}</strong> selected song(s):</div>
-          <div class="cat-toggle-wrap" style="display:flex;flex-wrap:wrap;gap:8px;max-height:260px;overflow-y:auto;margin-bottom:12px;">
+          <div class="cat-toggle-wrap" style="display:flex;flex-wrap:wrap;gap:8px;max-height:260px;overflow-y:auto;margin-bottom:14px;">
             ${folderChips || '<div style="color:var(--text-dim);font-size:12px;">No folders created yet.</div>'}
+          </div>
+          <div style="border-top:1px solid var(--line);padding-top:12px;">
+            <div id="batch-new-folder-box" style="display:none;margin-bottom:10px;">
+              <div style="display:flex;gap:8px;">
+                <input id="batch-new-folder-input" placeholder="New folder name..." style="padding:8px 12px;font-size:13px;flex:1;"/>
+                <button class="btn btn-primary" id="btn-batch-create-folder" style="flex:0 0 auto;padding:8px 14px;font-size:13px;">Create & File</button>
+              </div>
+            </div>
+            <button class="btn btn-secondary" id="btn-toggle-batch-new-folder" style="width:100%;font-size:13px;padding:9px;">+ Add New Folder</button>
           </div>
         </div>
       </div>`;
@@ -4373,15 +4489,19 @@ function wireModal(){
       e.preventDefault();
     }
   }, {capture: true});
-  // (2026-07-13) show SongTitle saved toast when closing song-context modal; prev: silent close
-  // (2026-07-13) reliable modal backdrop, done & close button dismissal; prev: stuck modal
+  // (2026-07-13) universal closeActiveModal with complete DOM cleanup & toast; prev: stuck modal
   const closeActiveModal = ()=>{
     const closingModal = state.modal;
     state.modal = null;
-    render();
+    document.querySelectorAll('.modal-backdrop, #modal-bg').forEach(el=>el.remove());
+    if(state.view === 'list') renderListView();
+    else if(state.view === 'viewer') renderViewer();
+    else if(state.view === 'setlists') renderSetlistsView();
+    else if(state.view === 'setlist-editor') renderSetlistEditor();
+    else render();
     if(closingModal && closingModal.type === 'song-context' && closingModal.dirty){
       const s = state.songs.find(item=>item.id===closingModal.id);
-      if(s) showToast(`${s.title} saved.`);
+      if(s) showToast(`${cleanSongTitleForDisplay(s.title)} saved.`);
     }
   };
   bg.onclick = (e)=>{
@@ -4434,7 +4554,7 @@ function wireModal(){
           await Store.saveSong(s);
         }
       }
-      showToast('Folder created with standard mass prayers');
+      showToast(`Created "${val}"`);
       render();
     }
   };
@@ -4677,22 +4797,45 @@ function wireModal(){
       }
     };
   });
+  // (2026-07-13) wire song context actions & flags with closeActiveModal; prev: stuck modal
   const ctxEdit = document.getElementById('ctx-edit');
-  if(ctxEdit) ctxEdit.onclick = ()=>{ const id = state.modal.id; state.modal=null; openEditor(id); };
+  if(ctxEdit) ctxEdit.onclick = ()=>{ const id = state.modal?.id; closeActiveModal(); openEditor(id); };
   const ctxToggleEx = document.getElementById('ctx-toggle-exclude');
   if(ctxToggleEx) ctxToggleEx.onclick = async ()=>{
-    const id = state.modal.id;
-    state.modal = null;
+    const id = state.modal?.id;
     await toggleSongIncludeExclude(id);
+    closeActiveModal();
   };
   const ctxDelete = document.getElementById('ctx-delete');
   if(ctxDelete) ctxDelete.onclick = async ()=>{
+    const id = state.modal?.id;
     if(confirm('Delete this song? This cannot be undone.')){
-      await Store.deleteSong(state.modal.id);
-      state.songs = state.songs.filter(s=>s.id!==state.modal.id);
-      state.modal = null;
-      render();
+      await Store.deleteSong(id);
+      state.songs = state.songs.filter(s=>s.id!==id);
+      closeActiveModal();
     }
+  };
+  const ctxDone = document.getElementById('ctx-done');
+  if(ctxDone) ctxDone.onclick = ()=>{ closeActiveModal(); };
+  document.querySelectorAll('[data-ctx-flag]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const song = state.songs.find(s=>s.id===state.modal?.id);
+      if(!song) return;
+      song.flag = btn.dataset.ctxFlag;
+      await Store.saveSong(song);
+      state.modal.dirty = true;
+      render();
+    };
+  });
+  const ctxClearFlag = document.getElementById('ctx-clear-flag');
+  if(ctxClearFlag) ctxClearFlag.onclick = async ()=>{
+    const song = state.songs.find(s=>s.id===state.modal?.id);
+    if(!song) return;
+    song.flag = 'none';
+    song.title = cleanSongTitleForDisplay(song.title);
+    await Store.saveSong(song);
+    state.modal.dirty = true;
+    render();
   };
   // (2026-07-13) toggle folder chips in-place without re-opening modal; prev: render() on click
   document.querySelectorAll('[data-ctx-folder]').forEach(el=>{
@@ -4713,6 +4856,45 @@ function wireModal(){
       await Store.saveSong(song);
     };
   });
+  // (2026-07-13) toggle new folder input & creation in batch add modal; prev: none
+  const toggleBatchNewFolderBtn = document.getElementById('btn-toggle-batch-new-folder');
+  const batchNewFolderBox = document.getElementById('batch-new-folder-box');
+  if(toggleBatchNewFolderBtn && batchNewFolderBox){
+    toggleBatchNewFolderBtn.onclick = ()=>{
+      const isHidden = batchNewFolderBox.style.display === 'none';
+      batchNewFolderBox.style.display = isHidden ? 'block' : 'none';
+      toggleBatchNewFolderBtn.style.display = isHidden ? 'none' : 'block';
+      if(isHidden){
+        const inp = document.getElementById('batch-new-folder-input');
+        if(inp) inp.focus();
+      }
+    };
+  }
+  const btnBatchCreateFolder = document.getElementById('btn-batch-create-folder');
+  if(btnBatchCreateFolder){
+    btnBatchCreateFolder.onclick = async ()=>{
+      const inp = document.getElementById('batch-new-folder-input');
+      const val = inp ? inp.value.trim() : '';
+      if(!val) return;
+      if(!state.categories.includes(val)){
+        state.categories.push(val);
+        await Store.saveCategories(state.categories);
+      }
+      const songIds = (state.modal && state.modal.songIds) || [];
+      for(const sid of songIds){
+        const s = state.songs.find(item=>item.id===sid);
+        if(s){
+          if(!Array.isArray(s.categories)) s.categories = [];
+          if(!s.categories.includes(val)){
+            s.categories.push(val);
+            await Store.saveSong(s);
+          }
+        }
+      }
+      closeActiveModal();
+      showToast(`Created "${val}"`);
+    };
+  }
   // (2026-07-13) wire batch add selected songs to folder; prev: none
   document.querySelectorAll('[data-batch-folder]').forEach(btn=>{
     btn.onclick = async ()=>{
