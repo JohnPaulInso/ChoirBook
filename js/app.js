@@ -947,6 +947,8 @@ const state = {
   filterMassPart: null, // when set, list view is browsing by mass part instead of folder
   // (2026-07-13) add filterFlag for flag browse mode; prev: none
   filterFlag: null,
+  // (2026-07-13) add favOnly filter state; prev: none
+  favOnly: false,
   // (2026-07-13) preserve list-wrap scroll position across views; prev: none
   lastListScroll: 0,
   sidebarOpen: false,
@@ -1983,6 +1985,10 @@ function getFilteredSongsForCurrentView(){
       songs = [];
     }
   }
+  // (2026-07-13) filter favorited only songs when toggle active; prev: none
+  if(state.favOnly){
+    songs = songs.filter(s=>s.favorite);
+  }
   if(state.search.trim()){
     const q = state.search.toLowerCase();
     // (2026-07-13) search across title, artist, section & full lyrics body; prev: title/artist only
@@ -2194,31 +2200,56 @@ function buildSongListRowsHtml(){
   const songs = getFilteredSongsForCurrentView();
   const sections = getOrderedSongSections(songs);
   let rows = '';
-  sections.forEach(sec=>{
+  sections.forEach((sec, secIdx)=>{
     let secHtml = '';
+    const isFirstSection = secIdx === 0;
+    // (2026-07-13) sticky favorited only toggle on first letter divider; prev: none
+    const favToggleBtn = isFirstSection ? `
+      <button type="button" class="fav-toggle-pill ${state.favOnly?'is-active':''}" id="btn-toggle-fav-only" title="${state.favOnly?'Show all songs':'Show favorited only'}" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:10.5px;font-weight:700;letter-spacing:0.2px;border-radius:12px;border:1px solid ${state.favOnly?'var(--chord)':'rgba(255,255,255,0.18)'};background:${state.favOnly?'rgba(234,179,8,0.2)':'transparent'};color:${state.favOnly?'var(--chord)':'var(--text-dim)'};cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all 0.15s ease;">
+        <span style="display:flex;align-items:center;font-size:12px;color:${state.favOnly?'var(--chord)':'inherit'};">${iconStar(state.favOnly)}</span>
+        <span>${state.favOnly?'Favorites':'All'}</span>
+      </button>` : '';
+
     if(sec.optionalLit){
       const hidden = !!state.hideOptionalCommunionLit;
       secHtml += `
         <div class="letter-divider" style="display:flex;align-items:center;justify-content:space-between;">
           <span>&#10022; ${escapeHtml(sec.title)}</span>
-          <button class="cue-toggle-btn" data-toggle-opt-lit="${escapeHtml(sec.litId)}" style="padding:1px 7px;font-size:10px;">${hidden ? 'Show Page' : 'Hide Page'}</button>
+          <div style="display:flex;align-items:center;gap:6px;">
+            ${favToggleBtn}
+            <button class="cue-toggle-btn" data-toggle-opt-lit="${escapeHtml(sec.litId)}" style="padding:1px 7px;font-size:10px;">${hidden ? 'Show Page' : 'Hide Page'}</button>
+          </div>
         </div>`;
       if(!hidden){
         sec.songs.forEach(s=>{ secHtml += renderSongRowHtml(s, sec.massPart); });
       }
     } else {
-      secHtml += `<div class="letter-divider">${sec.isLiturgical ? '&#10022; ' : ''}${escapeHtml(sec.title)}</div>`;
+      secHtml += `
+        <div class="letter-divider" style="${isFirstSection?'display:flex;align-items:center;justify-content:space-between;':''}">
+          <span>${sec.isLiturgical ? '&#10022; ' : ''}${escapeHtml(sec.title)}</span>
+          ${favToggleBtn}
+        </div>`;
       sec.songs.forEach(s=>{ secHtml += renderSongRowHtml(s, sec.massPart); });
     }
     rows += `<div class="song-section-group" data-group-mp="${escapeHtml(sec.massPart||'')}">${secHtml}</div>`;
   });
   if(songs.length===0){
-    rows = `<div class="empty-state">No songs here yet.<br>Tap the + button to add one, or long-press a song to file it in this ${state.filterFlag?'flag color':(state.filterMassPart?'Mass Part':'folder')}.</div>`;
+    rows = `<div class="empty-state">${state.favOnly ? 'No favorited songs found in this view.' : 'No songs here yet.<br>Tap the + button to add one, or long-press a song to file it in this ' + (state.filterFlag?'flag color':(state.filterMassPart?'Mass Part':'folder')) + '.'}</div>`;
   }
   return rows;
 }
 
 function wireListWrapRows(){
+  // (2026-07-13) wire favorited-only divider toggle; prev: none
+  const btnFavOnly = document.getElementById('btn-toggle-fav-only');
+  if(btnFavOnly){
+    btnFavOnly.onclick = (e)=>{
+      e.stopPropagation();
+      e.preventDefault();
+      state.favOnly = !state.favOnly;
+      renderListView();
+    };
+  }
   document.querySelectorAll('[data-toggle-opt-lit]').forEach(btn=>{
     btn.onclick = (e)=>{
       e.stopPropagation();
@@ -2718,21 +2749,35 @@ function wireSongRowInteractions(el, id, sectionMassPart){
 
   const favEl = el.querySelector('.fav');
   if(favEl){
-    const handleFavToggle = async (e)=>{
+    // (2026-07-13) instantaneous optimistic favorite toggle; prev: awaited Store.saveSong
+    const handleFavToggle = (e)=>{
       e.stopPropagation();
       e.preventDefault();
       const song = state.songs.find(s=>s.id===id);
       if(song){
         song.favorite = !song.favorite;
-        await Store.saveSong(song);
-        renderListView();
+        favEl.innerHTML = song.favorite ? iconStar(true) : iconStar(false);
+        Store.saveSong(song).catch(()=>{});
+        LocalAdapter.set('song:' + song.id, JSON.stringify(song)).catch(()=>{});
+        if(state.favOnly || state.filterCat === 'Favorites'){
+          if(!song.favorite){
+            el.style.transition = 'opacity 0.15s ease, transform 0.15s ease';
+            el.style.opacity = '0';
+            el.style.transform = 'scale(0.96)';
+            setTimeout(()=>{ el.remove(); }, 150);
+          }
+        }
       }
     };
-    favEl.addEventListener('click', handleFavToggle);
-    favEl.addEventListener('touchstart', (e)=>e.stopPropagation(), {passive:true});
-    favEl.addEventListener('touchend', (e)=>e.stopPropagation(), {passive:true});
-    favEl.addEventListener('mousedown', (e)=>e.stopPropagation());
-    favEl.addEventListener('mouseup', (e)=>e.stopPropagation());
+    favEl.onclick = handleFavToggle;
+    favEl.ontouchend = (e)=>{
+      e.stopPropagation();
+      e.preventDefault();
+      handleFavToggle(e);
+    };
+    favEl.ontouchstart = (e)=>e.stopPropagation();
+    favEl.onmousedown = (e)=>e.stopPropagation();
+    favEl.onmouseup = (e)=>e.stopPropagation();
   }
 
   // (2026-07-13) suppress ghost touches on long-press release; prev: clicked modal button
