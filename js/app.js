@@ -518,7 +518,8 @@ function renderMelodyStaffLine(line){
   tokens.forEach((item)=>{
     const { raw, inner, isChord, col, len } = item;
     const ratio = Math.max(0, Math.min(1, col / maxCol));
-    const leftCalc = `calc(38px + (100% - 66px) * ${ratio.toFixed(4)})`;
+    // (2026-07-13) add spacing on right of G-clef for notes; prev: 38px left start
+    const leftCalc = `calc(56px + (100% - 84px) * ${ratio.toFixed(4)})`;
     if(raw === '|' || raw === '/' || raw === '\\'){
       itemsHtml += `
         <span class="staff-note-group" style="left:${leftCalc};pointer-events:none;">
