@@ -525,3 +525,7 @@ svg.fretboard, svg.keyboard{display:block;margin:0 auto;}
   border:1px solid var(--line);color:var(--text);padding:9px 16px;border-radius:10px;font-size:12.5px;
   z-index:30;opacity:0;transition:opacity .25s ease;pointer-events:none;}
 .toast.show{opacity:1;}
+
+/* (2026-07-13) intro melody accordion dropdown & collapse styles; prev: none */
+.intro-melody-header:active { opacity: 0.85; }
+.intro-melody-box.is-collapsed { background: rgba(255,255,255,0.015); border-color: rgba(255,255,255,0.05); }

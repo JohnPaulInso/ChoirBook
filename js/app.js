@@ -1467,8 +1467,9 @@ function normalizeSong(song){
   if(song.referenceUrl===undefined) song.referenceUrl = '';
   if(song.importedGuid===undefined) song.importedGuid = null;
   if(!Array.isArray(song.excludedFolders)) song.excludedFolders = [];
-  // (2026-07-13) preserve transposeOffset in normalizeSong; prev: omitted
+  // (2026-07-13) preserve transpose & introMelodyCollapsed; prev: omitted
   if(song.transposeOffset===undefined || song.transposeOffset===null) song.transposeOffset = 0;
+  if(song.introMelodyCollapsed===undefined) song.introMelodyCollapsed = false;
   // (2026-07-13) preserve explicit flag & clean leading digits; prev: reset none
   if(song.title){
     if(song.flag === undefined || song.flag === null || song.flag === ''){
@@ -3826,7 +3827,8 @@ function handleStaffPlayClick(btn){
   timers.push(endT);
 }
 
-function renderIntroMelodySection(introMelody){
+// (2026-07-13) render accordion dropdown for intro melody; prev: static box
+function renderIntroMelodySection(introMelody, isCollapsed, songId){
   if(!introMelody || !introMelody.trim()) return '';
   const lines = introMelody.split(/\r?\n/).map(l=>l.trimEnd()).filter(l=>l.trim().length > 0);
   const parsedStaffs = [];
@@ -3845,15 +3847,24 @@ function renderIntroMelodySection(introMelody){
       ${staffHtml}
     </div>
   `).join('');
+  const collapsed = !!isCollapsed;
   return `
-    <div class="intro-melody-box" style="margin:4px 0 16px 0;padding:12px 14px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:12px;">
-      <div class="intro-melody-header" style="font-size:11px;font-weight:800;color:var(--accent);letter-spacing:0.8px;text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;">
-        <span style="display:flex;align-items:center;gap:6px;">&#9835; Intro Melody</span>
-        <button type="button" class="staff-play-btn" data-play-staff-all="true" title="Play Intro Melody">
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> <span>Play</span>
-        </button>
+    <div class="intro-melody-box ${collapsed ? 'is-collapsed' : ''}" data-song-id="${escapeHtml(songId||'')}" style="margin:4px 0 16px 0;padding:${collapsed ? '8px 14px' : '12px 14px'};background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:12px;transition:padding 0.2s ease;">
+      <div class="intro-melody-header" data-toggle-intro-melody="true" style="font-size:11px;font-weight:800;color:var(--accent);letter-spacing:0.8px;text-transform:uppercase;margin-bottom:${collapsed ? '0' : '10px'};display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;">
+        <div class="intro-melody-toggle" style="display:flex;align-items:center;gap:7px;flex:1;cursor:pointer;">
+          <svg class="intro-chevron-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.2s ease;transform:${collapsed ? 'rotate(-90deg)' : 'rotate(0deg)'};color:var(--text-dim);"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          <span style="display:flex;align-items:center;gap:6px;">&#9835; Intro Melody</span>
+          ${collapsed ? '<span class="intro-collapsed-hint" style="font-size:10px;font-weight:600;color:var(--text-dim);letter-spacing:0.4px;text-transform:none;opacity:0.75;">(Tap to view)</span>' : ''}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;" onclick="event.stopPropagation();">
+          <button type="button" class="staff-play-btn" data-play-staff-all="true" title="Play Intro Melody" style="touch-action:manipulation;">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> <span>Play</span>
+          </button>
+        </div>
       </div>
-      ${staffsHtml}
+      <div class="intro-melody-content" style="display:${collapsed ? 'none' : 'block'};">
+        ${staffsHtml}
+      </div>
     </div>`;
 }
 
@@ -3986,7 +3997,7 @@ function renderSongSheetContent(s, isPeek){
       <span>Instr. <b>${escapeHtml(s.instrument||'—')}</b></span>
       ${s.referenceUrl ? `<span><a href="${escapeHtml(s.referenceUrl)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;font-weight:700;">&#9654; Reference</a></span>` : ''}
     </div>
-    ${renderIntroMelodySection(s.introMelody)}
+    ${renderIntroMelodySection(s.introMelody, s.introMelodyCollapsed, s.id)}
     <div class="chart-body" ${isPeek ? '' : 'id="chart-body"'}>${lines}</div>
     ${renderMassPartFooterCue(s)}
   `;
@@ -5026,6 +5037,8 @@ function renderEditor(){
       ...d,
       flag: d.flag !== undefined && d.flag !== null ? d.flag : ((getSongFlag(d)?.key) || 'none'),
       introMelody: (document.getElementById('f-intro-melody')?.value || '').trim(),
+      // (2026-07-13) preserve introMelodyCollapsed in song save; prev: omitted
+      introMelodyCollapsed: !!d.introMelodyCollapsed,
       // (2026-07-13) clean sorting numbers from title on save; prev: raw titleVal
       title: cleanSongTitleForDisplay(titleVal),
       // (2026-07-13) fallback to inferred composer on save if blank; prev: blank
@@ -7117,10 +7130,46 @@ document.addEventListener('click', (e)=>{
     return;
   }
   const btn = e.target.closest('.staff-play-btn');
-  if(!btn) return;
-  e.preventDefault();
-  e.stopPropagation();
-  handleStaffPlayClick(btn);
+  if(btn){
+    e.preventDefault();
+    e.stopPropagation();
+    handleStaffPlayClick(btn);
+    return;
+  }
+  // (2026-07-13) accordion toggle for intro melody with persistence; prev: none
+  const toggleEl = e.target.closest('[data-toggle-intro-melody], .intro-melody-header');
+  if(toggleEl){
+    const box = toggleEl.closest('.intro-melody-box');
+    if(!box) return;
+    const songId = box.dataset.songId;
+    const song = (state.songs && state.songs.find(s=>s.id===songId)) || (currentSong()?.id===songId ? currentSong() : null);
+    const content = box.querySelector('.intro-melody-content');
+    const chevron = box.querySelector('.intro-chevron-icon');
+    const isNowCollapsed = !box.classList.contains('is-collapsed');
+    box.classList.toggle('is-collapsed', isNowCollapsed);
+    box.style.padding = isNowCollapsed ? '8px 14px' : '12px 14px';
+    toggleEl.style.marginBottom = isNowCollapsed ? '0' : '10px';
+    if(content) content.style.display = isNowCollapsed ? 'none' : 'block';
+    if(chevron) chevron.style.transform = isNowCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+    let hint = toggleEl.querySelector('.intro-collapsed-hint');
+    if(isNowCollapsed){
+      if(!hint){
+        hint = document.createElement('span');
+        hint.className = 'intro-collapsed-hint';
+        hint.style.cssText = 'font-size:10px;font-weight:600;color:var(--text-dim);letter-spacing:0.4px;text-transform:none;opacity:0.75;';
+        hint.textContent = '(Tap to view)';
+        const wrap = toggleEl.querySelector('.intro-melody-toggle') || toggleEl;
+        wrap.appendChild(hint);
+      }
+    } else if(hint){
+      hint.remove();
+    }
+    if(song){
+      song.introMelodyCollapsed = isNowCollapsed;
+      Store.saveSong(song).catch(()=>{});
+    }
+    return;
+  }
 });
 
 // (2026-07-13) close main IIFE after global listeners; prev: premature close
