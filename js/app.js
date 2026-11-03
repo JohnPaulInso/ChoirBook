@@ -959,8 +959,9 @@ const Store = {
 };
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
 
+// (2026-07-13) add Great Amen to mass parts; prev: omitted after Memorial Accl.
 const DEFAULT_MASS_PARTS = ['Entrance','Kyrie','Gloria','Responsorial Psalm','Gospel Acclamation',
-  'Offertory','Sanctus','Memorial Acclamation','Our Father','Lamb of God','Communion','Recessional','Other'];
+  'Offertory','Sanctus','Memorial Acclamation','Great Amen','Our Father','Lamb of God','Communion','Recessional','Other'];
 
 // (2026-07-13) clean distortion-free piano tone with limiter; prev: clipped gain
 let pianoAudioCtx = null, pianoMasterBus = null;
@@ -1440,6 +1441,46 @@ async function persistMigratedChordSongs(){
 }
 
 // (2026-07-13) read cached meta and songs from LocalAdapter; prev: Store network
+// (2026-07-13) migrate Great Amen mass part & reclassify hymns; prev: in Other
+function ensureGreatAmenMigration(){
+  try{
+    let partsChanged = false;
+    if(!Array.isArray(state.massParts) || state.massParts.length === 0){
+      state.massParts = DEFAULT_MASS_PARTS.slice();
+      partsChanged = true;
+    } else if(!state.massParts.includes('Great Amen')){
+      const memIdx = state.massParts.indexOf('Memorial Acclamation');
+      if(memIdx >= 0){
+        state.massParts.splice(memIdx + 1, 0, 'Great Amen');
+      } else {
+        const ofIdx = state.massParts.indexOf('Our Father');
+        if(ofIdx >= 0) state.massParts.splice(ofIdx, 0, 'Great Amen');
+        else state.massParts.push('Great Amen');
+      }
+      partsChanged = true;
+    }
+    if(partsChanged){
+      LocalAdapter.set('meta:massparts', JSON.stringify(state.massParts));
+      Store.saveMassParts(state.massParts).catch(()=>{});
+    }
+    if(Array.isArray(state.songs)){
+      state.songs.forEach(s => {
+        if(!s || !s.title) return;
+        const isAmen = /\b(great\s+amen|dako\s+nga\s+amen|pinaagi\s+kaniya)\b/i.test(s.title) ||
+          (/\bamen\b/i.test(s.title) && !/\b(mag-?ampo|pasiuna)\b/i.test(s.title));
+        if(isAmen){
+          const curParts = Array.isArray(s.massParts) ? s.massParts : [];
+          if(!curParts.includes('Great Amen') || curParts.includes('Other')){
+            s.massParts = curParts.filter(p => p !== 'Other');
+            if(!s.massParts.includes('Great Amen')) s.massParts.push('Great Amen');
+            Store.saveSong(s).catch(()=>{});
+          }
+        }
+      });
+    }
+  }catch(e){}
+}
+
 async function loadAll(){
   try{
     const cachedItems = await LocalAdapter.getAll('song:');
@@ -1475,6 +1516,7 @@ async function loadAll(){
         if(autoAssignFoldersByTitle(s, state.categories)) Store.saveSong(s).catch(()=>{});
       });
       persistMigratedChordSongs();
+      ensureGreatAmenMigration();
       state.loading = false;
       render();
     } else if(state.categories.length > 0){
@@ -1511,6 +1553,7 @@ async function loadAll(){
     if(cCues){ state.customCues = cCues; LocalAdapter.set('meta:customCues', JSON.stringify(cCues)); }
     applyFolderTheme(state.filterCat);
     if(rawSetlists) state.setlists = rawSetlists.map(normalizeSetlist);
+    ensureGreatAmenMigration();
   }catch(err){
     console.warn('Network sync timed out or offline, using local data');
   }
@@ -2038,6 +2081,8 @@ function inferMassPartFromGsmaTitle(title){
   if(/\b(offertory|halad)\b/i.test(title)) return ['Offertory'];
   if(/\b(sanctus|santos)\b/i.test(title)) return ['Sanctus'];
   if(/\bmanluluwas\b/i.test(title)) return ['Memorial Acclamation'];
+  if(/\b(great\s+amen|dako\s+nga\s+amen|pinaagi\s+kaniya)\b/i.test(title)) return ['Great Amen'];
+  if(/\bamen\b/i.test(title) && !/\b(mag-?ampo|pasiuna)\b/i.test(title)) return ['Great Amen'];
   if(/\bamahan\s+namo\b/i.test(title)) return ['Our Father'];
   if(/\b(agnus|kordero|cordero)\b/i.test(title)) return ['Lamb of God'];
   if(/\b(communion|magnificat)\b/i.test(title)) return ['Communion'];
@@ -2052,7 +2097,7 @@ function inferMassPartFromGsmaTitle(title){
   if(code==='23' || code==='231' || code==='51') return ['Offertory'];
   if(code==='24' || code==='240' || code==='243' || code==='61' || code==='715') return ['Sanctus'];
   if(code==='31' || code==='62') return ['Memorial Acclamation'];
-  if(code==='32' || code==='320' || code==='63') return ['Other'];
+  if(code==='32' || code==='320' || code==='63') return ['Great Amen'];
   if(code==='33' || code==='64') return ['Our Father'];
   if(code==='34' || code==='340' || code==='350' || code==='65' || code==='717') return ['Lamb of God'];
   if(code==='41' || code==='71' || code==='72') return ['Communion'];
@@ -2245,6 +2290,7 @@ async function syncBundledGSMA(){
       }
     }catch(e){}
   }
+  ensureGreatAmenMigration();
   if(changed) render();
 }
 
@@ -5097,6 +5143,9 @@ function iconForMassPart(name){
   }
   if(n === 'memorial acclamation' || n.includes('memorial')) {
     return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>`;
+  }
+  if(n === 'great amen' || n.includes('amen')) {
+    return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M7 12h10"/></svg>`;
   }
   if(n === 'our father' || n.includes('father') || n.includes('amahan')) {
     return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a9 9 0 0 1 9 9c0 4-3 7-9 11C6 18 3 15 3 11a9 9 0 0 1 9-9z"/><path d="M12 6v6M9 9h6"/></svg>`;
