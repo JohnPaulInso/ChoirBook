@@ -222,14 +222,14 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
 .lyric-line{color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;max-width:100%;}
 .chart-hr{border:none;border-top:2px solid var(--line);width:100%;margin:14px 0;}
 .section-line{color:var(--accent);font-weight:800;font-family:'Manrope',sans-serif;letter-spacing:0.3px;margin:8px 0 4px;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;max-width:100%;}
-/* (2026-07-13) enlarge staff, align notes & hide scroll overlay; prev: 34px */
+/* (2026-07-13) enlarge staff wrap height to 78px for lower octave; prev: 68px */
 .melody-staff-section{width:100%;display:block;margin:10px 0 12px;}
-.melody-staff-wrap{position:relative;display:block;width:100%;height:68px;margin:4px 0 6px;user-select:none;overflow:visible;}
+.melody-staff-wrap{position:relative;display:block;width:100%;height:78px;margin:4px 0 8px;user-select:none;overflow:visible;}
 .melody-staff-lines{position:absolute;left:0;right:0;top:0;height:44px;pointer-events:none;}
 .staff-line{position:absolute;left:0;right:0;height:1px;background:rgba(255,255,255,0.28);}
 .staff-g-clef{position:absolute;left:2px;top:-6px;font-size:42px;line-height:1;color:var(--accent);opacity:0.95;pointer-events:none;font-family:serif;}
 .staff-barline{position:absolute;top:4px;height:36px;width:1.5px;background:rgba(255,255,255,0.45);pointer-events:none;}
-.staff-note-group{position:absolute;top:0;height:68px;width:16px;cursor:pointer;display:flex;flex-direction:column;align-items:center;}
+.staff-note-group{position:absolute;top:0;height:78px;width:16px;cursor:pointer;display:flex;flex-direction:column;align-items:center;}
 .staff-note-group:active .staff-notehead{transform:scale(1.25);background:var(--chord);}
 .staff-ledger{position:absolute;left:-4px;width:18px;height:1px;background:rgba(255,255,255,0.6);pointer-events:none;}
 .staff-notehead{position:absolute;left:0;width:10px;height:7.5px;border-radius:50%;background:var(--text);transform:rotate(-18deg);transition:transform .1s ease,background-color .1s ease;}

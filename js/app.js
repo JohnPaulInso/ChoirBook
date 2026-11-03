@@ -223,9 +223,10 @@ function isMelodyNoteLine(line){
   return cleaned.startsWith('<>');
 }
 
-// (2026-07-13) large staff with high/low octave notes & bars; prev: 34px misaligned
+// (2026-07-13) support -note (lower) & +note (higher) octave staff & skip empty; prev: basic notes
 function renderMelodyStaffLine(line){
   const rawLine = line.replace(/^[>\s]*<>\s*/, '').replace(/^>\s*/, '');
+  if(/^(?:first\s+intro|intro\s*:)/i.test(rawLine.trim())) return '';
   const prefixMatch = /^(\s*(?:first\s+notes\s*[-:]?|notes?\s*[-:]?|going\s+up\s*[-:]?)\s*)/i.exec(rawLine);
   const startIdx = prefixMatch ? prefixMatch[1].length : 0;
   const stepMap = {
@@ -257,30 +258,38 @@ function renderMelodyStaffLine(line){
         </span>`;
       return;
     }
-    const nm = /^([a-gA-G])(#|b)?\.?$/.exec(tok);
+    const cleanTok = tok.replace(/^[>]/, '');
+    const nm = /^([-+])?([a-gA-G])(#|b)?\.?$/.exec(cleanTok);
     if(!nm) return;
-    const letter = nm[1];
-    const acc = nm[2] || '';
-    const step = stepMap[letter] !== undefined ? stepMap[letter] : 0;
+    const octSign = nm[1] || '';
+    const letter = nm[2];
+    const acc = nm[3] || '';
+    const stepOffset = octSign === '-' ? -7 : (octSign === '+' ? 7 : 0);
+    const semiOffset = octSign === '-' ? -12 : (octSign === '+' ? 12 : 0);
+    let step = (stepMap[letter] !== undefined ? stepMap[letter] : 0) + stepOffset;
+    let semi = (semiMap[letter] !== undefined ? semiMap[letter] : 0) + semiOffset;
+    if(acc === '#') semi += 1;
+    if(acc === 'b') semi -= 1;
     const yPx = 40 - step * 4.5;
     const stemDown = step >= 4;
-    let semi = semiMap[letter] !== undefined ? semiMap[letter] : 0;
-    if(acc === '#') semi += 1;
-    if(acc === 'b') semi = Math.max(0, semi - 1);
     const accSym = acc === '#' ? '&#9839;' : (acc === 'b' ? '&#9837;' : '');
-    const ledgerHtml = step <= -2
-      ? `<span class="staff-ledger" style="top:49px;"></span>`
-      : (step >= 10 ? `<span class="staff-ledger" style="top:-1px;"></span>` : '');
+    let ledgerHtml = '';
+    if(step <= -2) ledgerHtml += `<span class="staff-ledger" style="top:49px;"></span>`;
+    if(step <= -4) ledgerHtml += `<span class="staff-ledger" style="top:58px;"></span>`;
+    if(step >= 10) ledgerHtml += `<span class="staff-ledger" style="top:-1px;"></span>`;
+    if(step >= 12) ledgerHtml += `<span class="staff-ledger" style="top:-10px;"></span>`;
     itemsHtml += `
-      <span class="staff-note-group" data-staff-note="${semi}" style="left:${leftCalc};" title="Tap to play ${escapeHtml(tok)}">
+      <span class="staff-note-group" data-staff-note="${semi}" style="left:${leftCalc};" title="Tap to play ${escapeHtml(cleanTok)}">
         ${ledgerHtml}
         <span class="staff-notehead ${stemDown?'stem-down':'stem-up'}" style="top:${yPx.toFixed(1)}px;">
           ${accSym ? `<span class="staff-acc">${accSym}</span>` : ''}
           <span class="staff-stem ${stemDown?'stem-down':'stem-up'}"></span>
         </span>
-        <span class="staff-note-label">${escapeHtml(tok)}</span>
+        <span class="staff-note-label">${escapeHtml(cleanTok)}</span>
       </span>`;
   });
+
+  if(!itemsHtml.trim()) return '';
 
   return `
     <div class="melody-staff-section">
@@ -2799,15 +2808,21 @@ function renderMassPartFooterCue(song){
     </div>`;
 }
 
-// (2026-07-13) render dedicated intro melody staff section; prev: staffs all over song
+// (2026-07-13) skip intro chords & filter empty staves; prev: drew empty staff for chords
 function renderIntroMelodySection(introMelody){
   if(!introMelody || !introMelody.trim()) return '';
   const lines = introMelody.split(/\r?\n/).map(l=>l.trimEnd()).filter(l=>l.trim().length > 0);
-  if(!lines.length) return '';
-  const staffsHtml = lines.map((line, idx)=>`
-    <div class="intro-staff-block" style="margin-bottom:${idx < lines.length - 1 ? '16px' : '4px'};">
-      <div class="intro-staff-label" style="font-size:10px;font-weight:800;color:var(--text-dim);letter-spacing:1px;margin-bottom:2px;text-transform:uppercase;">STAFF ${idx + 1}</div>
-      ${renderMelodyStaffLine(line)}
+  const parsedStaffs = [];
+  lines.forEach(line=>{
+    if(/^(?:>|\s)*(?:intro\s*:)/i.test(line)) return;
+    const staff = renderMelodyStaffLine(line);
+    if(staff) parsedStaffs.push(staff);
+  });
+  if(!parsedStaffs.length) return '';
+  const staffsHtml = parsedStaffs.map((staffHtml, idx)=>`
+    <div class="intro-staff-block" style="margin-bottom:${idx < parsedStaffs.length - 1 ? '16px' : '4px'};">
+      ${parsedStaffs.length > 1 ? `<div class="intro-staff-label" style="font-size:10px;font-weight:800;color:var(--text-dim);letter-spacing:1px;margin-bottom:2px;text-transform:uppercase;">STAFF ${idx + 1}</div>` : ''}
+      ${staffHtml}
     </div>
   `).join('');
   return `
