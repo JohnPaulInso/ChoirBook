@@ -142,6 +142,7 @@ function buildFretboardSVG(frets, offset){
   s += `</svg>`;
   return s;
 }
+// (2026-07-13) uniform chord color for all active piano keys; prev: root vs active split
 function buildKeyboardSVG(tones, rootIdx){
   const whiteOrder = [0,2,4,5,7,9,11];
   const blackAfter = {0:1,2:3,5:6,7:8,9:10};
@@ -150,8 +151,7 @@ function buildKeyboardSVG(tones, rootIdx){
   whiteOrder.forEach((note,i)=>{
     const x = i*wKeyW;
     const active = tones.includes(note);
-    const isRoot = note===rootIdx;
-    const fill = isRoot ? 'var(--chord)' : (active ? 'var(--accent-dim)' : '#f3f0ea');
+    const fill = active ? 'var(--chord)' : '#f3f0ea';
     s += `<rect x="${x}" y="0" width="${wKeyW}" height="${wKeyH}" fill="${fill}" stroke="var(--line)" stroke-width="1"/>`;
   });
   whiteOrder.forEach((note,i)=>{
@@ -159,8 +159,7 @@ function buildKeyboardSVG(tones, rootIdx){
       const bNote = blackAfter[note];
       const x = (i+1)*wKeyW - bKeyW/2;
       const active = tones.includes(bNote);
-      const isRoot = bNote===rootIdx;
-      const fill = isRoot ? 'var(--chord)' : (active ? 'var(--accent)' : '#1c1c1c');
+      const fill = active ? 'var(--chord)' : '#1c1c1c';
       s += `<rect x="${x}" y="0" width="${bKeyW}" height="${bKeyH}" fill="${fill}" stroke="#000" stroke-width="1"/>`;
     }
   });
