@@ -3826,7 +3826,7 @@ function renderEditor(){
           ${SONG_FLAGS.map(f=>{
             const curFlag = d.flag || (getSongFlag(d)?.key);
             const isSel = curFlag === f.key;
-            return `<button type="button" class="flag-swatch-btn ${isSel?'selected':''}" data-editor-flag="${f.key}" title="${f.name}" style="background-color:${f.color};"></button>`;
+            return `<button type="button" class="flag-swatch-btn ${isSel?'selected':''}" data-editor-flag="${f.key}" title="${f.name}" style="background-color:${f.color};color:${f.color};"></button>`;
           }).join('')}
         </div>
       </div>
@@ -3884,17 +3884,18 @@ function renderEditor(){
   };
   document.getElementById('btn-cancel').onclick = back;
   document.getElementById('btn-cancel2').onclick = back;
+  // (2026-07-13) instant optimistic editor flag select; prev: full renderEditor()
   document.querySelectorAll('[data-editor-flag]').forEach(btn=>{
     btn.onclick = ()=>{
       d.flag = btn.dataset.editorFlag;
-      renderEditor();
+      document.querySelectorAll('[data-editor-flag]').forEach(b=>b.classList.toggle('selected', b === btn));
     };
   });
   const edClearFlag = document.getElementById('ed-clear-flag');
   if(edClearFlag) edClearFlag.onclick = ()=>{
     d.flag = 'none';
     d.title = cleanSongTitleForDisplay(d.title);
-    renderEditor();
+    document.querySelectorAll('[data-editor-flag]').forEach(b=>b.classList.remove('selected'));
   };
   // (2026-07-13) live update staff preview on intro melody input; prev: value only
   const edIntroMelody = document.getElementById('f-intro-melody');
@@ -4598,7 +4599,7 @@ function modalHtml(){
         <div class="modal">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
             <h3 style="margin:0;display:flex;align-items:center;gap:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px;">
-              ${curFlag ? `<span class="song-flag-pill" style="background-color:${curFlag.color};"></span>` : ''}
+              <span id="ctx-flag-pill-wrap">${curFlag ? `<span class="song-flag-pill" style="background-color:${curFlag.color};"></span>` : ''}</span>
               <span>${escapeHtml(cleanSongTitleForDisplay(song.title))}</span>
             </h3>
             <button class="icon-btn" id="modal-x" style="width:28px;height:28px;flex-shrink:0;">${iconClose()}</button>
@@ -4620,7 +4621,7 @@ function modalHtml(){
             <div style="display:flex;align-items:center;gap:8px;padding:4px 0;overflow-x:auto;">
               ${SONG_FLAGS.map(f=>{
                 const isSel = curFlag && curFlag.key === f.key;
-                return `<button type="button" class="flag-swatch-btn ${isSel?'selected':''}" data-ctx-flag="${f.key}" title="${f.name}" style="background-color:${f.color};"></button>`;
+                return `<button type="button" class="flag-swatch-btn ${isSel?'selected':''}" data-ctx-flag="${f.key}" title="${f.name}" style="background-color:${f.color};color:${f.color};"></button>`;
               }).join('')}
             </div>
           </div>
@@ -5198,25 +5199,37 @@ function wireModal(){
   };
   const ctxDone = document.getElementById('ctx-done');
   if(ctxDone) ctxDone.onclick = ()=>{ closeActiveModal(); };
+  // (2026-07-13) instant optimistic flag select with background persistence; prev: awaited save
   document.querySelectorAll('[data-ctx-flag]').forEach(btn=>{
-    btn.onclick = async ()=>{
+    btn.onclick = ()=>{
       const song = state.songs.find(s=>s.id===state.modal?.id);
       if(!song) return;
-      song.flag = btn.dataset.ctxFlag;
-      await Store.saveSong(song);
+      const flagKey = btn.dataset.ctxFlag;
+      song.flag = flagKey;
       state.modal.dirty = true;
-      render();
+      document.querySelectorAll('[data-ctx-flag]').forEach(b=>b.classList.toggle('selected', b === btn));
+      const flagObj = SONG_FLAGS.find(f=>f.key === flagKey);
+      const pillWrap = document.getElementById('ctx-flag-pill-wrap');
+      if(pillWrap && flagObj){
+        pillWrap.innerHTML = `<span class="song-flag-pill" style="background-color:${flagObj.color};"></span>`;
+      }
+      const clearBtn = document.getElementById('ctx-clear-flag');
+      if(clearBtn) clearBtn.style.display = 'inline';
+      Store.saveSong(song).catch(()=>{});
     };
   });
   const ctxClearFlag = document.getElementById('ctx-clear-flag');
-  if(ctxClearFlag) ctxClearFlag.onclick = async ()=>{
+  if(ctxClearFlag) ctxClearFlag.onclick = ()=>{
     const song = state.songs.find(s=>s.id===state.modal?.id);
     if(!song) return;
     song.flag = 'none';
     song.title = cleanSongTitleForDisplay(song.title);
-    await Store.saveSong(song);
     state.modal.dirty = true;
-    render();
+    document.querySelectorAll('[data-ctx-flag]').forEach(b=>b.classList.remove('selected'));
+    const pillWrap = document.getElementById('ctx-flag-pill-wrap');
+    if(pillWrap) pillWrap.innerHTML = '';
+    ctxClearFlag.style.display = 'none';
+    Store.saveSong(song).catch(()=>{});
   };
   // (2026-07-13) toggle folder chips in-place without re-opening modal; prev: render() on click
   document.querySelectorAll('[data-ctx-folder]').forEach(el=>{
