@@ -379,13 +379,33 @@ function getSongFlag(song){
   if(/[\u{1F7E9}\u{1F7E2}🟩🟢]/u.test(t)) return SONG_FLAGS.find(x=>x.key==='green');
   if(/[\u{1F7E6}\u{1F535}🟦🔵]/u.test(t)) return SONG_FLAGS.find(x=>x.key==='blue');
   if(/[\u{1F7EA}\u{1F7E3}🟪🟣]/u.test(t)) return SONG_FLAGS.find(x=>x.key==='purple');
+  if(/[\u{1FA77}🩷]/u.test(t)) return SONG_FLAGS.find(x=>x.key==='pink');
   if(/[\u{2B1C}\u{26AA}\u{25FB}\u{25FD}⬜⚪]/u.test(t)) return SONG_FLAGS.find(x=>x.key==='white');
   return null;
 }
 
+// (2026-07-13) rank flag colors for list sorting; prev: unranked
+function getSongFlagRank(song){
+  const f = getSongFlag(song);
+  if(!f) return 999;
+  const idx = SONG_FLAGS.findIndex(x => x.key === f.key);
+  return idx >= 0 ? idx : 99;
+}
+
+// (2026-07-13) strip sorting numbers & emojis from titles; prev: emoji strip only
 function cleanSongTitleForDisplay(title){
   if(!title) return '';
-  return title.replace(/[\u{1F7E5}-\u{1F7EB}\u{1F534}\u{1F535}\u{2B1C}\u{26AA}\u{25FB}\u{25FD}🟥🟧🟨🟩🟦🟪🟫⬛⬜🔴🟠🟡🟢🔵🟣⚪]/gu, '').replace(/\s{2,}/g, ' ').trim();
+  let prev = '';
+  let cur = String(title);
+  while(cur !== prev){
+    prev = cur;
+    cur = cur
+      .replace(/[\u{1F7E5}-\u{1F7EB}\u{1F534}\u{1F535}\u{2B1C}\u{26AA}\u{25FB}\u{25FD}\u{1FA77}🟥🟧🟨🟩🟦🟪🟫⬛⬜🔴🟠🟡🟢🔵🟣⚪🩷]/gu, '')
+      .replace(/^\s*\d+\s*(?:\||(?<![a-z])[Il](?![a-z])|[-:.\\/])\s*[-:]?\s*/i, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
+  return cur;
 }
 
 function renderChordLine(line){
@@ -1023,6 +1043,18 @@ function normalizeSong(song){
   if(!Array.isArray(song.excludedFolders)) song.excludedFolders = [];
   // (2026-07-13) preserve transposeOffset in normalizeSong; prev: omitted
   if(song.transposeOffset===undefined || song.transposeOffset===null) song.transposeOffset = 0;
+  // (2026-07-13) clean legacy title numbering and extract flag; prev: uncleaned title
+  if(song.title){
+    if(!song.flag || song.flag === 'none'){
+      const detectedFlag = getSongFlag(song);
+      if(detectedFlag) song.flag = detectedFlag.key;
+    }
+    const cleanedTitle = cleanSongTitleForDisplay(song.title);
+    if(cleanedTitle && cleanedTitle !== song.title){
+      song.title = cleanedTitle;
+      song._titleCleanedMigrated = true;
+    }
+  }
   if(song.body){
     const nextBody = normalizeBodyChordLines(song.body);
     if(nextBody !== song.body){
@@ -1033,11 +1065,12 @@ function normalizeSong(song){
   return song;
 }
 
-// (2026-07-13) migrate existing db song chord lines to start with >; prev: no migration
+// (2026-07-13) persist migrated title cleanup and chord prefix fixes; prev: chord only
 async function persistMigratedChordSongs(){
   for(const s of state.songs){
-    if(s && s._chordPrefixMigrated){
+    if(s && (s._chordPrefixMigrated || s._titleCleanedMigrated)){
       delete s._chordPrefixMigrated;
+      delete s._titleCleanedMigrated;
       try{ await Store.saveSong(s); }catch(e){}
     }
   }
@@ -1892,31 +1925,32 @@ function getCodeSortRank(title){
   return { group: 1, num };
 }
 
+// (2026-07-13) sort by flag priority then alphabetical title; prev: getCodeSortRank
 function sortSongsArray(arr, massPart){
   return arr.slice().sort((a,b)=>{
-    if(state.sortBy==='massflow' || !state.sortBy){
+    if(state.sortBy==='massflow' || !state.sortBy || state.sortBy==='flag'){
       const ordA = (massPart && a.partOrders && a.partOrders[massPart]!==undefined) ? a.partOrders[massPart] : a.sortOrder;
       const ordB = (massPart && b.partOrders && b.partOrders[massPart]!==undefined) ? b.partOrders[massPart] : b.sortOrder;
       if(ordA!==undefined && ordB!==undefined && ordA!==ordB) return ordA - ordB;
       if(ordA!==undefined && ordB===undefined) return -1;
       if(ordA===undefined && ordB!==undefined) return 1;
-      const rA = getCodeSortRank(a.title);
-      const rB = getCodeSortRank(b.title);
-      if(rA.group !== rB.group) return rA.group - rB.group;
-      if(rA.num !== rB.num) return rA.num - rB.num;
+      const fA = getSongFlagRank(a);
+      const fB = getSongFlagRank(b);
+      if(fA !== fB) return fA - fB;
+      const titleCmp = cleanSongTitleForDisplay(a.title).localeCompare(cleanSongTitleForDisplay(b.title));
+      if(titleCmp !== 0) return titleCmp;
       if(a.dateAdded !== b.dateAdded) return (a.dateAdded||0) - (b.dateAdded||0);
       return 0;
     }
     if(state.sortBy==='code'){
-      const rA = getCodeSortRank(a.title);
-      const rB = getCodeSortRank(b.title);
-      if(rA.group !== rB.group) return rA.group - rB.group;
-      if(rA.num !== rB.num) return rA.num - rB.num;
-      return (a.dateAdded||0) - (b.dateAdded||0);
+      const fA = getSongFlagRank(a);
+      const fB = getSongFlagRank(b);
+      if(fA !== fB) return fA - fB;
+      return cleanSongTitleForDisplay(a.title).localeCompare(cleanSongTitleForDisplay(b.title));
     }
     // (2026-07-13) support A-Z and Z-A alphabetical sorting; prev: A-Z only
-    if(state.sortBy==='title' || state.sortBy==='alpha') return a.title.localeCompare(b.title);
-    if(state.sortBy==='title-desc') return b.title.localeCompare(a.title);
+    if(state.sortBy==='title' || state.sortBy==='alpha') return cleanSongTitleForDisplay(a.title).localeCompare(cleanSongTitleForDisplay(b.title));
+    if(state.sortBy==='title-desc') return cleanSongTitleForDisplay(b.title).localeCompare(cleanSongTitleForDisplay(a.title));
     if(state.sortBy==='artist') return (a.artist||'').localeCompare(b.artist||'');
     if(state.sortBy==='date') return b.dateAdded - a.dateAdded;
     if(state.sortBy==='key') return (a.key||'').localeCompare(b.key||'');
@@ -3959,7 +3993,8 @@ function renderEditor(){
       ${isExisting ? `<button class="icon-btn" id="btn-delete" style="color:var(--danger)">${iconTrash()}</button>` : ''}
     </div>
     <div class="editor">
-      <div class="field" id="field-title"><label>Title <span class="req">*</span></label><input id="f-title" value="${escapeHtml(d.title)}" placeholder="Song title"/></div>
+      <!-- (2026-07-13) clean title for editor input; prev: raw title -->
+      <div class="field" id="field-title"><label>Title <span class="req">*</span></label><input id="f-title" value="${escapeHtml(cleanSongTitleForDisplay(d.title))}" placeholder="Song title"/></div>
       <div class="field"><label>Artist</label><input id="f-artist" value="${escapeHtml(d.artist)}" placeholder="Artist / writer"/></div>
       <div class="field-row">
         <div class="field"><label>Key</label><input id="f-key" value="${escapeHtml(d.key)}" placeholder="e.g. G, Bbm"/></div>
@@ -4171,7 +4206,8 @@ function renderEditor(){
       ...d,
       flag: d.flag || (getSongFlag(d)?.key) || 'none',
       introMelody: (document.getElementById('f-intro-melody')?.value || '').trim(),
-      title: titleVal,
+      // (2026-07-13) clean sorting numbers from title on save; prev: raw titleVal
+      title: cleanSongTitleForDisplay(titleVal),
       artist: document.getElementById('f-artist').value.trim(),
       key: document.getElementById('f-key').value.trim(),
       capo: +document.getElementById('f-capo').value || 0,
@@ -5505,6 +5541,8 @@ function wireModal(){
       if(!song) return;
       const flagKey = btn.dataset.ctxFlag;
       song.flag = flagKey;
+      // (2026-07-13) clean legacy title numbering on flag select; prev: raw title
+      song.title = cleanSongTitleForDisplay(song.title);
       state.modal.dirty = true;
       document.querySelectorAll('[data-ctx-flag]').forEach(b=>b.classList.toggle('selected', b === btn));
       const flagObj = SONG_FLAGS.find(f=>f.key === flagKey);
