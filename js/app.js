@@ -488,7 +488,7 @@ function isMelodyNoteLine(line){
   return cleaned.startsWith('<>');
 }
 
-// (2026-07-13) support -note (lower) & +note (higher) octave staff & skip empty; prev: basic notes
+// (2026-07-13) support parenthesized chords & space pauses; prev: single notes
 function renderMelodyStaffLine(line){
   const rawLine = line.replace(/^[>\s]*<>\s*/, '').replace(/^>\s*/, '');
   if(/^(?:first\s+intro|intro\s*:)/i.test(rawLine.trim())) return '';
@@ -502,20 +502,24 @@ function renderMelodyStaffLine(line){
     'c': 0, 'd': 2, 'e': 4, 'f': 5, 'g': 7, 'a': 9, 'b': 11,
     'C': 12, 'D': 14, 'E': 16, 'F': 17, 'G': 19, 'A': 21, 'B': 23
   };
-  const re = /(\S+)/g;
+  const re = /\(([^)]+)\)|(\S+)/g;
   re.lastIndex = startIdx;
   let m;
   const tokens = [];
   while((m = re.exec(rawLine))){
-    tokens.push({ tok: m[1], col: m.index });
+    if(m[1] !== undefined){
+      tokens.push({ raw: m[0], inner: m[1], isChord: true, col: m.index, len: m[0].length });
+    } else {
+      tokens.push({ raw: m[2], inner: m[2], isChord: false, col: m.index, len: m[2].length });
+    }
   }
   const maxCol = Math.max(rawLine.trimEnd().length - 1, 10);
   let itemsHtml = '';
   tokens.forEach((item)=>{
-    const { tok, col } = item;
+    const { raw, inner, isChord, col, len } = item;
     const ratio = Math.max(0, Math.min(1, col / maxCol));
     const leftCalc = `calc(38px + (100% - 66px) * ${ratio.toFixed(4)})`;
-    if(tok === '|' || tok === '/' || tok === '\\'){
+    if(raw === '|' || raw === '/' || raw === '\\'){
       itemsHtml += `
         <span class="staff-note-group" style="left:${leftCalc};pointer-events:none;">
           <span class="staff-barline"></span>
@@ -523,34 +527,77 @@ function renderMelodyStaffLine(line){
         </span>`;
       return;
     }
-    const cleanTok = tok.replace(/^[>]/, '');
-    const nm = /^([-+])?([a-gA-G])(#|b)?\.?$/.exec(cleanTok);
-    if(!nm) return;
-    const octSign = nm[1] || '';
-    const letter = nm[2];
-    const acc = nm[3] || '';
-    const stepOffset = octSign === '-' ? -7 : (octSign === '+' ? 7 : 0);
-    const semiOffset = octSign === '-' ? -12 : (octSign === '+' ? 12 : 0);
-    let step = (stepMap[letter] !== undefined ? stepMap[letter] : 0) + stepOffset;
-    let semi = (semiMap[letter] !== undefined ? semiMap[letter] : 0) + semiOffset;
-    if(acc === '#') semi += 1;
-    if(acc === 'b') semi -= 1;
-    const yPx = 40 - step * 4.5;
-    const stemDown = step >= 4;
-    const accSym = acc === '#' ? '&#9839;' : (acc === 'b' ? '&#9837;' : '');
+    const subToks = isChord ? inner.split(/[\s,]+/).map(s=>s.trim()).filter(Boolean) : [raw.replace(/^[>]/, '')];
+    const parsedNotes = [];
+    subToks.forEach(st=>{
+      const cleanTok = st.replace(/^[>]/, '');
+      const nm = /^([-+])?([a-gA-G])(#|b)?\.?$/.exec(cleanTok);
+      if(!nm) return;
+      const octSign = nm[1] || '';
+      const letter = nm[2];
+      const acc = nm[3] || '';
+      const stepOffset = octSign === '-' ? -7 : (octSign === '+' ? 7 : 0);
+      const semiOffset = octSign === '-' ? -12 : (octSign === '+' ? 12 : 0);
+      let step = (stepMap[letter] !== undefined ? stepMap[letter] : 0) + stepOffset;
+      let semi = (semiMap[letter] !== undefined ? semiMap[letter] : 0) + semiOffset;
+      if(acc === '#') semi += 1;
+      if(acc === 'b') semi -= 1;
+      const yPx = 40 - step * 4.5;
+      const accSym = acc === '#' ? '&#9839;' : (acc === 'b' ? '&#9837;' : '');
+      parsedNotes.push({ tok: cleanTok, step, semi, yPx, accSym });
+    });
+    if(!parsedNotes.length) return;
+
+    parsedNotes.sort((a,b)=>a.step - b.step);
+    const avgStep = parsedNotes.reduce((sum, n)=>sum + n.step, 0) / parsedNotes.length;
+    const stemDown = avgStep >= 4;
+
+    const ledgerTops = new Set();
+    parsedNotes.forEach(n=>{
+      if(n.step <= -2) ledgerTops.add(49);
+      if(n.step <= -4) ledgerTops.add(58);
+      if(n.step >= 10) ledgerTops.add(-1);
+      if(n.step >= 12) ledgerTops.add(-10);
+    });
     let ledgerHtml = '';
-    if(step <= -2) ledgerHtml += `<span class="staff-ledger" style="top:49px;"></span>`;
-    if(step <= -4) ledgerHtml += `<span class="staff-ledger" style="top:58px;"></span>`;
-    if(step >= 10) ledgerHtml += `<span class="staff-ledger" style="top:-1px;"></span>`;
-    if(step >= 12) ledgerHtml += `<span class="staff-ledger" style="top:-10px;"></span>`;
-    itemsHtml += `
-      <span class="staff-note-group" data-staff-note="${semi}" style="left:${leftCalc};" title="Tap to play ${escapeHtml(cleanTok)}">
-        ${ledgerHtml}
-        <span class="staff-notehead ${stemDown?'stem-down':'stem-up'}" style="top:${yPx.toFixed(1)}px;">
-          ${accSym ? `<span class="staff-acc">${accSym}</span>` : ''}
+    ledgerTops.forEach(top=>{
+      ledgerHtml += `<span class="staff-ledger" style="top:${top}px;"></span>`;
+    });
+
+    let noteheadsHtml = '';
+    let stemHtml = '';
+    if(parsedNotes.length === 1){
+      const n = parsedNotes[0];
+      noteheadsHtml = `
+        <span class="staff-notehead ${stemDown?'stem-down':'stem-up'}" style="top:${n.yPx.toFixed(1)}px;">
+          ${n.accSym ? `<span class="staff-acc">${n.accSym}</span>` : ''}
           <span class="staff-stem ${stemDown?'stem-down':'stem-up'}"></span>
-        </span>
-        <span class="staff-note-label">${escapeHtml(cleanTok)}</span>
+        </span>`;
+    } else {
+      const minY = parsedNotes[parsedNotes.length - 1].yPx;
+      const maxY = parsedNotes[0].yPx;
+      const stemHeight = Math.max(26, (maxY - minY) + 22);
+      parsedNotes.forEach(n=>{
+        noteheadsHtml += `
+          <span class="staff-notehead chord-head" style="top:${n.yPx.toFixed(1)}px;">
+            ${n.accSym ? `<span class="staff-acc">${n.accSym}</span>` : ''}
+          </span>`;
+      });
+      if(stemDown){
+        stemHtml = `<span class="staff-stem chord-stem stem-down" style="top:${(minY + 3).toFixed(1)}px;height:${stemHeight.toFixed(1)}px;"></span>`;
+      } else {
+        stemHtml = `<span class="staff-stem chord-stem stem-up" style="top:${(minY - 20).toFixed(1)}px;height:${stemHeight.toFixed(1)}px;"></span>`;
+      }
+    }
+
+    const label = parsedNotes.map(n=>n.tok).join(' ');
+    const semisStr = parsedNotes.map(n=>n.semi).join(',');
+    itemsHtml += `
+      <span class="staff-note-group ${parsedNotes.length > 1 ? 'is-chord' : ''}" data-staff-note="${semisStr}" data-col="${col}" data-len="${len}" style="left:${leftCalc};" title="Tap to play ${escapeHtml(label)}">
+        ${ledgerHtml}
+        ${noteheadsHtml}
+        ${stemHtml}
+        <span class="staff-note-label">${escapeHtml(label)}</span>
       </span>`;
   });
 
@@ -3738,23 +3785,45 @@ function handleStaffPlayClick(btn){
   btn.classList.add('is-playing');
   btn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg> <span>Stop</span>`;
 
+  // (2026-07-13) space-gap pause timing & simultaneous chord audio; prev: linear
   const timers = [];
   activeMelodyPlayback = { btn, timers, activeNotes: noteEls };
 
-  noteEls.forEach((el, i)=>{
-    const semi = parseInt(el.dataset.staffNote, 10);
+  let currentTimeMs = 0;
+  let prevCol = null;
+  let prevLen = 0;
+
+  noteEls.forEach((el)=>{
+    const rawSemis = el.dataset.staffNote || '';
+    const semis = rawSemis.split(',').map(s=>parseInt(s.trim(), 10)).filter(n=>!isNaN(n));
+    const col = el.dataset.col !== undefined ? parseInt(el.dataset.col, 10) : null;
+    const len = el.dataset.len !== undefined ? parseInt(el.dataset.len, 10) : 1;
+
+    if(prevCol !== null && col !== null){
+      const gap = Math.max(0, col - (prevCol + prevLen));
+      if(gap > 1){
+        const extraPause = Math.min(intervalMs * 3.5, (gap - 1) * (intervalMs * 0.45));
+        currentTimeMs += extraPause;
+      }
+    }
+    prevCol = col;
+    prevLen = len;
+
+    const playAt = currentTimeMs;
     const t = setTimeout(()=>{
-      if(!isNaN(semi)) playPianoNote(semi);
+      semis.forEach(semi => playPianoNote(semi));
       el.classList.add('playing');
       const offT = setTimeout(()=>el.classList.remove('playing'), intervalMs * 0.75);
       timers.push(offT);
-    }, i * intervalMs);
+    }, playAt);
     timers.push(t);
+
+    currentTimeMs += intervalMs;
   });
 
   const endT = setTimeout(()=>{
     stopActiveMelodyPlayback();
-  }, noteEls.length * intervalMs + 100);
+  }, currentTimeMs + 100);
   timers.push(endT);
 }
 
@@ -4268,8 +4337,9 @@ function renderViewer(){
   });
   document.querySelectorAll('[data-staff-note]').forEach(el=>{
     el.onclick = ()=>{
-      const semi = parseInt(el.dataset.staffNote, 10);
-      if(!isNaN(semi)) playPianoNote(semi);
+      const raw = el.dataset.staffNote || '';
+      const semis = raw.split(',').map(s=>parseInt(s.trim(), 10)).filter(n=>!isNaN(n));
+      semis.forEach(semi => playPianoNote(semi));
     };
   });
   wireModal();
@@ -7047,8 +7117,9 @@ document.addEventListener('pointerdown', (e)=>{
 document.addEventListener('click', (e)=>{
   const noteEl = e.target.closest('[data-staff-note]');
   if(noteEl){
-    const semi = parseInt(noteEl.dataset.staffNote, 10);
-    if(!isNaN(semi)) playPianoNote(semi);
+    const raw = noteEl.dataset.staffNote || '';
+    const semis = raw.split(',').map(s=>parseInt(s.trim(), 10)).filter(n=>!isNaN(n));
+    semis.forEach(semi => playPianoNote(semi));
     return;
   }
   const btn = e.target.closest('.staff-play-btn');

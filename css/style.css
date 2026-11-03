@@ -295,7 +295,12 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
 .staff-stem.stem-up{left:8.5px;transform:translateY(-18px);}
 .staff-stem.stem-down{left:0px;transform:translateY(4px);}
 .staff-acc{position:absolute;left:-10px;top:-5px;font-size:12px;line-height:1;color:var(--chord);font-weight:800;pointer-events:none;}
+/* (2026-07-13) chord stems and labels on staff; prev: single note styles */
+.staff-stem.chord-stem{transform:none;}
+.staff-stem.chord-stem.stem-up{left:8.5px;}
+.staff-stem.chord-stem.stem-down{left:0px;}
 .staff-note-label{position:absolute;bottom:0;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:var(--chord);text-align:center;width:24px;left:-4px;pointer-events:none;}
+.staff-note-group.is-chord .staff-note-label{width:auto;min-width:32px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:11px;letter-spacing:-0.2px;}
 .staff-bar-label{position:absolute;bottom:0;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:rgba(255,255,255,0.5);text-align:center;width:16px;left:-8px;pointer-events:none;}
 .melody-letters-line{font-family:'JetBrains Mono',monospace;font-size:0.95em;font-weight:700;color:var(--chord);white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;line-height:1.5;margin:2px 0 6px;}
 /* (2026-07-13) compact dialogue badges; prev: 99px pill borders */
