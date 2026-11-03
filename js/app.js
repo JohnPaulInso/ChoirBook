@@ -928,6 +928,8 @@ const state = {
   filterMassPart: null, // when set, list view is browsing by mass part instead of folder
   // (2026-07-13) add filterFlag for flag browse mode; prev: none
   filterFlag: null,
+  // (2026-07-13) preserve list-wrap scroll position across views; prev: none
+  lastListScroll: 0,
   sidebarOpen: false,
   currentId: null,
   editingDraft: null,
@@ -2163,7 +2165,8 @@ function renderListView(animateChipScroll){
     ? (state.filterFlag === 'all' ? 'Flags' : `${(SONG_FLAGS.find(x=>x.key===state.filterFlag)||{}).name || ''} Flag`)
     : (state.filterMassPart ? escapeHtml(state.filterMassPart) : (state.filterCat==='All' ? 'My Songbook' : escapeHtml(state.filterCat)));
   const existingListWrap = document.getElementById('list-wrap');
-  const prevListScroll = existingListWrap ? existingListWrap.scrollTop : 0;
+  // (2026-07-13) fallback to state.lastListScroll when list-wrap was unmounted; prev: 0
+  const prevListScroll = existingListWrap ? existingListWrap.scrollTop : (state.lastListScroll || 0);
 
   // (2026-07-13) topbar inline search & solid colored done button; prev: separate searchrow
   const isSearching = state.searchActive || !!(state.search && state.search.trim());
@@ -2214,9 +2217,21 @@ function renderListView(animateChipScroll){
     ${modalHtml()}
   `;
 
-  // (2026-07-13) restore list-wrap scroll position; prev: reset to top
+  // (2026-07-13) restore scroll position & record live scroll offsets; prev: single check
   const initialLw = document.getElementById('list-wrap');
-  if(initialLw && prevListScroll > 0) initialLw.scrollTop = prevListScroll;
+  if(initialLw){
+    if(prevListScroll > 0){
+      initialLw.scrollTop = prevListScroll;
+      requestAnimationFrame(()=>{
+        if(initialLw && initialLw.scrollTop !== prevListScroll){
+          initialLw.scrollTop = prevListScroll;
+        }
+      });
+    }
+    initialLw.addEventListener('scroll', ()=>{
+      state.lastListScroll = initialLw.scrollTop;
+    }, { passive: true });
+  }
 
   // (2026-07-13) wire search toggle, live search input & clear buttons; prev: sort row
   const searchToggleBtn = document.getElementById('btn-search-toggle');
@@ -2656,6 +2671,9 @@ function wireSongRowInteractions(el, id, sectionMassPart){
 
 // (2026-07-13) arm 7s autoscroll on song open; prev: stopped before render
 function openViewer(id, fromSetlistId, preferredMassPart){
+  // (2026-07-13) record current list scroll before switching to viewer; prev: unrecorded
+  const lw = document.getElementById('list-wrap');
+  if(lw && !fromSetlistId) state.lastListScroll = lw.scrollTop;
   state.currentId = id;
   state.cameFromSetlistId = fromSetlistId || null;
   if(preferredMassPart) state.selectedViewerMassPart = preferredMassPart;
@@ -3808,6 +3826,9 @@ function closeEditorOverlay(afterClose){
 
 // (2026-07-13) universal modal cleanup on openEditor; prev: stuck modal backdrop
 function openEditor(id){
+  // (2026-07-13) record current list scroll before opening editor; prev: unrecorded
+  const lw = document.getElementById('list-wrap');
+  if(lw) state.lastListScroll = lw.scrollTop;
   state.modal = null;
   document.querySelectorAll('.modal-backdrop, #modal-bg').forEach(el=>el.remove());
   const song = id ? state.songs.find(s=>s.id===id) : null;
