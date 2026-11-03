@@ -681,9 +681,11 @@ const SONG_FLAGS = [
   { key: 'white', name: 'White', color: '#f3f4f6' }
 ];
 
+// (2026-07-13) return null on explicit none flag; prev: fell through to regex
 function getSongFlag(song){
   if(!song) return null;
-  if(song.flag && song.flag !== 'none'){
+  if(song.flag === 'none') return null;
+  if(song.flag){
     const f = SONG_FLAGS.find(x => x.key === song.flag);
     if(f) return f;
   }
@@ -707,7 +709,7 @@ function getSongFlagRank(song){
   return idx >= 0 ? idx : 99;
 }
 
-// (2026-07-13) strip sorting numbers & emojis from titles; prev: emoji strip only
+// (2026-07-13) strip standalone digits & emojis from titles; prev: required separator
 function cleanSongTitleForDisplay(title){
   if(!title) return '';
   let prev = '';
@@ -717,6 +719,7 @@ function cleanSongTitleForDisplay(title){
     cur = cur
       .replace(/[\u{1F7E5}-\u{1F7EB}\u{1F534}\u{1F535}\u{2B1C}\u{26AA}\u{25FB}\u{25FD}\u{1FA77}🟥🟧🟨🟩🟦🟪🟫⬛⬜🔴🟠🟡🟢🔵🟣⚪🩷]/gu, '')
       .replace(/^\s*\d+\s*(?:\||(?<![a-z])[Il](?![a-z])|[-:.\\/])\s*[-:]?\s*/i, '')
+      .replace(/^\s*\d+\s+(?=[A-Za-z"'\(])/i, '')
       .replace(/\s{2,}/g, ' ')
       .trim();
   }
@@ -1466,11 +1469,11 @@ function normalizeSong(song){
   if(!Array.isArray(song.excludedFolders)) song.excludedFolders = [];
   // (2026-07-13) preserve transposeOffset in normalizeSong; prev: omitted
   if(song.transposeOffset===undefined || song.transposeOffset===null) song.transposeOffset = 0;
-  // (2026-07-13) clean legacy title numbering and extract flag; prev: uncleaned title
+  // (2026-07-13) preserve explicit flag & clean leading digits; prev: reset none
   if(song.title){
-    if(!song.flag || song.flag === 'none'){
+    if(song.flag === undefined || song.flag === null || song.flag === ''){
       const detectedFlag = getSongFlag(song);
-      if(detectedFlag) song.flag = detectedFlag.key;
+      song.flag = detectedFlag ? detectedFlag.key : 'none';
     }
     const cleanedTitle = cleanSongTitleForDisplay(song.title);
     if(cleanedTitle && cleanedTitle !== song.title){
@@ -1587,10 +1590,7 @@ async function loadAll(){
       state.songs = cachedItems.map(it=>{
         try{ return normalizeSong(JSON.parse(it.value)); }catch(e){ return null; }
       }).filter(Boolean);
-      // (2026-07-13) auto-assign songs to matching folders by title on load; prev: manual
-      state.songs.forEach(s => {
-        if(autoAssignFoldersByTitle(s, state.categories)) Store.saveSong(s).catch(()=>{});
-      });
+      // (2026-07-13) preserve user categories on load; prev: auto-assigned by title
       persistMigratedChordSongs();
       ensureGreatAmenMigration();
       state.loading = false;
@@ -2351,19 +2351,14 @@ async function syncBundledGSMA(){
         }
         if(existingIdx >= 0){
           const cur = state.songs[existingIdx];
-          const curCats = Array.isArray(cur.categories) ? cur.categories.slice() : [];
-          if(folderName && !curCats.includes(folderName)) curCats.push(folderName);
-          const nextCats = curCats.length > 0 ? curCats : incoming.categories;
-          const nextParts = (!cur.massParts || cur.massParts.length===0) ? incoming.massParts : cur.massParts;
-          // (2026-07-13) preserve user edits during bundled gsma sync; prev: clobbered body
+          // (2026-07-13) preserve user folders in syncBundledGSMA; prev: forced bundle folder
           let itemChanged = false;
           if(incoming.importedGuid && !cur.importedGuid){
             cur.importedGuid = incoming.importedGuid;
             itemChanged = true;
           }
-          if(folderName && (!Array.isArray(cur.categories) || !cur.categories.includes(folderName))){
-            cur.categories = Array.isArray(cur.categories) ? cur.categories.slice() : [];
-            cur.categories.push(folderName);
+          if(!Array.isArray(cur.categories)){
+            cur.categories = folderName ? [folderName] : [];
             itemChanged = true;
           }
           if(itemChanged){
@@ -5026,10 +5021,10 @@ function renderEditor(){
 
     const timeSel = document.getElementById('f-timesig').value;
     const timeVal = timeSel==='custom' ? (document.getElementById('f-timesig-custom').value.trim()||'4/4') : timeSel;
-    // (2026-07-13) persist introMelody in song save; prev: none
+    // (2026-07-13) save explicit editor flag & folders; prev: re-assigned by title
     const song = {
       ...d,
-      flag: d.flag || (getSongFlag(d)?.key) || 'none',
+      flag: d.flag !== undefined && d.flag !== null ? d.flag : ((getSongFlag(d)?.key) || 'none'),
       introMelody: (document.getElementById('f-intro-melody')?.value || '').trim(),
       // (2026-07-13) clean sorting numbers from title on save; prev: raw titleVal
       title: cleanSongTitleForDisplay(titleVal),
@@ -5046,8 +5041,6 @@ function renderEditor(){
       massParts: d.massParts || [],
       body: document.getElementById('f-body').value,
     };
-    // (2026-07-13) auto-assign folders from title on song save; prev: manual
-    autoAssignFoldersByTitle(song, state.categories);
     const idx = state.songs.findIndex(s=>s.id===song.id);
     if(idx>=0) state.songs[idx] = song; else state.songs.push(song);
     state.currentId = song.id;
@@ -5825,10 +5818,7 @@ function modalHtml(){
   if(state.modal.type==='song-context'){
     const song = state.songs.find(s=>s.id===state.modal.id);
     if(!song) return '';
-    // (2026-07-13) auto-assign matching folders from title on modal open; prev: none
-    if(autoAssignFoldersByTitle(song, state.categories)){
-      Store.saveSong(song).catch(()=>{});
-    }
+    // (2026-07-13) preserve folder selections on context open; prev: auto-assigned
     const isExcluded = isSongExcluded(song);
     const scopeLabel = state.filterMassPart || state.filterCat || 'All';
     const curFlag = getSongFlag(song);
@@ -6491,9 +6481,9 @@ function wireModal(){
   };
   const ctxDone = document.getElementById('ctx-done');
   if(ctxDone) ctxDone.onclick = ()=>{ closeActiveModal(); };
-  // (2026-07-13) instant optimistic flag select with background persistence; prev: awaited save
+  // (2026-07-13) persist flag changes directly to Store on select; prev: un-awaited
   document.querySelectorAll('[data-ctx-flag]').forEach(btn=>{
-    btn.onclick = ()=>{
+    btn.onclick = async ()=>{
       const song = state.songs.find(s=>s.id===state.modal?.id);
       if(!song) return;
       const flagKey = btn.dataset.ctxFlag;
@@ -6509,11 +6499,11 @@ function wireModal(){
       }
       const clearBtn = document.getElementById('ctx-clear-flag');
       if(clearBtn) clearBtn.style.display = 'inline';
-      Store.saveSong(song).catch(()=>{});
+      await Store.saveSong(song);
     };
   });
   const ctxClearFlag = document.getElementById('ctx-clear-flag');
-  if(ctxClearFlag) ctxClearFlag.onclick = ()=>{
+  if(ctxClearFlag) ctxClearFlag.onclick = async ()=>{
     const song = state.songs.find(s=>s.id===state.modal?.id);
     if(!song) return;
     song.flag = 'none';
@@ -6523,7 +6513,7 @@ function wireModal(){
     const pillWrap = document.getElementById('ctx-flag-pill-wrap');
     if(pillWrap) pillWrap.innerHTML = '';
     ctxClearFlag.style.display = 'none';
-    Store.saveSong(song).catch(()=>{});
+    await Store.saveSong(song);
   };
   // (2026-07-13) toggle folder chips in-place without re-opening modal; prev: render() on click
   document.querySelectorAll('[data-ctx-folder]').forEach(el=>{
