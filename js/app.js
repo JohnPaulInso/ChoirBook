@@ -2805,6 +2805,8 @@ function openViewer(id, fromSetlistId, preferredMassPart){
   state.cameFromSetlistId = fromSetlistId || null;
   if(preferredMassPart) state.selectedViewerMassPart = preferredMassPart;
   state.view = 'viewer';
+  // (2026-07-13) ensure cue card and piano are expanded on open; prev: state.hideCueCard
+  state.hideCueCard = false;
   stopMetronome();
   autoscrollFloatPos = 0;
   lastUserScrollAt = 0;
@@ -2912,7 +2914,37 @@ function renderCueChordPills(chordStr, cueId){
 }
 
 function renderMassPartCueCard(song){
-  if(song.id && String(song.id).startsWith('lit-')) return '';
+  // (2026-07-13) render piano pitch finder on liturgical dialogue songs; prev: omitted
+  if(song.id && String(song.id).startsWith('lit-')){
+    const cleanTitle = cleanSongTitleForDisplay(song.title) || 'Liturgical Dialogue';
+    if(state.hideCueCard){
+      return `
+        <div class="masspart-cue-card collapsed" id="masspart-cue-card">
+          <div class="masspart-cue-header">
+            <div class="masspart-cue-title">
+              <span class="masspart-cue-star">&#10022;</span>
+              <span class="masspart-cue-title-text">${escapeHtml(cleanTitle)} &bull; Priest Pitch Finder</span>
+            </div>
+            <div class="masspart-cue-actions">
+              <button class="cue-toggle-btn" id="btn-toggle-cue" title="Show Pitch Finder">${iconCueShow()}<span>Show Piano</span></button>
+            </div>
+          </div>
+        </div>`;
+    }
+    return `
+      <div class="masspart-cue-card" id="masspart-cue-card">
+        <div class="masspart-cue-header">
+          <div class="masspart-cue-title">
+            <span class="masspart-cue-star">&#10022;</span>
+            <span class="masspart-cue-title-text">${escapeHtml(cleanTitle)} &bull; Priest Pitch Finder</span>
+          </div>
+          <div class="masspart-cue-actions">
+            <button class="cue-toggle-btn" id="btn-toggle-cue" title="Hide Pitch Finder">${iconCueHide()}<span>Hide Piano</span></button>
+          </div>
+        </div>
+        ${renderCuePianoFinder()}
+      </div>`;
+  }
   const parts = song.massParts || [];
   if(!parts || parts.length === 0) return '';
   const currentPart = (state.selectedViewerMassPart && parts.includes(state.selectedViewerMassPart))
@@ -3200,7 +3232,8 @@ function renderSongSheetContent(s, isPeek){
         renderedLines.push(`
           <div class="cue-item dialogue-cue-item">
             <div class="cue-line cue-priest"><span class="dialogue-badge priest-badge">${iconPriestCross()} ${escapeHtml(pData.role)}</span><span class="cue-text">${escapeHtml(pData.text)}</span></div>
-            ${alignedChordLine ? `<div class="cue-chord-row">${renderChordLine(alignedChordLine)}</div>` : ''}
+            ${alignedChordLine ? `<!-- (2026-07-13) bind data-base-chords for reactive pitch transposing; prev: static -->
+            <div class="cue-chord-row" data-base-chords="${escapeHtml(alignedChordLine.replace(/^>/, ''))}">${renderChordLine(alignedChordLine)}</div>` : ''}
             <div class="cue-line cue-response">
               <span class="dialogue-badge response-badge">${iconPeopleGroup()} ${escapeHtml(rData.role)}</span>
               <span class="cue-text">${escapeHtml(rData.text)}</span>
