@@ -2819,37 +2819,15 @@ function renderIntroMelodySection(introMelody){
     </div>`;
 }
 
-// (2026-07-13) render adjacent peek slide for horizontal carousel swipe; prev: none
-function renderPeekSlide(s, isNext){
+// (2026-07-13) reusable full-fidelity song sheet renderer for carousel slides; prev: custom peek panel
+function renderSongSheetContent(s, isPeek){
   if(!s) return '';
+  const offset = s.transposeOffset||0;
+  const preferFlat = FLAT_KEYS.has(transposeKeyLabel(s.key, offset));
+  const body = offset ? transposeBody(s.body, offset, preferFlat) : s.body;
   const flag = getSongFlag(s);
   const flagPill = flag ? `<span class="song-flag-pill" style="background-color:${flag.color};"></span>` : '';
-  const title = cleanSongTitleForDisplay(s.title);
-  const keyLabel = transposeKeyLabel(s.key, s.transposeOffset||0) || '—';
-  const previewLines = (s.body || '').split('\n').slice(0, 14).join('\n');
-  return `
-    <div class="swipe-peek-slide ${isNext?'is-next':'is-prev'}" id="${isNext?'peek-slide-next':'peek-slide-prev'}">
-      <div class="peek-badge">${isNext ? 'Next Song &rarr;' : '&larr; Previous Song'}</div>
-      <div class="peek-song-title">${flagPill}<span>${escapeHtml(title)}</span></div>
-      <div class="peek-song-sub">${escapeHtml(s.artist||'Unknown')} &middot; Key ${escapeHtml(keyLabel)} &middot; Capo ${s.capo||0}</div>
-      <div class="peek-body-preview">${escapeHtml(previewLines)}</div>
-    </div>`;
-}
-
-function renderViewer(){
-  const song = currentSong();
-  if(!song){ state.view='list'; return renderListView(); }
-  const existingChartWrap = document.getElementById('chart-wrap');
-  const prevScrollTop = existingChartWrap ? existingChartWrap.scrollTop : 0;
-  const offset = song.transposeOffset||0;
-  const preferFlat = FLAT_KEYS.has(transposeKeyLabel(song.key, offset));
-  const body = offset ? transposeBody(song.body, offset, preferFlat) : song.body;
-  const fontSize = song.viewerFontSize || 15;
-  const scrollSpeed = song.viewerScrollSpeed || 30;
-  const isActivelyScrolling = state.autoscroll && performance.now() >= autoscrollTopDelayUntil;
-
-  // (2026-07-13) render melody G-clef staff & dialogue badges; prev: plain divs
-  const lines = body.split('\n').map(line=>{
+  const lines = (body||'').split('\n').map(line=>{
     const cls = classifyLine(line);
     if(cls==='melody') return renderMelodyStaffLine(line);
     if(cls==='chord') return `<div class="lyric-line">${renderChordLine(line)}</div>`;
@@ -2861,6 +2839,46 @@ function renderViewer(){
     if(cls==='blank') return `<div>&nbsp;</div>`;
     return `<div class="lyric-line">${escapeHtml(line)}</div>`;
   }).join('');
+
+  return `
+    ${renderMassPartCueCard(s)}
+    <div class="chart-title" style="display:flex;align-items:center;gap:6px;">
+      ${flagPill}
+      <span>${escapeHtml(cleanSongTitleForDisplay(s.title))}</span>
+    </div>
+    <div class="chart-artist">${escapeHtml(s.artist||'')}</div>
+    <div class="chart-meta-inline">
+      <span>Key <b>${escapeHtml(transposeKeyLabel(s.key, offset)||'—')}</b></span>
+      <span>Capo <b>${s.capo||0}</b></span>
+      <span>Tempo <b>${s.tempo||'—'}</b> BPM</span>
+      <span>Time <b>${escapeHtml(s.timeSig||'4/4')}</b></span>
+      <span>Style <b>${escapeHtml(s.style||'—')}</b></span>
+      <span>Instr. <b>${escapeHtml(s.instrument||'—')}</b></span>
+      ${s.referenceUrl ? `<span><a href="${escapeHtml(s.referenceUrl)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;font-weight:700;">&#9654; Reference</a></span>` : ''}
+    </div>
+    ${renderIntroMelodySection(s.introMelody)}
+    <div class="chart-body" ${isPeek ? '' : 'id="chart-body"'}>${lines}</div>
+    ${renderMassPartFooterCue(s)}
+  `;
+}
+
+// (2026-07-13) render identical full-fidelity adjacent song sheet slide; prev: text preview
+function renderPeekSlide(s, isNext, fontSize){
+  if(!s) return '';
+  return `
+    <div class="chart-wrap chart-slide ${isNext?'is-next':'is-prev'}" id="${isNext?'peek-slide-next':'peek-slide-prev'}" style="font-size:${fontSize}px">
+      ${renderSongSheetContent(s, true)}
+    </div>`;
+}
+
+function renderViewer(){
+  const song = currentSong();
+  if(!song){ state.view='list'; return renderListView(); }
+  const existingChartWrap = document.getElementById('chart-wrap');
+  const prevScrollTop = existingChartWrap ? existingChartWrap.scrollTop : 0;
+  const fontSize = song.viewerFontSize || 15;
+  const scrollSpeed = song.viewerScrollSpeed || 30;
+  const isActivelyScrolling = state.autoscroll && performance.now() >= autoscrollTopDelayUntil;
 
   const beatsPerBar = parseInt((song.timeSig||'4/4').split('/')[0]) || 4;
   let beatDots = '';
@@ -2889,31 +2907,14 @@ function renderViewer(){
     <div class="viewer-body">
       <!-- (2026-07-13) carousel slider track with next/previous slide peek; prev: single wrap -->
       <div class="viewer-slider-track" id="viewer-slider-track">
-        ${prevSong ? renderPeekSlide(prevSong, false) : ''}
-        <div class="chart-wrap" id="chart-wrap" style="font-size:${fontSize}px">
+        ${prevSong ? renderPeekSlide(prevSong, false, fontSize) : ''}
+        <div class="chart-wrap chart-slide is-current" id="chart-wrap" style="font-size:${fontSize}px">
           <!-- (2026-07-13) hardware subpixel scroll content container; prev: direct chart children -->
           <div class="chart-scroll-content" id="chart-scroll-content">
-            ${renderMassPartCueCard(song)}
-            <div class="chart-title" style="display:flex;align-items:center;gap:6px;">
-              ${(()=>{ const vf = getSongFlag(song); return vf ? `<span class="song-flag-pill" style="background-color:${vf.color};"></span>` : ''; })()}
-              <span>${escapeHtml(cleanSongTitleForDisplay(song.title))}</span>
-            </div>
-            <div class="chart-artist">${escapeHtml(song.artist||'')}</div>
-            <div class="chart-meta-inline">
-              <span>Key <b>${escapeHtml(transposeKeyLabel(song.key, offset)||'—')}</b></span>
-              <span>Capo <b>${song.capo||0}</b></span>
-              <span>Tempo <b>${song.tempo||'—'}</b> BPM</span>
-              <span>Time <b>${escapeHtml(song.timeSig||'4/4')}</b></span>
-              <span>Style <b>${escapeHtml(song.style||'—')}</b></span>
-              <span>Instr. <b>${escapeHtml(song.instrument||'—')}</b></span>
-              ${song.referenceUrl ? `<span><a href="${escapeHtml(song.referenceUrl)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;font-weight:700;">&#9654; Reference</a></span>` : ''}
-            </div>
-            ${renderIntroMelodySection(song.introMelody)}
-            <div class="chart-body" id="chart-body">${lines}</div>
-            ${renderMassPartFooterCue(song)}
+            ${renderSongSheetContent(song, false)}
           </div>
         </div>
-        ${nextSong ? renderPeekSlide(nextSong, true) : ''}
+        ${nextSong ? renderPeekSlide(nextSong, true, fontSize) : ''}
       </div>
       <!-- (2026-07-13) toggleable scroll overlay & min speed 1; prev: always visible -->
       <div class="scroll-overlay ${state.showSpeedControls === false ? 'hidden' : ''}" id="scroll-overlay">
