@@ -955,9 +955,35 @@ const Store = {
     return setlists;
   },
   async saveSetlist(setlist){ await adapter.set('setlist:'+setlist.id, JSON.stringify(setlist)); },
-  async deleteSetlist(id){ await adapter.delete('setlist:'+id); }
+  async deleteSetlist(id){ await adapter.delete('setlist:'+id); },
+  async getDeletedSongKeys(){
+    const r = await adapter.get('meta:deletedSongKeys');
+    if(!r){
+      const loc = await LocalAdapter.get('meta:deletedSongKeys');
+      if(!loc) return [];
+      try{ return JSON.parse(loc.value) || []; }catch(e){ return []; }
+    }
+    try{ return JSON.parse(r.value) || []; }catch(e){ return []; }
+  },
+  async saveDeletedSongKeys(keys){ await adapter.set('meta:deletedSongKeys', JSON.stringify(keys || [])); }
 };
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
+
+// (2026-07-13) track deleted songs to stop gsma resurrection; prev: re-imported
+async function markSongAsDeleted(song){
+  try{
+    if(!song) return;
+    const keys = await Store.getDeletedSongKeys();
+    const set = new Set(keys);
+    if(song.id) set.add(song.id);
+    if(song.importedGuid) set.add(song.importedGuid);
+    if(song.title){
+      set.add(song.title.trim().toLowerCase());
+      set.add(cleanSongTitleForDisplay(song.title).toLowerCase());
+    }
+    await Store.saveDeletedSongKeys([...set]);
+  }catch(e){}
+}
 
 // (2026-07-13) add Great Amen to mass parts; prev: omitted after Memorial Accl.
 const DEFAULT_MASS_PARTS = ['Entrance','Kyrie','Gloria','Responsorial Psalm','Gospel Acclamation',
@@ -2254,12 +2280,25 @@ async function syncBundledGSMA(){
         await Store.saveCategories(state.categories);
         changed = true;
       }
+      const deletedArr = await Store.getDeletedSongKeys();
+      const deletedSet = new Set(deletedArr.map(k => String(k).toLowerCase()));
       const baseTime = Date.now();
       for(let i=0; i<songs.length; i++){
         const incoming = songs[i];
-        const existingIdx = incoming.importedGuid
-          ? state.songs.findIndex(s => s.importedGuid === incoming.importedGuid)
-          : state.songs.findIndex(s => s.title === incoming.title);
+        const incClean = cleanSongTitleForDisplay(incoming.title).toLowerCase();
+        if(deletedSet.has(incClean) || (incoming.importedGuid && deletedSet.has(incoming.importedGuid.toLowerCase()))) {
+          continue;
+        }
+        let existingIdx = -1;
+        if(incoming.importedGuid){
+          existingIdx = state.songs.findIndex(s => s.importedGuid === incoming.importedGuid);
+        }
+        if(existingIdx < 0){
+          existingIdx = state.songs.findIndex(s => {
+            if(!s || !s.title) return false;
+            return s.title === incoming.title || cleanSongTitleForDisplay(s.title).toLowerCase() === incClean;
+          });
+        }
         if(existingIdx >= 0){
           const cur = state.songs[existingIdx];
           const curCats = Array.isArray(cur.categories) ? cur.categories.slice() : [];
@@ -4876,6 +4915,7 @@ function renderEditor(){
       confirmText: 'Delete',
       danger: true,
       onConfirm: async ()=>{
+        await markSongAsDeleted(d);
         await Store.deleteSong(d.id);
         state.songs = state.songs.filter(s=>s.id!==d.id);
         state.currentId = null;
@@ -4949,6 +4989,8 @@ function renderEditor(){
       showToast('Saved');
     });
   };
+  // (2026-07-13) wire confirmation & cue modals in editor; prev: unwired stuck modal
+  wireModal();
 }
 
 /* ============================================================
@@ -6365,6 +6407,7 @@ function wireModal(){
       confirmText: 'Delete',
       danger: true,
       onConfirm: async ()=>{
+        if(song) await markSongAsDeleted(song);
         await Store.deleteSong(id);
         state.songs = state.songs.filter(s=>s.id!==id);
         showToast('Song deleted');
