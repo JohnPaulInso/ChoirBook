@@ -5013,14 +5013,21 @@ function renderSetlistEditor(){
 
   document.getElementById('btn-back').onclick = ()=>{ state.view='setlists'; state.currentSetlistId=null; render(); };
   document.getElementById('btn-rename-setlist').onclick = ()=>{ state.modal = {type:'rename-setlist', id: sl.id}; renderSetlistEditor(); };
-  document.getElementById('btn-delete-setlist').onclick = async ()=>{
-    if(confirm(`Delete "${sl.name}"? This cannot be undone.`)){
-      await Store.deleteSetlist(sl.id);
-      state.setlists = state.setlists.filter(s=>s.id!==sl.id);
-      state.currentSetlistId = null;
-      state.view = 'setlists';
-      render();
-    }
+  // (2026-07-13) confirm modal for setlist deletion; prev: window.confirm
+  document.getElementById('btn-delete-setlist').onclick = ()=>{
+    showConfirmModal({
+      title: 'Delete Setlist',
+      message: `Delete "${sl.name}"? This cannot be undone.`,
+      confirmText: 'Delete',
+      danger: true,
+      onConfirm: async ()=>{
+        await Store.deleteSetlist(sl.id);
+        state.setlists = state.setlists.filter(s=>s.id!==sl.id);
+        state.currentSetlistId = null;
+        state.view = 'setlists';
+        render();
+      }
+    });
   };
   document.getElementById('btn-add-section').onclick = ()=>{ state.modal = {type:'add-section', setlistId: sl.id}; renderSetlistEditor(); };
   document.getElementById('btn-add-song').onclick = ()=>{ state.modal = {type:'add-song-to-setlist', setlistId: sl.id, search:''}; renderSetlistEditor(); };
@@ -5228,22 +5235,31 @@ function wireSidebar(){
       });
     };
   });
+  // (2026-07-13) confirm modal for sidebar folder delete; prev: window.confirm
   document.querySelectorAll('[data-del-folder]').forEach(btn=>{
-    btn.onclick = async (e)=>{
+    btn.onclick = (e)=>{
       e.stopPropagation();
       const cat = btn.dataset.delFolder;
-      if(confirm(`Delete folder "${cat}" from database? Songs inside won't be deleted.`)){
-        state.categories = state.categories.filter(c=>c!==cat);
-        await Store.saveCategories(state.categories);
-        const affected = state.songs.filter(s=>(s.categories||[]).includes(cat));
-        for(const s of affected){
-          s.categories = s.categories.filter(c=>c!==cat);
-          await Store.saveSong(s);
-        }
-        if(state.filterCat===cat) state.filterCat = 'All';
-        showToast('Folder deleted from database');
-        render();
-      }
+      closeSidebar(()=>{
+        showConfirmModal({
+          title: 'Delete Folder',
+          message: `Delete folder "${cat}" from database? Songs inside won't be deleted.`,
+          confirmText: 'Delete',
+          danger: true,
+          onConfirm: async ()=>{
+            state.categories = state.categories.filter(c=>c!==cat);
+            await Store.saveCategories(state.categories);
+            const affected = state.songs.filter(s=>(s.categories||[]).includes(cat));
+            for(const s of affected){
+              s.categories = s.categories.filter(c=>c!==cat);
+              await Store.saveSong(s);
+            }
+            if(state.filterCat===cat) state.filterCat = 'All';
+            showToast('Folder deleted from database');
+            render();
+          }
+        });
+      });
     };
   });
   document.querySelectorAll('[data-goto-masspart]').forEach(el=>{
@@ -6142,21 +6158,28 @@ function wireModal(){
       }
     };
   }
+  // (2026-07-13) confirm modal for folder manager delete; prev: window.confirm
   document.querySelectorAll('[data-del]').forEach(el=>{
-    el.onclick = async ()=>{
+    el.onclick = ()=>{
       const cat = el.dataset.del;
-      if(confirm(`Delete folder "${cat}" from database? Songs inside won't be deleted.`)){
-        state.categories = state.categories.filter(c=>c!==cat);
-        await Store.saveCategories(state.categories);
-        const affected = state.songs.filter(s=>(s.categories||[]).includes(cat));
-        for(const s of affected){
-          s.categories = s.categories.filter(c=>c!==cat);
-          await Store.saveSong(s);
+      showConfirmModal({
+        title: 'Delete Folder',
+        message: `Delete folder "${cat}" from database? Songs inside won't be deleted.`,
+        confirmText: 'Delete',
+        danger: true,
+        onConfirm: async ()=>{
+          state.categories = state.categories.filter(c=>c!==cat);
+          await Store.saveCategories(state.categories);
+          const affected = state.songs.filter(s=>(s.categories||[]).includes(cat));
+          for(const s of affected){
+            s.categories = s.categories.filter(c=>c!==cat);
+            await Store.saveSong(s);
+          }
+          if(state.filterCat===cat) state.filterCat = 'All';
+          showToast('Folder deleted from database');
+          render();
         }
-        if(state.filterCat===cat) state.filterCat = 'All';
-        showToast('Folder deleted from database');
-        render();
-      }
+      });
     };
   });
   // (2026-07-13) wire mass parts & folder sorting with database persistence; prev: basic
@@ -6247,21 +6270,28 @@ function wireModal(){
       render();
     }
   };
+  // (2026-07-13) confirm modal for mass part deletion; prev: window.confirm
   document.querySelectorAll('[data-del-mp]').forEach(el=>{
-    el.onclick = async ()=>{
+    el.onclick = ()=>{
       const mp = el.dataset.delMp;
-      if(confirm(`Delete Mass Part "${mp}" from database? Songs will keep other details.`)){
-        state.massParts = state.massParts.filter(c=>c!==mp);
-        await Store.saveMassParts(state.massParts);
-        const affected = state.songs.filter(s=>(s.massParts||[]).includes(mp));
-        for(const s of affected){
-          s.massParts = s.massParts.filter(c=>c!==mp);
-          await Store.saveSong(s);
+      showConfirmModal({
+        title: 'Delete Mass Part',
+        message: `Delete Mass Part "${mp}" from database? Songs will keep other details.`,
+        confirmText: 'Delete',
+        danger: true,
+        onConfirm: async ()=>{
+          state.massParts = state.massParts.filter(c=>c!==mp);
+          await Store.saveMassParts(state.massParts);
+          const affected = state.songs.filter(s=>(s.massParts||[]).includes(mp));
+          for(const s of affected){
+            s.massParts = s.massParts.filter(c=>c!==mp);
+            await Store.saveSong(s);
+          }
+          if(state.filterMassPart===mp) state.filterMassPart = null;
+          showToast('Mass part deleted from database');
+          render();
         }
-        if(state.filterMassPart===mp) state.filterMassPart = null;
-        showToast('Mass part deleted from database');
-        render();
-      }
+      });
     };
   });
   // (2026-07-13) wire song context actions & flags with closeActiveModal; prev: stuck modal
