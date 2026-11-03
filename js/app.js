@@ -2808,7 +2808,68 @@ function renderMassPartFooterCue(song){
     </div>`;
 }
 
-// (2026-07-13) skip intro chords & filter empty staves; prev: drew empty staff for chords
+// (2026-07-13) intro melody with top right play button; prev: no play button
+let activeMelodyPlayback = null;
+function stopActiveMelodyPlayback(){
+  if(!activeMelodyPlayback) return;
+  if(activeMelodyPlayback.timers){
+    activeMelodyPlayback.timers.forEach(t=>clearTimeout(t));
+  }
+  if(activeMelodyPlayback.activeNotes){
+    activeMelodyPlayback.activeNotes.forEach(el=>el.classList.remove('playing'));
+  }
+  if(activeMelodyPlayback.btn){
+    activeMelodyPlayback.btn.classList.remove('is-playing');
+    activeMelodyPlayback.btn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> <span>Play</span>`;
+  }
+  activeMelodyPlayback = null;
+}
+
+function handleStaffPlayClick(btn){
+  if(activeMelodyPlayback && activeMelodyPlayback.btn === btn){
+    stopActiveMelodyPlayback();
+    return;
+  }
+  stopActiveMelodyPlayback();
+
+  let container = null;
+  if(btn.dataset.playStaffIdx !== undefined){
+    const blockIdx = btn.dataset.playStaffIdx;
+    container = btn.closest('.intro-melody-box')?.querySelector(`[data-staff-block="${blockIdx}"]`);
+  }else{
+    container = btn.closest('.intro-melody-box') || btn.closest('.melody-staff-section') || document.getElementById('f-intro-melody-preview');
+  }
+  if(!container) return;
+
+  const noteEls = Array.from(container.querySelectorAll('.staff-note-group[data-staff-note]'));
+  if(!noteEls.length) return;
+
+  const bpm = (state.song && state.song.tempo) ? (parseInt(state.song.tempo, 10) || 90) : 90;
+  const intervalMs = Math.max(280, Math.min(500, Math.round(36000 / bpm)));
+
+  btn.classList.add('is-playing');
+  btn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg> <span>Stop</span>`;
+
+  const timers = [];
+  activeMelodyPlayback = { btn, timers, activeNotes: noteEls };
+
+  noteEls.forEach((el, i)=>{
+    const semi = parseInt(el.dataset.staffNote, 10);
+    const t = setTimeout(()=>{
+      if(!isNaN(semi)) playPianoNote(semi);
+      el.classList.add('playing');
+      const offT = setTimeout(()=>el.classList.remove('playing'), intervalMs * 0.75);
+      timers.push(offT);
+    }, i * intervalMs);
+    timers.push(t);
+  });
+
+  const endT = setTimeout(()=>{
+    stopActiveMelodyPlayback();
+  }, noteEls.length * intervalMs + 100);
+  timers.push(endT);
+}
+
 function renderIntroMelodySection(introMelody){
   if(!introMelody || !introMelody.trim()) return '';
   const lines = introMelody.split(/\r?\n/).map(l=>l.trimEnd()).filter(l=>l.trim().length > 0);
@@ -2820,15 +2881,24 @@ function renderIntroMelodySection(introMelody){
   });
   if(!parsedStaffs.length) return '';
   const staffsHtml = parsedStaffs.map((staffHtml, idx)=>`
-    <div class="intro-staff-block" style="margin-bottom:${idx < parsedStaffs.length - 1 ? '16px' : '4px'};">
-      ${parsedStaffs.length > 1 ? `<div class="intro-staff-label" style="font-size:10px;font-weight:800;color:var(--text-dim);letter-spacing:1px;margin-bottom:2px;text-transform:uppercase;">STAFF ${idx + 1}</div>` : ''}
+    <div class="intro-staff-block" data-staff-block="${idx}" style="margin-bottom:${idx < parsedStaffs.length - 1 ? '16px' : '4px'};">
+      ${parsedStaffs.length > 1 ? `
+        <div class="intro-staff-label" style="display:flex;align-items:center;justify-content:space-between;font-size:10px;font-weight:800;color:var(--text-dim);letter-spacing:1px;margin-bottom:4px;text-transform:uppercase;">
+          <span>STAFF ${idx + 1}</span>
+          <button type="button" class="staff-play-btn" data-play-staff-idx="${idx}" title="Play Staff ${idx + 1}">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> <span>Play</span>
+          </button>
+        </div>` : ''}
       ${staffHtml}
     </div>
   `).join('');
   return `
     <div class="intro-melody-box" style="margin:4px 0 16px 0;padding:12px 14px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:12px;">
-      <div class="intro-melody-header" style="font-size:11px;font-weight:800;color:var(--accent);letter-spacing:0.8px;text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:6px;">
-        <span>&#9835; Intro Melody</span>
+      <div class="intro-melody-header" style="font-size:11px;font-weight:800;color:var(--accent);letter-spacing:0.8px;text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;">
+        <span style="display:flex;align-items:center;gap:6px;">&#9835; Intro Melody</span>
+        <button type="button" class="staff-play-btn" data-play-staff-all="true" title="Play Intro Melody">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> <span>Play</span>
+        </button>
       </div>
       ${staffsHtml}
     </div>`;
@@ -2887,6 +2957,7 @@ function renderPeekSlide(s, isNext, fontSize){
 }
 
 function renderViewer(){
+  stopActiveMelodyPlayback();
   const song = currentSong();
   if(!song){ state.view='list'; return renderListView(); }
   const existingChartWrap = document.getElementById('chart-wrap');
@@ -5512,3 +5583,13 @@ if(typeof window !== 'undefined' && window.Capacitor && window.Capacitor.Plugins
     else { window.Capacitor.Plugins.App.exitApp(); }
   });
 }
+
+
+// (2026-07-13) delegated click listener for staff play button; prev: no play button
+document.addEventListener('click', (e)=>{
+  const btn = e.target.closest('.staff-play-btn');
+  if(!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  handleStaffPlayClick(btn);
+});

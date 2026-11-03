@@ -230,7 +230,12 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
 .staff-g-clef{position:absolute;left:2px;top:-6px;font-size:42px;line-height:1;color:var(--accent);opacity:0.95;pointer-events:none;font-family:serif;}
 .staff-barline{position:absolute;top:4px;height:36px;width:1.5px;background:rgba(255,255,255,0.45);pointer-events:none;}
 .staff-note-group{position:absolute;top:0;height:78px;width:16px;cursor:pointer;display:flex;flex-direction:column;align-items:center;}
-.staff-note-group:active .staff-notehead{transform:scale(1.25);background:var(--chord);}
+.staff-note-group:active .staff-notehead,
+.staff-note-group.playing .staff-notehead{transform:scale(1.28);background:var(--chord);box-shadow:0 0 10px var(--chord);}
+.staff-note-group.playing .staff-note-label{color:var(--accent);text-shadow:0 0 8px var(--accent);}
+/* (2026-07-13) play button on top right of staff; prev: no play button */
+.staff-play-btn{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:700;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.14);color:var(--accent);cursor:pointer;text-transform:none;letter-spacing:0.2px;transition:all .15s ease;user-select:none;}
+.staff-play-btn:active, .staff-play-btn.is-playing{background:rgba(255,255,255,0.15);border-color:var(--accent);color:var(--chord);}
 .staff-ledger{position:absolute;left:-4px;width:18px;height:1px;background:rgba(255,255,255,0.6);pointer-events:none;}
 .staff-notehead{position:absolute;left:0;width:10px;height:7.5px;border-radius:50%;background:var(--text);transform:rotate(-18deg);transition:transform .1s ease,background-color .1s ease;}
 .staff-stem{position:absolute;width:1.5px;height:20px;background:var(--text);opacity:0.9;pointer-events:none;}
