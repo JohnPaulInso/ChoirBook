@@ -305,6 +305,175 @@ function getEffectiveSongKey(song){
   if(song.key && song.key.trim() && song.key.trim() !== '—') return song.key.trim();
   return detectKeyFromBody(song.body) || '';
 }
+// (2026-07-13) liturgical hymn composer catalog & detection; prev: none
+const KNOWN_HYMN_COMPOSERS = [
+  { pattern: /daygon\s+ta\s+ang\s+ginoo/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /diha\s+sa\s+halaran/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /diosnong\s+magtutudlo/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /duol\s+kamo\s+n(?:a|ga)\s+malipayon/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /ginoong\s+dios\s*(?:\(gugma|\b)/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /mugna\s+sa\s+diyos/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /dawata,?\s+o\s+ginoo/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /isugid\s+ko/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /kyrie\s+4th\s+mass/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /gloria\s+3rd\s+mass/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /sanctus\s+8th\s+mass/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /sanctus\s*\(?2nd\s+mass\)?/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /kordero\s*\(?waltz\)?/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /kini\s+mao\s+akong\s+lawas/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /way\s+sama/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /kanimo\s+o\s+diyos/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /i\s+go\s+my\s+merry\s+way/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /mag-ambahan\s+kita/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /happy\s+is\s+the\s+man/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /dios\s+namo\s*(?:\(pasayloon|\b)/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /si\s+kristo\s+namatay/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /manluluwas/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /amahan\s+namo/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /7th\s+mass\s+requiem/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /pahulay\s*(?:\(7th|\b)/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /nakaila\s+ikaw/i, composer: 'Fr. Rudy Villanueva' },
+  { pattern: /ginoong\s+hesus/i, composer: 'Fr. Rudy Villanueva' },
+
+  { pattern: /bayan\s+umawit/i, composer: 'Fr. Manoling Francisco, SJ' },
+  { pattern: /wikain\s+mo/i, composer: 'Fr. Manoling Francisco, SJ' },
+  { pattern: /one\s+more\s+gift/i, composer: 'Fr. Manoling Francisco, SJ' },
+  { pattern: /i\s+will\s+sing\s+forever/i, composer: 'Fr. Manoling Francisco, SJ' },
+  { pattern: /aleluya\s+gawin\s+mong\s+daan/i, composer: 'Fr. Manoling Francisco, SJ' },
+  { pattern: /take\s+and\s+receive/i, composer: 'Fr. Manoling Francisco, SJ' },
+  { pattern: /kordero\s*\(?papal\s+visit\)?/i, composer: 'Fr. Manoling Francisco, SJ' },
+  { pattern: /amare\s+et\s+servire/i, composer: 'Fr. Manoling Francisco, SJ' },
+  { pattern: /in\s+him\s+alone/i, composer: 'Fr. Manoling Francisco, SJ' },
+  { pattern: /paggugunita/i, composer: 'Fr. Manoling Francisco, SJ' },
+  { pattern: /covenant\s+journey/i, composer: 'Fr. Manoling Francisco, SJ' },
+  { pattern: /holy\s*\(?sanctus\)?/i, composer: 'Bukas Palad' },
+  { pattern: /as\s+we\s+prepare/i, composer: 'Bukas Palad' },
+  { pattern: /kyrie\s*\(?contrite\b/i, composer: 'Fr. Manoling Francisco, SJ' },
+  { pattern: /christify/i, composer: 'Fr. Manoling Francisco, SJ' },
+  { pattern: /a\s+song\s+to\s+mary/i, composer: 'Bukas Palad' },
+  { pattern: /\bamen\b/i, composer: 'Fr. Manoling Francisco, SJ' },
+
+  { pattern: /gather\s+the\s+people/i, composer: 'Dan Schutte' },
+  { pattern: /sing\s+a\s+new\s+song/i, composer: 'Dan Schutte' },
+  { pattern: /glory\s+to\s+god/i, composer: 'Dan Schutte' },
+  { pattern: /city\s+of\s+god/i, composer: 'Dan Schutte' },
+  { pattern: /here\s+i\s+am,?\s+lord/i, composer: 'Dan Schutte' },
+  { pattern: /when\s+we\s+eat\s+this\s+bread/i, composer: 'Dan Schutte' },
+  { pattern: /lamb\s+of\s+god\s*[\(\[]?(?:soft|fast)[\)\]]?/i, composer: 'Dan Schutte' },
+  { pattern: /medley/i, composer: 'Dan Schutte' },
+
+  { pattern: /fr\.?\s*lyndon/i, composer: 'Fr. Lyndon Ruiz' },
+  { pattern: /diha\s+lamang\s+kanimo/i, composer: 'Fr. Lyndon Ruiz' },
+  { pattern: /awit\s+pasalamat/i, composer: 'Fr. Lyndon Ruiz' },
+  { pattern: /king\s+halad\s+ko/i, composer: 'Fr. Lyndon Ruiz' },
+  { pattern: /ang\s+tanan/i, composer: 'Fr. Lyndon Ruiz' },
+  { pattern: /\bikaw\b(?:\s*\(fr\b|\b)/i, composer: 'Fr. Lyndon Ruiz' },
+
+  { pattern: /narcisa/i, composer: 'Narcisa Fernandez' },
+  { pattern: /himaya\s+sa\s+diyos\s+didto\s+sa\s+langit/i, composer: 'Narcisa Fernandez' },
+  { pattern: /santos\s+3x/i, composer: 'Narcisa Fernandez' },
+  { pattern: /kini\s+ang\s+adlaw/i, composer: 'Narcisa Fernandez' },
+
+  { pattern: /great\s+is\s+our\s+god/i, composer: 'Noel Miranda' },
+  { pattern: /seek\s+ye\s+first/i, composer: 'Karen Lafferty' },
+  { pattern: /anima\s+christi/i, composer: 'Jandi Arboleda & Manoling Francisco, SJ' },
+  { pattern: /christ\s+in\s+us/i, composer: 'Fr. Jonas Mejares, OSA' },
+  { pattern: /sto\s+niño\s+gugma\s+ko|sto\s+nino\s+gugma\s+ko/i, composer: 'Fr. Jonas Mejares, OSA' },
+  { pattern: /how\s+lovely\s+is\s+your\s+dwelling/i, composer: 'Fr. Arnel Aquino, SJ' },
+  { pattern: /hosea/i, composer: 'Gregory Norbet' },
+  { pattern: /sing\s+alleluya/i, composer: 'Linda Stassen-Benjamin' },
+  { pattern: /thy\s+word/i, composer: 'Amy Grant & Michael W. Smith' },
+  { pattern: /blessed\s+be\s+god/i, composer: 'Sebastian Temple' },
+  { pattern: /i\s+offer\s+my\s+life/i, composer: 'Don Moen' },
+  { pattern: /we\s+remember/i, composer: 'Marty Haugen' },
+  { pattern: /our\s+father/i, composer: 'Bukas Palad' },
+  { pattern: /il\s+signore/i, composer: 'Ryan Cayabyab' },
+  { pattern: /fragile\s+vessel/i, composer: 'Francis Cruz' },
+  { pattern: /gift\s+of\s+finest\s+wheat/i, composer: 'Robert E. Kreutz' },
+  { pattern: /one\s+bread\s+one\s+body/i, composer: 'John Foley, SJ' },
+  { pattern: /power\s+of\s+your\s+love/i, composer: 'Geoff Bullock' },
+  { pattern: /we\s+are\s+one/i, composer: 'Carol Banawa' },
+  { pattern: /you\s+are\s+mine/i, composer: 'David Haas' },
+  { pattern: /all\s+that\s+i\s+am/i, composer: 'David Haas' },
+  { pattern: /celebrate\s+jesus/i, composer: 'Gary Oliver' },
+  { pattern: /give\s+thanks/i, composer: 'Henry Smith' },
+  { pattern: /o\s+come,?\s+divine\s+messiah/i, composer: 'Abbé Simon-Joseph Pellegrin' },
+  { pattern: /pit\s+senyor\s+matag\s+adlaw/i, composer: 'Elvis Somosot' },
+  { pattern: /gozos\s+san\s+vicente/i, composer: 'Traditional Novena' },
+  { pattern: /salve\s+regina/i, composer: 'Gregorian Chant' },
+  { pattern: /ave\s+maria/i, composer: 'Traditional' },
+  { pattern: /3\s+oclock\s+prayer/i, composer: 'Divine Mercy' },
+
+  { pattern: /sa\s+ngalan\s+sa\s+amahan/i, composer: 'Misal Romano' },
+  { pattern: /mga\s+igsoon.*santos\s+na\s+misa/i, composer: 'Misal Romano' },
+  { pattern: /magampo\s+kita/i, composer: 'Misal Romano' },
+  { pattern: /1st\s+reading/i, composer: 'Lectionary' },
+  { pattern: /salmo\s+bogo/i, composer: 'Liturgical' },
+  { pattern: /ang\s+ginoo\s+ma?anaa/i, composer: 'Misal Romano' },
+  { pattern: /homily/i, composer: 'Liturgy of the Word' },
+  { pattern: /katilingban|prayers\s+of\s+the\s+faithful/i, composer: 'Misal Romano' },
+  { pattern: /nicene\s+creed/i, composer: 'Liturgical' },
+  { pattern: /dawaton\s+unta/i, composer: 'Misal Romano' },
+  { pattern: /preface/i, composer: 'Misal Romano' },
+  { pattern: /kini\s+ang\s+misteryo/i, composer: 'Misal Romano' },
+  { pattern: /pinaagi\s+kaniya/i, composer: 'Misal Romano' },
+  { pattern: /ipakita\s+ta\s+ang\s+ang\s+pag-inigsuonay/i, composer: 'Misal Romano' },
+  { pattern: /agnus\s+dei/i, composer: 'Gregorian Chant' },
+  { pattern: /ginoo\s+dili\s+ako\s+angay/i, composer: 'Misal Romano' },
+  { pattern: /ebanghelyo/i, composer: 'Misal Romano' },
+  { pattern: /pag-andam\s+sa\s+mga\s+halad/i, composer: 'Misal Romano' }
+];
+
+function isSectionDivider(title){
+  if(!title) return false;
+  return /(?:^|\s)[-_\s]*[🟧🟥]+|ENTRANCE\s*-|KYRIE\s*-|GLORIA\s*-|SALMO\s*-|ALLELUIA\s*-|OFFERTORY\s*-|SANCTUS\s*-|MEM\.\s*ACCL|OUR\s+FATHER\s*-|LAMB\s+OF\s+GOD\s*-|COMMUNION\s*-|RECESSIONAL\s*-|SINULOG\s*-|[-=_\s]{5,}/i.test(title);
+}
+
+function inferSongArtist(title, body){
+  if(isSectionDivider(title)) return '';
+  const titleParenMatch = /\(([^)]+)\)/g;
+  let match;
+  while((match = titleParenMatch.exec(title)) !== null){
+    const inside = match[1].trim();
+    if(/^fr\.?\s*lyndon/i.test(inside)) return 'Fr. Lyndon Ruiz';
+    if(/^francis\s+cruz/i.test(inside)) return 'Francis Cruz';
+    if(/^david\s+haas/i.test(inside)) return 'David Haas';
+    if(/^bukas\s+palad/i.test(inside)) return 'Bukas Palad';
+    if(/^ryan\s+cayabyab/i.test(inside)) return 'Ryan Cayabyab';
+    if(/^narcisa\b/i.test(inside)) return 'Narcisa Fernandez';
+  }
+  if(body){
+    const lines = body.split(/\r?\n/).slice(0, 10);
+    for(const line of lines){
+      const clean = line.replace(/^[>♩➤\s]+/, '').trim();
+      if(!clean) continue;
+      if(/Rudy\s+Villanueva/i.test(clean)) return 'Fr. Rudy Villanueva';
+      if(/Dan\s+Schutte/i.test(clean)) return 'Dan Schutte';
+      if(/Manoling\s*Francisco/i.test(clean)) return 'Fr. Manoling Francisco, SJ';
+      if(/Narcisa\s+Fernandez/i.test(clean)) return 'Narcisa Fernandez';
+      if(/David\s+Haas/i.test(clean)) return 'David Haas';
+      if(/Ryan\s+Cayabyab/i.test(clean)) return 'Ryan Cayabyab';
+      if(/Carol\s+Banawa/i.test(clean)) return 'Carol Banawa';
+      if(/Fr\.?\s*Lyndon(?:\s+Ruiz)?/i.test(clean)) return 'Fr. Lyndon Ruiz';
+      if(/Francis\s+Cruz/i.test(clean)) return 'Francis Cruz';
+      const mBy = /^(?:by|composer|music|words|lyrics)\s*[:\-]\s*([^\n;]+)/i.exec(clean);
+      if(mBy && mBy[1].trim().length > 2) return mBy[1].trim();
+    }
+  }
+  for(const item of KNOWN_HYMN_COMPOSERS){
+    if(item.pattern.test(title)) return item.composer;
+  }
+  return '';
+}
+
+function getEffectiveSongArtist(song){
+  if(!song) return '';
+  if(song.artist && song.artist.trim() && song.artist.trim().toLowerCase() !== 'unknown'){
+    return song.artist.trim();
+  }
+  return inferSongArtist(song.title, song.body) || '';
+}
+
 
 // (2026-07-13) melody staff only for explicit <> prefix or intro; prev: auto-detected chords as melody
 function isMelodyNoteLine(line){
@@ -1162,6 +1331,14 @@ function normalizeSong(song){
       song._keyDetectedMigrated = true;
     }
   }
+  // (2026-07-13) infer song composer when unknown; prev: left blank or Unknown
+  if(!song.artist || song.artist.trim() === '' || song.artist.trim().toLowerCase() === 'unknown'){
+    const detectedArtist = inferSongArtist(song.title, song.body);
+    if(detectedArtist){
+      song.artist = detectedArtist;
+      song._artistMigrated = true;
+    }
+  }
   return song;
 }
 
@@ -1169,10 +1346,11 @@ function normalizeSong(song){
 // (2026-07-13) persist migrated title, key & chord fixes; prev: chord/title only
 async function persistMigratedChordSongs(){
   for(const s of state.songs){
-    if(s && (s._chordPrefixMigrated || s._titleCleanedMigrated || s._keyDetectedMigrated)){
+    if(s && (s._chordPrefixMigrated || s._titleCleanedMigrated || s._keyDetectedMigrated || s._artistMigrated)){
       delete s._chordPrefixMigrated;
       delete s._titleCleanedMigrated;
       delete s._keyDetectedMigrated;
+      delete s._artistMigrated;
       try{ await Store.saveSong(s); }catch(e){}
     }
   }
@@ -1862,7 +2040,8 @@ function parseGSMA(text, overrideFolder){
 
     songs.push({
       title: cleanTitle,
-      artist: '',
+      // (2026-07-13) infer composer artist on gsma import; prev: empty string
+      artist: inferSongArtist(cleanTitle, body) || '',
       // (2026-07-13) detect key on gsma song import; prev: empty string
       key: detectKeyFromBody(body) || '',
       capo: 0,
@@ -2290,7 +2469,19 @@ function renderSongRowHtml(s, secMassPart){
       ${leftControl}
       <div style="flex:1;min-width:0;">
         <div class="song-title" style="display:flex;align-items:center;min-width:0;">${flagPill}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(displayTitle)}</span>${excludedBadge}</div>
-        <div class="song-sub">${escapeHtml(s.artist||'Unknown')} &middot; Key ${escapeHtml(transposeKeyLabel(getEffectiveSongKey(s), s.transposeOffset||0)||'—')}${(s.categories&&s.categories.length)?' &middot; '+escapeHtml(s.categories.join(', ')):''}</div>
+        <!-- (2026-07-13) display effective composer artist without unknown; prev: s.artist||Unknown -->
+        <div class="song-sub">${(()=>{
+          const effArtist = getEffectiveSongArtist(s);
+          const keyLabel = transposeKeyLabel(getEffectiveSongKey(s), s.transposeOffset||0);
+          const keySub = keyLabel && keyLabel !== '—' ? ('Key ' + escapeHtml(keyLabel)) : (!isSectionDivider(s.title) ? 'Key —' : '');
+          const parts = [];
+          if(effArtist) parts.push(escapeHtml(effArtist));
+          else if(s.artist && s.artist.trim() && s.artist.trim().toLowerCase() !== 'unknown') parts.push(escapeHtml(s.artist.trim()));
+          else if(!isSectionDivider(s.title)) parts.push('Unknown');
+          if(keySub) parts.push(keySub);
+          if(s.categories && s.categories.length) parts.push(escapeHtml(s.categories.join(', ')));
+          return parts.join(' &middot; ');
+        })()}</div>
         ${lyricSnippetHtml}
       </div>
       ${rightControl}
@@ -3448,7 +3639,7 @@ function renderSongSheetContent(s, isPeek){
       ${flagPill}
       <span>${escapeHtml(cleanSongTitleForDisplay(s.title))}</span>
     </div>
-    <div class="chart-artist">${escapeHtml(s.artist||'')}</div>
+    <div class="chart-artist">${escapeHtml(getEffectiveSongArtist(s)||s.artist||'')}</div>
     <div class="chart-meta-inline">
       <span>Key <b>${escapeHtml(transposeKeyLabel(effKey, offset)||'—')}</b></span>
       <span>Capo <b>${s.capo||0}</b></span>
@@ -4176,7 +4367,8 @@ function renderEditor(){
     <div class="editor">
       <!-- (2026-07-13) clean title for editor input; prev: raw title -->
       <div class="field" id="field-title"><label>Title <span class="req">*</span></label><input id="f-title" value="${escapeHtml(cleanSongTitleForDisplay(d.title))}" placeholder="Song title"/></div>
-      <div class="field"><label>Artist</label><input id="f-artist" value="${escapeHtml(d.artist)}" placeholder="Artist / writer"/></div>
+      <!-- (2026-07-13) populate inferred composer in editor; prev: d.artist -->
+      <div class="field"><label>Artist</label><input id="f-artist" value="${escapeHtml(d.artist || getEffectiveSongArtist(d))}" placeholder="Artist / writer"/></div>
       <div class="field-row">
         <!-- (2026-07-13) fallback to detected key in editor; prev: d.key -->
         <div class="field"><label>Key</label><input id="f-key" value="${escapeHtml(d.key || getEffectiveSongKey(d))}" placeholder="e.g. G, Bbm"/></div>
@@ -4390,7 +4582,8 @@ function renderEditor(){
       introMelody: (document.getElementById('f-intro-melody')?.value || '').trim(),
       // (2026-07-13) clean sorting numbers from title on save; prev: raw titleVal
       title: cleanSongTitleForDisplay(titleVal),
-      artist: document.getElementById('f-artist').value.trim(),
+      // (2026-07-13) fallback to inferred composer on save if blank; prev: blank
+      artist: document.getElementById('f-artist').value.trim() || inferSongArtist(titleVal, document.getElementById('f-body').value) || '',
       // (2026-07-13) auto-detect key on save if left blank; prev: blank
       key: document.getElementById('f-key').value.trim() || detectKeyFromBody(document.getElementById('f-body').value) || '',
       capo: +document.getElementById('f-capo').value || 0,
@@ -4493,7 +4686,7 @@ function renderSetlistEditor(){
     }
     const song = state.songs.find(s=>s.id===item.songId);
     const title = song ? song.title : '(song removed)';
-    const sub = song ? `${escapeHtml(song.artist||'Unknown')} &middot; Key ${escapeHtml(transposeKeyLabel(getEffectiveSongKey(song), song.transposeOffset||0)||'—')}` : '';
+    const sub = song ? `${escapeHtml(getEffectiveSongArtist(song)||song.artist||'Unknown')} &middot; Key ${escapeHtml(transposeKeyLabel(getEffectiveSongKey(song), song.transposeOffset||0)||'—')}` : '';
     return `
       <div class="song-row" data-song-item-idx="${idx}">
         ${upDown}
