@@ -1952,7 +1952,8 @@ function getFilteredSongsForCurrentView(){
   }
   if(state.search.trim()){
     const q = state.search.toLowerCase();
-    songs = songs.filter(s => s.title.toLowerCase().includes(q) || (s.artist||'').toLowerCase().includes(q) || (s.sectionTitle||'').toLowerCase().includes(q));
+    // (2026-07-13) search across title, artist, section & full lyrics body; prev: title/artist only
+    songs = songs.filter(s => s.title.toLowerCase().includes(q) || (s.artist||'').toLowerCase().includes(q) || (s.sectionTitle||'').toLowerCase().includes(q) || (s.body||'').toLowerCase().includes(q));
   }
   return songs;
 }
@@ -2124,12 +2125,32 @@ function renderSongRowHtml(s, secMassPart){
     ? `<span class="song-drag-handle" data-drag-handle="1" title="Hold and drag to reorder">${iconDragBars()}</span>`
     : '';
   const excludedBadge = isExcluded ? `<span class="excluded-badge" title="Skipped when swiping in this folder">Excluded</span>` : '';
+  // (2026-07-13) display matching lyric snippet when search term matches body; prev: none
+  let lyricSnippetHtml = '';
+  if(state.search && state.search.trim()){
+    const q = state.search.trim().toLowerCase();
+    const bodyLower = (s.body || '').toLowerCase();
+    const titleLower = (s.title || '').toLowerCase();
+    const artistLower = (s.artist || '').toLowerCase();
+    if(!titleLower.includes(q) && !artistLower.includes(q) && bodyLower.includes(q)){
+      const lines = (s.body || '').split('\n');
+      for(const l of lines){
+        const clean = l.replace(/^[>♩➤\s]+/, '').replace(/<[^>]+>/g, '').trim();
+        if(clean && clean.toLowerCase().includes(q) && !clean.startsWith('>')){
+          lyricSnippetHtml = `<div class="song-sub" style="color:var(--accent);font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px;">"...${escapeHtml(clean)}..."</div>`;
+          break;
+        }
+      }
+    }
+  }
+
   return `
     <div class="song-row ${state.listEditMode?'edit-mode':''} ${isChecked?'is-checked':''} ${isExcluded?'is-excluded':''}" data-id="${s.id}" data-section-mp="${escapeHtml(secMassPart||'')}">
       ${leftControl}
       <div style="flex:1;min-width:0;">
         <div class="song-title" style="display:flex;align-items:center;min-width:0;">${flagPill}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(displayTitle)}</span>${excludedBadge}</div>
         <div class="song-sub">${escapeHtml(s.artist||'Unknown')} &middot; Key ${escapeHtml(transposeKeyLabel(s.key, s.transposeOffset||0)||'—')}${(s.categories&&s.categories.length)?' &middot; '+escapeHtml(s.categories.join(', ')):''}</div>
+        ${lyricSnippetHtml}
       </div>
       ${rightControl}
     </div>`;
@@ -2241,7 +2262,7 @@ function renderListView(animateChipScroll){
       ${isSearching ? `
         <div class="topbar-search-box">
           <span style="color:var(--text-dim);display:flex;align-items:center;margin-right:6px;flex-shrink:0;">${iconSearch()}</span>
-          <input id="search-input" placeholder="Search title or artist..." value="${escapeHtml(state.search)}" autocomplete="off" spellcheck="false"/>
+          <input id="search-input" placeholder="Search title, artist or lyrics..." value="${escapeHtml(state.search)}" autocomplete="off" spellcheck="false"/>
           ${state.search ? `
             <button type="button" class="search-clear-btn" id="btn-clear-search" title="Clear search">${iconClose()}</button>
           ` : `
