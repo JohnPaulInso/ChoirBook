@@ -193,17 +193,20 @@ function normalizeBodyChordLines(body){
     if(/^[=\-_]{3,}$/.test(trimmed)) return line;
     if(/^([\u27a4>]\s*)?(Priest|Presider|Celebrant)(\/Reader)?\b\s*:?\s*/i.test(trimmed)) return line;
     if(/^([\u2669\u211fR]\s*)?(Response|People|All)\b\s*:?\s*/i.test(trimmed)) return line;
+    if(trimmed.startsWith('<>')) return line;
     if(line.startsWith('>')){
-      const stripped = line.slice(1).replace(/[<>]/g, '');
-      if(isMelodyNoteLine(stripped)) return stripped;
-      return '>' + stripped;
+      const stripped = line.slice(1).trim();
+      if(stripped.startsWith('<>') || isMelodyNoteLine(stripped)) return stripped;
+      const strippedNoBrackets = line.slice(1).replace(/[<>]/g, '');
+      if(isMelodyNoteLine(strippedNoBrackets)) return strippedNoBrackets;
+      return '>' + strippedNoBrackets;
     }
+    if(trimmed.startsWith('<>') || isMelodyNoteLine(line)) return line.replace(/^>\s?/, '');
     if(line.includes('<') || line.includes('>')){
       return '>' + line.replace(/[<>]/g, '').replace(/\s+$/, '');
     }
     if(/^\[.+\]$/.test(trimmed) || /^\(.+\)$/.test(trimmed)) return line;
     if(/^(Intro|Verse|Chorus|Bridge|Outro|Pre-Chorus|Interlude|Ending|Refrain|I+|IV|V|VI+)[\s:0-9IVX.]*$/i.test(trimmed)) return line;
-    if(isMelodyNoteLine(line)) return line.replace(/^>\s?/, '');
     const tokens = trimmed.split(/\s+/).filter(Boolean);
     if(tokens.length===0) return line;
     const realCh = tokens.filter(isRealChordToken).length;
@@ -212,10 +215,11 @@ function normalizeBodyChordLines(body){
     return line;
   }).join('\n');
 }
-// (2026-07-13) detect lowercase melody note lines & strip > prefix; prev: missed 1-note lines
+// (2026-07-13) detect <> melody note prefix & octave notes; prev: missed <>
 function isMelodyNoteLine(line){
   if(!line) return false;
   let cleaned = line.replace(/^>\s*/, '').trim();
+  if(cleaned.startsWith('<>')) return true;
   const hasNoteLabel = /^(?:first\s+notes\s*[-:]?|notes?\s*[-:]?|going\s+up\s*[-:]?)\s+/i.test(cleaned);
   cleaned = cleaned.replace(/^(?:first\s+notes\s*[-:]?|notes?\s*[-:]?|going\s+up\s*[-:]?)\s*/i, '').trim();
   if(!cleaned) return false;
@@ -223,28 +227,34 @@ function isMelodyNoteLine(line){
   let lowerNoteCount = 0;
   let noteTokenCount = 0;
   for(const tok of tokens){
-    if(tok === '|' || tok === '-') continue;
+    if(tok === '|' || tok === '/' || tok === '\\' || tok === '-') continue;
     if(/^[a-g](#|b)?\.?$/.test(tok)){
       lowerNoteCount++;
       noteTokenCount++;
-    } else if(/^[CD](#|b)?\.?$/.test(tok)){
+    } else if(/^[A-G](#|b)?\.?$/.test(tok)){
       noteTokenCount++;
     } else {
       return false;
     }
   }
-  if(hasNoteLabel && lowerNoteCount >= 1) return true;
+  if(hasNoteLabel && noteTokenCount >= 1) return true;
   if(noteTokenCount === 1 && lowerNoteCount === 1 && !line.trim().startsWith('>')) return true;
-  return noteTokenCount >= 2 && lowerNoteCount >= 1;
+  return noteTokenCount >= 2 && (lowerNoteCount >= 1 || /^[a-gA-G]/.test(tokens[0]));
 }
 
-// (2026-07-13) full-width staff & clear melody letter line; prev: squished staff
+// (2026-07-13) large staff with high/low octave notes & bars; prev: 34px misaligned
 function renderMelodyStaffLine(line){
-  const rawLine = line.replace(/^> (?=\S)/, '').replace(/^>/, '');
+  const rawLine = line.replace(/^[>\s]*<>\s*/, '').replace(/^>\s*/, '');
   const prefixMatch = /^(\s*(?:first\s+notes\s*[-:]?|notes?\s*[-:]?|going\s+up\s*[-:]?)\s*)/i.exec(rawLine);
   const startIdx = prefixMatch ? prefixMatch[1].length : 0;
-  const stepMap = { 'c': -2, 'd': -1, 'e': 0, 'f': 1, 'g': 2, 'a': 3, 'b': 4, 'C': 5, 'D': 6 };
-  const semiMap = { 'c': 0, 'd': 2, 'e': 4, 'f': 5, 'g': 7, 'a': 9, 'b': 11, 'C': 0, 'D': 2 };
+  const stepMap = {
+    'c': -2, 'd': -1, 'e': 0, 'f': 1, 'g': 2, 'a': 3, 'b': 4,
+    'C': 5, 'D': 6, 'E': 7, 'F': 8, 'G': 9, 'A': 10, 'B': 11
+  };
+  const semiMap = {
+    'c': 0, 'd': 2, 'e': 4, 'f': 5, 'g': 7, 'a': 9, 'b': 11,
+    'C': 12, 'D': 14, 'E': 16, 'F': 17, 'G': 19, 'A': 21, 'B': 23
+  };
   const re = /(\S+)/g;
   re.lastIndex = startIdx;
   let m;
@@ -257,29 +267,37 @@ function renderMelodyStaffLine(line){
   tokens.forEach((item)=>{
     const { tok, col } = item;
     const ratio = Math.max(0, Math.min(1, col / maxCol));
-    if(tok === '|'){
-      itemsHtml += `<span class="staff-barline" style="left:calc(30px + (100% - 56px) * ${ratio.toFixed(4)});"></span>`;
+    const leftCalc = `calc(38px + (100% - 66px) * ${ratio.toFixed(4)})`;
+    if(tok === '|' || tok === '/' || tok === '\\'){
+      itemsHtml += `
+        <span class="staff-note-group" style="left:${leftCalc};pointer-events:none;">
+          <span class="staff-barline"></span>
+          <span class="staff-bar-label">|</span>
+        </span>`;
       return;
     }
-    const nm = /^([a-gCD])(#|b)?\.?$/.exec(tok);
+    const nm = /^([a-gA-G])(#|b)?\.?$/.exec(tok);
     if(!nm) return;
     const letter = nm[1];
     const acc = nm[2] || '';
     const step = stepMap[letter] !== undefined ? stepMap[letter] : 0;
-    const yPx = 26 - step * 3;
+    const yPx = 40 - step * 4.5;
     const stemDown = step >= 4;
-    let semi = semiMap[letter] || 0;
-    if(acc === '#') semi = (semi + 1) % 12;
-    if(acc === 'b') semi = (semi + 11) % 12;
+    let semi = semiMap[letter] !== undefined ? semiMap[letter] : 0;
+    if(acc === '#') semi += 1;
+    if(acc === 'b') semi = Math.max(0, semi - 1);
     const accSym = acc === '#' ? '&#9839;' : (acc === 'b' ? '&#9837;' : '');
-    const ledgerHtml = step <= -2 ? `<span class="staff-ledger" style="top:${yPx + 2}px;"></span>` : '';
+    const ledgerHtml = step <= -2
+      ? `<span class="staff-ledger" style="top:49px;"></span>`
+      : (step >= 10 ? `<span class="staff-ledger" style="top:-1px;"></span>` : '');
     itemsHtml += `
-      <span class="staff-note-group" data-staff-note="${semi}" style="left:calc(30px + (100% - 56px) * ${ratio.toFixed(4)});" title="Tap to play ${escapeHtml(tok)}">
+      <span class="staff-note-group" data-staff-note="${semi}" style="left:${leftCalc};" title="Tap to play ${escapeHtml(tok)}">
         ${ledgerHtml}
-        <span class="staff-notehead ${stemDown?'stem-down':'stem-up'}" style="top:${yPx}px;">
+        <span class="staff-notehead ${stemDown?'stem-down':'stem-up'}" style="top:${yPx.toFixed(1)}px;">
           ${accSym ? `<span class="staff-acc">${accSym}</span>` : ''}
-          <span class="staff-stem"></span>
+          <span class="staff-stem ${stemDown?'stem-down':'stem-up'}"></span>
         </span>
+        <span class="staff-note-label">${escapeHtml(tok)}</span>
       </span>`;
   });
 
@@ -287,22 +305,22 @@ function renderMelodyStaffLine(line){
     <div class="melody-staff-section">
       <div class="melody-staff-wrap">
         <div class="melody-staff-lines">
-          <span class="staff-line" style="top:2px;"></span>
-          <span class="staff-line" style="top:8px;"></span>
-          <span class="staff-line" style="top:14px;"></span>
-          <span class="staff-line" style="top:20px;"></span>
-          <span class="staff-line" style="top:26px;"></span>
+          <span class="staff-line" style="top:4px;"></span>
+          <span class="staff-line" style="top:13px;"></span>
+          <span class="staff-line" style="top:22px;"></span>
+          <span class="staff-line" style="top:31px;"></span>
+          <span class="staff-line" style="top:40px;"></span>
         </div>
         <span class="staff-g-clef" aria-hidden="true">&#119070;</span>
         ${itemsHtml}
       </div>
-      <div class="melody-letters-line">${escapeHtml(rawLine.replace(/^>/, ''))}</div>
     </div>`;
 }
 
 function classifyLine(line){
   const trimmed = line.trim();
   if(trimmed==='') return 'blank';
+  if(trimmed.startsWith('<>') || line.replace(/^>\s*/, '').trim().startsWith('<>')) return 'melody';
   if(/^[=\-_]{4,}$/.test(trimmed)) return 'divider';
   if(/^([\u27a4>]\s*)?(Priest|Presider|Celebrant)(\/Reader)?\b\s*:?\s*/i.test(trimmed)) return 'priest';
   if(/^([\u2669\u211fR]\s*)?(Response|People|All)\b\s*:?\s*/i.test(trimmed)) return 'response';
@@ -628,7 +646,8 @@ function playPianoNote(noteIdx){
       pianoMasterBus = comp;
     }
     const now = pianoAudioCtx.currentTime;
-    const freq = 261.6256 * Math.pow(2, (noteIdx % 12) / 12);
+    // (2026-07-13) support multi-octave pitch calculation; prev: modulo 12 only
+    const freq = 261.6256 * Math.pow(2, noteIdx / 12);
     const filter = pianoAudioCtx.createBiquadFilter();
     filter.type = 'lowpass';
     filter.frequency.setValueAtTime(freq * 6, now);
@@ -1360,11 +1379,11 @@ function renderAuthView(){
     errBox.style.display = 'block';
   };
 
+  // (2026-07-13) resilient mobile Google auth & offline guest unlock; prev: blocked popup
   const googleBtn = document.getElementById('btn-google-signin');
   if(googleBtn){
     googleBtn.onclick = async ()=>{
       if(errBox) errBox.style.display = 'none';
-      // (2026-07-13) native Google One Tap on mobile APK without browser; prev: popup
       if(window.Capacitor && window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable('GoogleOneTap')){
         try{
           const res = await window.Capacitor.Plugins.GoogleOneTap.signIn();
@@ -1375,25 +1394,30 @@ function renderAuthView(){
           }
         }catch(err){
           const msg = (err && (err.message || err.toString())) || '';
-          if(!msg.toLowerCase().includes('cancel') && !msg.toLowerCase().includes('dismiss')){
-            showAuthError(msg || 'Google One Tap sign-in failed.');
+          if(msg.toLowerCase().includes('cancel') || msg.toLowerCase().includes('dismiss')){
+            return;
           }
-          return;
         }
+      }
+      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      const isNative = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+      if(isNative){
+        showAuthError('Please use Email sign-in or Continue as Guest for full offline access.');
+        return;
       }
       try{
         const provider = new firebase.auth.GoogleAuthProvider();
-        await firebase.auth().signInWithPopup(provider);
-      }catch(e){
-        if(e && (e.code === 'auth/operation-not-supported-in-this-environment' || e.code === 'auth/popup-blocked' || e.code === 'auth/disallowed_useragent')){
-          try{
-            const provider = new firebase.auth.GoogleAuthProvider();
-            await firebase.auth().signInWithRedirect(provider);
-          }catch(err){
-            showAuthError('Google sign-in is restricted in this environment. Please sign in with Email or continue as Guest.');
-          }
+        if(isMobile){
+          await firebase.auth().signInWithRedirect(provider);
         } else {
-          showAuthError(e.message || 'Google sign-in failed. Please try again.');
+          await firebase.auth().signInWithPopup(provider);
+        }
+      }catch(e){
+        try{
+          const provider = new firebase.auth.GoogleAuthProvider();
+          await firebase.auth().signInWithRedirect(provider);
+        }catch(err){
+          showAuthError('Google sign-in unavailable. Please use Email or Continue as Guest.');
         }
       }
     };
@@ -1443,23 +1467,20 @@ function renderAuthView(){
     };
   }
 
+  // (2026-07-13) persist offline guest session in storage; prev: failed anon trap
   const guestBtn = document.getElementById('btn-guest-signin');
   if(guestBtn){
     guestBtn.onclick = async ()=>{
       if(errBox) errBox.style.display = 'none';
+      localStorage.setItem('choirbook_offline_guest', 'true');
       try{
         if(typeof firebase !== 'undefined' && firebase.auth){
           await firebase.auth().signInAnonymously();
-        } else {
-          state.view = 'list'; state.loading = false; render();
-          try{ await seedIfEmpty(); }catch(e){}
-          loadAll().catch(()=>{});
         }
-      }catch(e){
-        state.view = 'list'; state.loading = false; render();
-        try{ await seedIfEmpty(); }catch(e){}
-        loadAll().catch(()=>{});
-      }
+      }catch(e){}
+      state.view = 'list'; state.loading = false; render();
+      try{ await seedIfEmpty(); }catch(e){}
+      loadAll().catch(()=>{});
     };
   }
 }
@@ -1781,7 +1802,9 @@ function sortSongsArray(arr, massPart){
       if(rA.num !== rB.num) return rA.num - rB.num;
       return (a.dateAdded||0) - (b.dateAdded||0);
     }
-    if(state.sortBy==='title') return a.title.localeCompare(b.title);
+    // (2026-07-13) support A-Z and Z-A alphabetical sorting; prev: A-Z only
+    if(state.sortBy==='title' || state.sortBy==='alpha') return a.title.localeCompare(b.title);
+    if(state.sortBy==='title-desc') return b.title.localeCompare(a.title);
     if(state.sortBy==='artist') return (a.artist||'').localeCompare(b.artist||'');
     if(state.sortBy==='date') return b.dateAdded - a.dateAdded;
     if(state.sortBy==='key') return (a.key||'').localeCompare(b.key||'');
@@ -2081,10 +2104,12 @@ function renderListView(animateChipScroll){
     </div>
     <div class="searchrow">
       <input id="search-input" placeholder="Search title or artist…" value="${escapeHtml(state.search)}"/>
+      <!-- (2026-07-13) add alphabetical A-Z and Z-A sort options; prev: Title only -->
       <select id="sort-select">
         <option value="massflow" ${state.sortBy==='massflow'||!state.sortBy?'selected':''}>Mass Flow / Order</option>
         <option value="code" ${state.sortBy==='code'?'selected':''}>Code / Number</option>
-        <option value="title" ${state.sortBy==='title'?'selected':''}>Title</option>
+        <option value="title" ${state.sortBy==='title'?'selected':''}>Alphabetical (A &rarr; Z)</option>
+        <option value="title-desc" ${state.sortBy==='title-desc'?'selected':''}>Alphabetical (Z &rarr; A)</option>
         <option value="artist" ${state.sortBy==='artist'?'selected':''}>Artist</option>
         <option value="date" ${state.sortBy==='date'?'selected':''}>Recent</option>
         <option value="key" ${state.sortBy==='key'?'selected':''}>Key</option>
@@ -2409,13 +2434,24 @@ function wireSongRowInteractions(el, id, sectionMassPart){
     favEl.addEventListener('mouseup', (e)=>e.stopPropagation());
   }
 
+  // (2026-07-13) suppress ghost touch click-through on long-press; prev: clicked modal
   const start = (e)=>{
     if(e.target.closest('.fav, .song-check-btn, .song-drag-handle')) return;
     moved = false; longFired = false;
     pressTimer = setTimeout(()=>{
       longFired = true;
       if(navigator.vibrate) navigator.vibrate(15);
-      state.modal = {type:'song-context', id};
+      const suppressGhost = (ev)=>{
+        ev.stopPropagation();
+        ev.preventDefault();
+      };
+      window.addEventListener('touchend', suppressGhost, {capture:true, once:true});
+      window.addEventListener('click', suppressGhost, {capture:true, once:true});
+      setTimeout(()=>{
+        window.removeEventListener('touchend', suppressGhost, {capture:true});
+        window.removeEventListener('click', suppressGhost, {capture:true});
+      }, 500);
+      state.modal = {type:'song-context', id, openedAt: performance.now()};
       renderListView();
     }, 480);
   };
@@ -2543,8 +2579,10 @@ function renderCuePianoFinder(){
     </div>`;
 }
 
+// (2026-07-13) trim cue chord offset for direct syllable alignment; prev: untrimmed
 function renderCueChordPills(chordStr, cueId){
-  const raw = getCueChordText(cueId, chordStr);
+  let raw = getCueChordText(cueId, chordStr);
+  if(raw && !state.editingCueChords) raw = raw.trimStart();
   if(state.editingCueChords && (chordStr || raw)){
     return `<div class="cue-chord-row is-editing"><input type="text" class="cue-chord-input" data-cue-id="${escapeHtml(cueId||'')}" value="${escapeHtml(raw)}" spellcheck="false" autocomplete="off"/></div>`;
   }
@@ -2598,9 +2636,12 @@ function renderMassPartCueCard(song){
     <div class="cue-item">
       <div class="cue-line cue-priest"><span class="dialogue-badge priest-badge">${iconPriestCross()} Priest</span><span class="cue-text">${escapeHtml(c.priest)}</span></div>
       ${c.response ? `
-        <div class="cue-response-group">
-          ${renderCueChordPills(c.chords, cid)}
-          <div class="cue-line cue-response"><span class="dialogue-badge response-badge">${iconPeopleGroup()} Response</span><span class="cue-text">${escapeHtml(c.response)}</span></div>
+        <div class="cue-line cue-response">
+          <span class="dialogue-badge response-badge">${iconPeopleGroup()} Response</span>
+          <div class="cue-response-content">
+            ${renderCueChordPills(c.chords, cid)}
+            <span class="cue-text">${escapeHtml(c.response)}</span>
+          </div>
         </div>
       ` : renderCueChordPills(c.chords, cid)}
     </div>`;
@@ -2613,9 +2654,12 @@ function renderMassPartCueCard(song){
       <div class="cue-item cue-sub-section">
         <div class="cue-sub-title">After Song &bull; Collect Prayer</div>
         <div class="cue-line cue-priest"><span class="dialogue-badge priest-badge">${iconPriestCross()} Priest</span><span class="cue-text">${escapeHtml(cue.postPrayer.priest)}</span></div>
-        <div class="cue-response-group">
-          ${renderCueChordPills(cue.postPrayer.chords, postCid)}
-          <div class="cue-line cue-response"><span class="dialogue-badge response-badge">${iconPeopleGroup()} Response</span><span class="cue-text">${escapeHtml(cue.postPrayer.response)}</span></div>
+        <div class="cue-line cue-response">
+          <span class="dialogue-badge response-badge">${iconPeopleGroup()} Response</span>
+          <div class="cue-response-content">
+            ${renderCueChordPills(cue.postPrayer.chords, postCid)}
+            <span class="cue-text">${escapeHtml(cue.postPrayer.response)}</span>
+          </div>
         </div>
       </div>`;
   }
@@ -2629,7 +2673,7 @@ function renderMassPartCueCard(song){
       </div>`;
   }
 
-  // (2026-07-13) place find priest key at bottom of cue card; prev: under header
+  // (2026-07-13) place cue piano directly under cue header; prev: at card bottom
   return `
     <div class="masspart-cue-card" id="masspart-cue-card">
       <div class="masspart-cue-header">
@@ -2643,11 +2687,11 @@ function renderMassPartCueCard(song){
           <button class="cue-toggle-btn" id="btn-toggle-cue" title="Hide Liturgical Cues">${iconCueHide()}<span>Hide</span></button>
         </div>
       </div>
+      ${renderCuePianoFinder()}
       <div class="masspart-cue-body">
         ${cueItemsHtml}
         ${postSongHtml}
       </div>
-      ${renderCuePianoFinder()}
     </div>`;
 }
 
@@ -2759,13 +2803,14 @@ function renderViewer(){
         <div class="chart-body" id="chart-body">${lines}</div>
         ${renderMassPartFooterCue(song)}
       </div>
-      <div class="scroll-overlay" id="scroll-overlay">
+      <!-- (2026-07-13) toggleable scroll overlay & min speed 1; prev: always visible -->
+      <div class="scroll-overlay ${state.showSpeedControls === false ? 'hidden' : ''}" id="scroll-overlay">
         <button class="scroll-square up" id="tri-up">${iconBigTriangleUp()}<span class="scroll-square-label">Faster</span></button>
         <button class="scroll-square down" id="tri-down">${iconBigTriangleDown()}<span class="scroll-square-label">Slower</span></button>
       </div>
       <div class="speed-slider-wrap hidden" id="speed-slider-wrap">
         <span class="speed-slider-icon">${iconSpeedArrows()}</span>
-        <input type="range" id="speed-range-slider" min="5" max="100" value="${scrollSpeed}">
+        <input type="range" id="speed-range-slider" min="1" max="100" value="${scrollSpeed}">
       </div>
     </div>
     ${modalHtml()}
@@ -2957,11 +3002,15 @@ function renderViewer(){
     };
   }
   
-  // (2026-07-13) show speed slider with 2s fade on toggle/drag; prev: permanent show
+  // (2026-07-13) toggle scroll overlay visibility via speed button; prev: slider only
   const speedToggleBtn = document.getElementById('btn-speed-toggle');
   if(speedToggleBtn){
     speedToggleBtn.onclick = ()=>{
-      showSpeedSliderTemporarily(2000);
+      state.showSpeedControls = state.showSpeedControls === false ? true : false;
+      const overlay = document.getElementById('scroll-overlay');
+      if(overlay) overlay.classList.toggle('hidden', !state.showSpeedControls);
+      speedToggleBtn.classList.toggle('active', state.showSpeedControls);
+      showSpeedSliderTemporarily(1500);
     };
   }
 
@@ -2995,12 +3044,18 @@ function renderViewer(){
   /* Pinch-to-zoom directly on chart-wrap: reflows text incrementally and saves per-song. */
   wirePinchZoom(chartWrap, chartBody, song);
 
-  // (2026-07-13) only mark manual scroll on drag/wheel so taps dont reset 7s delay; prev: touchstart
+  // (2026-07-13) 5s top autoscroll pause when scrolled back to top; prev: no pause
   const markUserScroll = ()=>{ lastUserScrollAt = performance.now(); };
   chartWrap.addEventListener('touchmove', markUserScroll, {passive:true});
   chartWrap.addEventListener('wheel', markUserScroll, {passive:true});
   chartWrap.addEventListener('scroll', ()=>{
     if(!state.autoscroll) return;
+    if(chartWrap.scrollTop <= 5 && autoscrollFloatPos > 25){
+      autoscrollTopDelayUntil = performance.now() + 5000;
+      autoscrollFloatPos = 0;
+      const pb = document.getElementById('btn-playpause');
+      if(pb) pb.innerHTML = iconPlay();
+    }
     if(Math.abs(chartWrap.scrollTop - Math.floor(autoscrollFloatPos)) > 18){
       lastUserScrollAt = performance.now();
     }
@@ -3012,10 +3067,10 @@ function renderViewer(){
 }
 
 /* ---------------- AUTOSCROLL (smooth, rAF-based) ---------------- */
-// (2026-07-13) 7s delay on open & instant slow scroll on play; prev: reset on touchstart
+// (2026-07-13) ultra-slow autoscroll support down to 0.4px/sec; prev: min 3.35px/sec
 let autoscrollRAF = null, autoscrollLastTs = null, autoscrollFloatPos = 0, lastUserScrollAt = 0, autoscrollTopDelayUntil = 0;
 function pxPerSecondFromSpeed(speed){
-  return 3 + (speed/100)*35;
+  return 0.4 + (speed/100)*35;
 }
 function startAutoscroll(song, immediate){
   state.autoscroll = true;
@@ -3100,7 +3155,8 @@ function showSpeedSliderTemporarily(ms){
 function wireSpeedSquare(el, song, direction){
   if(!el) return;
   let intervalId = null;
-  const clamp = v => Math.max(5, Math.min(100, v));
+  // (2026-07-13) allow slowest scroll speed down to 1; prev: min 5
+  const clamp = v => Math.max(1, Math.min(100, v));
   const updateSpeed = async (delta)=>{
     song.viewerScrollSpeed = clamp((song.viewerScrollSpeed||30) + delta);
     await Store.saveSong(song);
@@ -3283,7 +3339,11 @@ function closeEditorOverlay(afterClose){
   }, 340);
 }
 
+// (2026-07-13) remove stuck modal backdrop when opening editor; prev: stuck modal
 function openEditor(id){
+  const mBg = document.getElementById('modal-bg');
+  if(mBg) mBg.remove();
+  state.modal = null;
   const song = id ? state.songs.find(s=>s.id===id) : null;
   state.editingDraft = song ? {...song} : {
     id: uid(), title:'', artist:'', key:'C', capo:0, tempo:90, timeSig:'4/4', style:'', instrument:'',
@@ -3913,7 +3973,8 @@ function modalHtml(){
             <button class="sort-chip-btn" id="btn-sort-folders-za">Sort Z &rarr; A</button>
             <button class="sort-chip-btn" id="btn-sort-folders-count">By Song Count</button>
           </div>
-          <div class="cat-list" style="max-height:280px;overflow-y:auto;margin-bottom:12px;">
+          <!-- (2026-07-13) taller folder list in categories modal; prev: max-height 280px -->
+          <div class="cat-list" style="max-height:56vh;overflow-y:auto;margin-bottom:12px;">
             ${items}
           </div>
           <div class="add-cat-row">
@@ -4136,7 +4197,7 @@ function modalHtml(){
         </div>
       </div>`;
   }
-// (2026-07-13) adjust modal autoscroll speed & done btn; prev: text size only
+  // (2026-07-13) edit details on top of adjustment modal & min speed 1; prev: bottom
   if(state.modal.type==='adjust'){
     const song = state.songs.find(s=>s.id===state.modal.id);
     if(!song) return '';
@@ -4146,9 +4207,12 @@ function modalHtml(){
     for(let i=0;i<beatsPerBar;i++) beatDots += `<span class="beat-dot" data-beat="${i}"></span>`;
     return `
       <div class="modal-backdrop center" id="modal-bg">
-        <div class="modal card" style="max-width:310px;">
+        <div class="modal card" style="max-width:320px;">
           <button class="icon-btn modal-close" id="modal-x">${iconClose()}</button>
-          <h3 style="text-align:center;">Adjustments</h3>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding-right:26px;">
+            <h3 style="margin:0;">Adjustments</h3>
+            <button class="btn btn-secondary" id="adj-edit" style="padding:4px 10px;font-size:12px;min-height:30px;">Edit Details</button>
+          </div>
           <div class="field">
             <label>Metronome (${song.tempo||90} BPM)</label>
             <div style="display:flex;align-items:center;gap:10px;">
@@ -4178,12 +4242,11 @@ function modalHtml(){
           <div class="field">
             <label>Autoscroll Speed (<span id="adj-speed-val">${song.viewerScrollSpeed||30}</span>)</label>
             <div style="display:flex;align-items:center;gap:10px;">
-              <input type="range" id="adj-speed-slider" min="5" max="100" value="${song.viewerScrollSpeed||30}" style="flex:1;">
+              <input type="range" id="adj-speed-slider" min="1" max="100" value="${song.viewerScrollSpeed||30}" style="flex:1;">
             </div>
           </div>
-          <div style="margin-top:14px;display:flex;gap:8px;">
-            <button class="btn btn-secondary" id="adj-edit" style="flex:1;">Edit Details</button>
-            <button class="btn btn-primary" id="adj-done" style="flex:1;">Done</button>
+          <div style="margin-top:14px;">
+            <button class="btn btn-primary" id="adj-done" style="width:100%;">Done</button>
           </div>
         </div>
       </div>`;
@@ -4296,6 +4359,20 @@ function modalHtml(){
 function wireModal(){
   const bg = document.getElementById('modal-bg');
   if(!bg) return;
+  // (2026-07-13) block ghost touches inside modal for 380ms; prev: ghost click-through
+  const modalOpenedAt = (state.modal && state.modal.openedAt) ? state.modal.openedAt : performance.now();
+  bg.addEventListener('click', (e)=>{
+    if(performance.now() - modalOpenedAt < 380 && e.target !== bg){
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  }, {capture: true});
+  bg.addEventListener('touchend', (e)=>{
+    if(performance.now() - modalOpenedAt < 380 && e.target !== bg){
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  }, {capture: true});
   // (2026-07-13) show SongTitle saved toast when closing song-context modal; prev: silent close
   // (2026-07-13) reliable modal backdrop, done & close button dismissal; prev: stuck modal
   const closeActiveModal = ()=>{
@@ -4337,13 +4414,27 @@ function wireModal(){
       render();
     };
   });
+  // (2026-07-13) include standard mass prayers in new folder; prev: empty folder
   const addBtn = document.getElementById('add-cat-btn');
   if(addBtn) addBtn.onclick = async ()=>{
     const val = document.getElementById('new-cat-input').value.trim();
     if(val && !state.categories.includes(val)){
       state.categories.push(val);
       await Store.saveCategories(state.categories);
-      showToast('Folder created & saved to database');
+      const litSongs = getLiturgicalDialogueSongs();
+      for(const lit of litSongs){
+        let s = state.songs.find(x => x.id === lit.id);
+        if(!s){
+          s = {...lit};
+          state.songs.push(s);
+        }
+        if(!Array.isArray(s.categories)) s.categories = [];
+        if(!s.categories.includes(val)){
+          s.categories.push(val);
+          await Store.saveSong(s);
+        }
+      }
+      showToast('Folder created with standard mass prayers');
       render();
     }
   };
@@ -4671,39 +4762,49 @@ function wireModal(){
   if(modalCancelBtn){
     modalCancelBtn.onclick = ()=>{ state.modal = null; render(); };
   }
+  // (2026-07-13) safe song lookup in adjust handlers; prev: null.id TypeError
+  const getAdjSong = ()=>{
+    const id = state.modal?.id || state.currentId;
+    return id ? state.songs.find(s=>s.id===id) : null;
+  };
   const metroBtn = document.getElementById('btn-metro');
   if(metroBtn) metroBtn.onclick = ()=>{
-    const song = state.songs.find(s=>s.id===state.modal.id);
+    const song = getAdjSong();
+    if(!song) return;
     const beatsPerBar = parseInt((song.timeSig||'4/4').split('/')[0]) || 4;
     state.metronomeOn ? stopMetronome() : startMetronome(song.tempo||90, beatsPerBar);
     renderViewer();
   };
   const adjEdit = document.getElementById('adj-edit');
   if(adjEdit) adjEdit.onclick = ()=>{
-    const id = state.modal.id; state.modal=null; openEditor(id);
+    const id = state.modal?.id || state.currentId;
+    closeActiveModal();
+    openEditor(id);
   };
   const adjDown = document.getElementById('adj-down');
   if(adjDown) adjDown.onclick = async ()=>{
-    const song = state.songs.find(s=>s.id===state.modal.id);
+    const song = getAdjSong();
+    if(!song) return;
     song.transposeOffset = (song.transposeOffset||0)-1;
     await Store.saveSong(song); render();
   };
   const adjUp = document.getElementById('adj-up');
   if(adjUp) adjUp.onclick = async ()=>{
-    const song = state.songs.find(s=>s.id===state.modal.id);
+    const song = getAdjSong();
+    if(!song) return;
     song.transposeOffset = (song.transposeOffset||0)+1;
     await Store.saveSong(song); render();
   };
   const adjReset = document.getElementById('adj-reset');
   if(adjReset) adjReset.onclick = async ()=>{
-    const song = state.songs.find(s=>s.id===state.modal.id);
+    const song = getAdjSong();
+    if(!song) return;
     song.transposeOffset = 0;
     await Store.saveSong(song); render();
   };
-  // (2026-07-13) persist zoom & scroll speed to db in adjust modal; prev: font only
   const adjZoomUp = document.getElementById('adj-zoom-up');
   if(adjZoomUp) adjZoomUp.onclick = async ()=>{
-    const song = state.songs.find(s=>s.id===state.modal.id);
+    const song = getAdjSong();
     if(!song) return;
     song.viewerFontSize = Math.min(36, (song.viewerFontSize||15)+2);
     const idx = state.songs.findIndex(s=>s.id===song.id);
@@ -4712,7 +4813,7 @@ function wireModal(){
   };
   const adjZoomDown = document.getElementById('adj-zoom-down');
   if(adjZoomDown) adjZoomDown.onclick = async ()=>{
-    const song = state.songs.find(s=>s.id===state.modal.id);
+    const song = getAdjSong();
     if(!song) return;
     song.viewerFontSize = Math.max(10, (song.viewerFontSize||15)-2);
     const idx = state.songs.findIndex(s=>s.id===song.id);
@@ -4723,7 +4824,7 @@ function wireModal(){
   if(adjSpeedSlider){
     adjSpeedSlider.oninput = async (e)=>{
       const newSpeed = parseInt(e.target.value, 10) || 30;
-      const song = state.songs.find(s=>s.id===state.modal.id);
+      const song = getAdjSong();
       if(!song) return;
       song.viewerScrollSpeed = newSpeed;
       const idx = state.songs.findIndex(s=>s.id===song.id);
@@ -4908,7 +5009,7 @@ if('serviceWorker' in navigator){
   });
 }
 
-// (2026-07-13) subscribe to live Firestore onSnapshot changes across devices; prev: manual load
+// (2026-07-13) skip local snapshot echo & compare before update; prev: unchecked
 let unsubscribeSnapshot = null;
 function subscribeRealtimeSync(){
   if(!FIREBASE_READY || !firebaseUser) return;
@@ -4916,6 +5017,7 @@ function subscribeRealtimeSync(){
   try{
     unsubscribeSnapshot = firebase.firestore().collection('users').doc(firebaseUser.uid).collection('data')
       .onSnapshot((snap) => {
+        if(snap.metadata && snap.metadata.hasPendingWrites) return;
         let changed = false;
         snap.docChanges().forEach((change) => {
           const docId = change.doc.id;
@@ -4991,7 +5093,12 @@ function subscribeRealtimeSync(){
         loadAll().catch(()=>{});
       } else {
         if(unsubscribeSnapshot){ unsubscribeSnapshot(); unsubscribeSnapshot = null; }
-        state.view = 'auth';
+        // (2026-07-13) allow offline guest users to stay in list view; prev: forced auth
+        if(localStorage.getItem('choirbook_offline_guest') === 'true' && (state.songs.length > 0 || state.categories.length > 0)){
+          state.view = 'list';
+        } else {
+          state.view = 'auth';
+        }
         state.loading = false;
         render();
       }
