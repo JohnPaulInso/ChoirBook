@@ -2315,20 +2315,27 @@ function renderListView(animateChipScroll){
     };
   }
   const delCheckedBtn = document.getElementById('btn-delete-checked');
+  // (2026-07-13) modal confirmation for batch song delete; prev: confirm()
   if(delCheckedBtn){
-    delCheckedBtn.onclick = async ()=>{
+    delCheckedBtn.onclick = ()=>{
       const count = state.checkedSongIds.length;
       if(!count) return;
-      if(confirm(`Delete ${count} selected song(s) from database?`)){
-        const toDel = new Set(state.checkedSongIds);
-        state.songs = state.songs.filter(s=>!toDel.has(s.id));
-        for(const sid of toDel){
-          await Store.deleteSong(sid);
+      showConfirmModal({
+        title: 'Delete Selected Songs',
+        message: `Delete ${count} selected song(s) from database? This cannot be undone.`,
+        confirmText: 'Delete All',
+        danger: true,
+        onConfirm: async ()=>{
+          const toDel = new Set(state.checkedSongIds);
+          state.songs = state.songs.filter(s=>!toDel.has(s.id));
+          for(const sid of toDel){
+            await Store.deleteSong(sid);
+          }
+          state.checkedSongIds = [];
+          showToast(`Deleted ${count} song(s)`);
+          renderListView();
         }
-        state.checkedSongIds = [];
-        showToast(`Deleted ${count} song(s)`);
-        renderListView();
-      }
+      });
     };
   }
   // (2026-07-13) wire batch add to folder modal for selected songs; prev: none
@@ -4028,13 +4035,22 @@ function renderEditor(){
     }
   });
   const delBtn = document.getElementById('btn-delete');
-  if(delBtn) delBtn.onclick = async ()=>{
-    if(confirm('Delete this song? This cannot be undone.')){
-      await Store.deleteSong(d.id);
-      state.songs = state.songs.filter(s=>s.id!==d.id);
-      state.currentId = null;
-      closeEditorOverlay(()=>{ state.view='list'; render(); });
-    }
+  // (2026-07-13) modal confirmation for editor song delete; prev: confirm()
+  if(delBtn) delBtn.onclick = ()=>{
+    const songTitle = cleanSongTitleForDisplay(d.title) || 'this song';
+    showConfirmModal({
+      title: 'Delete Song',
+      message: `Delete "${songTitle}"? This cannot be undone.`,
+      confirmText: 'Delete',
+      danger: true,
+      onConfirm: async ()=>{
+        await Store.deleteSong(d.id);
+        state.songs = state.songs.filter(s=>s.id!==d.id);
+        state.currentId = null;
+        closeEditorOverlay(()=>{ state.view='list'; render(); });
+        showToast('Song deleted');
+      }
+    });
   };
   document.getElementById('btn-save').onclick = async ()=>{
     let hasError = false;
@@ -4407,10 +4423,10 @@ function wireSidebar(){
         const text = ev.target.result;
         let parsed;
         try{ parsed = parseGSMA(text); }
-        catch(err){ alert('Could not read that file — is it a .gsma/.gsm export?'); return; }
+        catch(err){ showToast('Could not read file — invalid .gsma'); return; }
         const { folderName, songs: parsedSongs } = parsed;
         if(!parsedSongs || parsedSongs.length===0){
-          alert('Could not find any songs in that file.');
+          showToast('No songs found in file.');
           return;
         }
         const existingGuids = new Set(state.songs.map(s=>s.importedGuid).filter(Boolean));
@@ -4436,7 +4452,7 @@ function wireSidebar(){
           renderListView();
         });
       };
-      reader.onerror = ()=> alert('Could not read that file.');
+      reader.onerror = ()=> showToast('Could not read file.');
       reader.readAsText(file);
     };
   }
@@ -4459,8 +4475,36 @@ function wireSidebar(){
   if(signInBtn) signInBtn.onclick = ()=>{ closeSidebar(()=>{ state.view='auth'; render(); }); };
 }
 
+// (2026-07-13) modal confirmation helper; prev: browser window.confirm
+function showConfirmModal({ title, message, confirmText, danger = true, onConfirm }){
+  state.modal = {
+    type: 'confirm',
+    title: title || 'Delete Song',
+    message: message || 'Are you sure? This cannot be undone.',
+    confirmText: confirmText || 'Delete',
+    danger: danger !== false,
+    onConfirm
+  };
+  render();
+}
+
 function modalHtml(){
   if(!state.modal) return '';
+  // (2026-07-13) modal confirmation dialog; prev: browser confirm alert
+  if(state.modal.type==='confirm'){
+    const { title = 'Delete Song', message = 'Are you sure?', confirmText = 'Delete', danger = true } = state.modal;
+    return `
+      <div class="modal-backdrop center" id="modal-bg">
+        <div class="modal card" style="max-width:320px;text-align:center;padding:22px 18px 16px;">
+          <h3 style="margin:0 0 8px;font-size:16px;font-weight:800;">${escapeHtml(title)}</h3>
+          <p style="margin:0 0 18px;font-size:13px;color:var(--text-dim);line-height:1.45;">${escapeHtml(message)}</p>
+          <div style="display:flex;gap:10px;justify-content:center;">
+            <button class="btn btn-secondary" id="modal-cancel-btn" style="flex:1;padding:8px;min-height:36px;font-size:13px;">Cancel</button>
+            <button class="btn ${danger?'btn-danger':''}" id="modal-confirm-btn" style="flex:1;padding:8px;min-height:36px;font-size:13px;${danger?'background:var(--danger);color:#fff;border:none;font-weight:700;':''}">${escapeHtml(confirmText)}</button>
+          </div>
+        </div>
+      </div>`;
+  }
   if(state.modal.type==='chord'){
     const c = parseChord(state.modal.chord);
     if(!c) return `<div class="modal-backdrop center" id="modal-bg"><div class="modal card"><button class="icon-btn modal-close" id="modal-x">${iconClose()}</button><div class="chord-name">${escapeHtml(state.modal.chord)}</div><div class="hint" style="text-align:center">No diagram available for this symbol.</div></div></div>`;
@@ -4949,6 +4993,21 @@ function wireModal(){
     }
   }, {capture: true});
   // (2026-07-13) universal closeActiveModal with complete DOM cleanup & toast; prev: stuck modal
+  // (2026-07-13) wire modal confirmation actions; prev: browser confirm
+  const confirmBtn = document.getElementById('modal-confirm-btn');
+  if(confirmBtn){
+    confirmBtn.onclick = async ()=>{
+      const onConfirm = state.modal && state.modal.onConfirm;
+      closeActiveModal();
+      if(onConfirm) await onConfirm();
+    };
+  }
+  const cancelBtn = document.getElementById('modal-cancel-btn');
+  if(cancelBtn){
+    cancelBtn.onclick = ()=>{
+      closeActiveModal();
+    };
+  }
   const closeActiveModal = ()=>{
     const closingModal = state.modal;
     state.modal = null;
@@ -5266,13 +5325,24 @@ function wireModal(){
     closeActiveModal();
   };
   const ctxDelete = document.getElementById('ctx-delete');
-  if(ctxDelete) ctxDelete.onclick = async ()=>{
+  // (2026-07-13) modal confirmation for context song delete; prev: confirm()
+  if(ctxDelete) ctxDelete.onclick = ()=>{
     const id = state.modal?.id;
-    if(confirm('Delete this song? This cannot be undone.')){
-      await Store.deleteSong(id);
-      state.songs = state.songs.filter(s=>s.id!==id);
-      closeActiveModal();
-    }
+    const song = state.songs.find(s=>s.id===id);
+    const songTitle = song ? cleanSongTitleForDisplay(song.title) : 'this song';
+    closeActiveModal();
+    showConfirmModal({
+      title: 'Delete Song',
+      message: `Delete "${songTitle}"? This cannot be undone.`,
+      confirmText: 'Delete',
+      danger: true,
+      onConfirm: async ()=>{
+        await Store.deleteSong(id);
+        state.songs = state.songs.filter(s=>s.id!==id);
+        showToast('Song deleted');
+        renderListView();
+      }
+    });
   };
   const ctxDone = document.getElementById('ctx-done');
   if(ctxDone) ctxDone.onclick = ()=>{ closeActiveModal(); };
@@ -5516,7 +5586,7 @@ function wireModal(){
   const newSlCreate = document.getElementById('new-sl-create');
   if(newSlCreate) newSlCreate.onclick = async ()=>{
     const name = document.getElementById('new-sl-name').value.trim();
-    if(!name){ alert('Please enter a name.'); return; }
+    if(!name){ showToast('Please enter a name.'); return; }
     const isTemplate = document.getElementById('new-sl-type-dated').classList.contains('selected') ? false : true;
     const date = isTemplate ? null : (document.getElementById('new-sl-date').value || null);
     const sl = { id: uid(), name, isTemplate, date, basedOnTemplateId: null, items: [], dateCreated: Date.now(), dateModified: Date.now() };
