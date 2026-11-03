@@ -2131,10 +2131,19 @@ async function syncBundledGSMA(){
           if(folderName && !curCats.includes(folderName)) curCats.push(folderName);
           const nextCats = curCats.length > 0 ? curCats : incoming.categories;
           const nextParts = (!cur.massParts || cur.massParts.length===0) ? incoming.massParts : cur.massParts;
-          if(cur.body !== incoming.body || JSON.stringify(cur.categories)!==JSON.stringify(nextCats) || JSON.stringify(cur.massParts)!==JSON.stringify(nextParts)){
-            const updated = { ...cur, title: incoming.title, body: incoming.body, categories: nextCats, massParts: nextParts, importedGuid: incoming.importedGuid || cur.importedGuid };
-            state.songs[existingIdx] = updated;
-            await Store.saveSong(updated);
+          // (2026-07-13) preserve user edits during bundled gsma sync; prev: clobbered body
+          let itemChanged = false;
+          if(incoming.importedGuid && !cur.importedGuid){
+            cur.importedGuid = incoming.importedGuid;
+            itemChanged = true;
+          }
+          if(folderName && (!Array.isArray(cur.categories) || !cur.categories.includes(folderName))){
+            cur.categories = Array.isArray(cur.categories) ? cur.categories.slice() : [];
+            cur.categories.push(folderName);
+            itemChanged = true;
+          }
+          if(itemChanged){
+            await Store.saveSong(cur);
             changed = true;
           }
         } else {
@@ -4383,12 +4392,14 @@ function openEditor(id){
   mountEditorOverlay();
   renderEditor();
 }
+// (2026-07-13) trigger input event on insertAtCursor for undo history; prev: silent
 function insertAtCursor(textarea, text){
   const start = textarea.selectionStart, end = textarea.selectionEnd;
   textarea.value = textarea.value.slice(0,start) + text + textarea.value.slice(end);
   const newPos = start + text.length;
   textarea.selectionStart = textarea.selectionEnd = newPos;
   textarea.focus();
+  textarea.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 function renderEditor(){
@@ -4471,7 +4482,18 @@ function renderEditor(){
         </div>
       </div>
       <div class="field">
-        <label>Chord chart</label>
+        <!-- (2026-07-13) undo and redo buttons for chord chart editor; prev: none -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <label style="margin:0;">Chord chart</label>
+          <div style="display:inline-flex;align-items:center;gap:6px;">
+            <button type="button" class="toolbtn" id="btn-editor-undo" title="Undo (Ctrl+Z)" style="width:28px;height:28px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:7px;background:var(--bg-elev2);border:1px solid var(--line);color:var(--text);cursor:pointer;" disabled>
+              ${iconUndo()}
+            </button>
+            <button type="button" class="toolbtn" id="btn-editor-redo" title="Redo (Ctrl+Y)" style="width:28px;height:28px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:7px;background:var(--bg-elev2);border:1px solid var(--line);color:var(--text);cursor:pointer;" disabled>
+              ${iconRedo()}
+            </button>
+          </div>
+        </div>
         <div class="quick-insert-row">
           <button type="button" class="quick-chip divider-chip" id="ins-divider">+ Divider</button>
           ${sectionNames.map(s=>`<button type="button" class="quick-chip section-chip" data-ins-section="${s}">${s}</button>`).join('')}
@@ -4551,6 +4573,93 @@ function renderEditor(){
     if(e.target.value.trim()) document.getElementById('field-title').classList.remove('invalid');
   });
   const bodyEl = document.getElementById('f-body');
+  // (2026-07-13) wire editor undo/redo history stack; prev: none
+  const btnUndo = document.getElementById('btn-editor-undo');
+  const btnRedo = document.getElementById('btn-editor-redo');
+  const history = [{ text: bodyEl.value, selStart: bodyEl.selectionStart, selEnd: bodyEl.selectionEnd }];
+  let historyIdx = 0;
+  let isUndoRedoing = false;
+  let typingTimer = null;
+
+  function updateUndoRedoButtons(){
+    if(btnUndo){
+      btnUndo.disabled = historyIdx <= 0;
+      btnUndo.style.opacity = historyIdx <= 0 ? '0.35' : '1';
+      btnUndo.style.pointerEvents = historyIdx <= 0 ? 'none' : 'auto';
+    }
+    if(btnRedo){
+      btnRedo.disabled = historyIdx >= history.length - 1;
+      btnRedo.style.opacity = historyIdx >= history.length - 1 ? '0.35' : '1';
+      btnRedo.style.pointerEvents = historyIdx >= history.length - 1 ? 'none' : 'auto';
+    }
+  }
+
+  function pushHistoryState(){
+    if(isUndoRedoing) return;
+    const currentText = bodyEl.value;
+    if(history[historyIdx] && history[historyIdx].text === currentText) return;
+    history.splice(historyIdx + 1);
+    history.push({ text: currentText, selStart: bodyEl.selectionStart, selEnd: bodyEl.selectionEnd });
+    if(history.length > 60) history.shift();
+    historyIdx = history.length - 1;
+    updateUndoRedoButtons();
+  }
+
+  function performUndo(){
+    clearTimeout(typingTimer);
+    if(bodyEl.value !== (history[historyIdx] && history[historyIdx].text)){
+      pushHistoryState();
+    }
+    if(historyIdx > 0){
+      isUndoRedoing = true;
+      historyIdx--;
+      const st = history[historyIdx];
+      bodyEl.value = st.text;
+      bodyEl.selectionStart = st.selStart;
+      bodyEl.selectionEnd = st.selEnd;
+      bodyEl.focus();
+      isUndoRedoing = false;
+      updateUndoRedoButtons();
+    }
+  }
+
+  function performRedo(){
+    clearTimeout(typingTimer);
+    if(historyIdx < history.length - 1){
+      isUndoRedoing = true;
+      historyIdx++;
+      const st = history[historyIdx];
+      bodyEl.value = st.text;
+      bodyEl.selectionStart = st.selStart;
+      bodyEl.selectionEnd = st.selEnd;
+      bodyEl.focus();
+      isUndoRedoing = false;
+      updateUndoRedoButtons();
+    }
+  }
+
+  bodyEl.addEventListener('input', ()=>{
+    clearTimeout(typingTimer);
+    typingTimer = setTimeout(pushHistoryState, 350);
+    updateUndoRedoButtons();
+  });
+
+  if(btnUndo) btnUndo.onclick = (e)=>{ e.preventDefault(); performUndo(); };
+  if(btnRedo) btnRedo.onclick = (e)=>{ e.preventDefault(); performRedo(); };
+
+  bodyEl.addEventListener('keydown', (e)=>{
+    if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z'){
+      e.preventDefault();
+      if(e.shiftKey) performRedo();
+      else performUndo();
+    } else if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y'){
+      e.preventDefault();
+      performRedo();
+    }
+  });
+
+  updateUndoRedoButtons();
+
   document.getElementById('ins-divider').onclick = ()=> insertAtCursor(bodyEl, '\n' + '='.repeat(40) + '\n');
   document.querySelectorAll('[data-ins-section]').forEach(el=>{
     el.onclick = ()=> insertAtCursor(bodyEl, '\n' + el.dataset.insSection + '\n');
@@ -4638,18 +4747,19 @@ function renderEditor(){
     };
     // (2026-07-13) auto-assign folders from title on song save; prev: manual
     autoAssignFoldersByTitle(song, state.categories);
-    // (2026-07-13) instant close editor and save in background; prev: awaited save
     const idx = state.songs.findIndex(s=>s.id===song.id);
     if(idx>=0) state.songs[idx] = song; else state.songs.push(song);
     state.currentId = song.id;
+    // (2026-07-13) await Store.saveSong before closing for cloud persistence; prev: un-awaited
+    try{
+      await Store.saveSong(song);
+    }catch(e){
+      console.error('Background save failed:', e);
+    }
     closeEditorOverlay(()=>{
       state.view = 'viewer';
       render();
       showToast('Saved');
-    });
-    Store.saveSong(song).catch(e=>{
-      console.error('Background save failed:', e);
-      showToast('Could not save to cloud');
     });
   };
 }
@@ -6289,6 +6399,9 @@ function iconStar(filled){
   if(filled) return `<svg viewBox="0 0 24 24" width="16" height="16" fill="var(--chord)" stroke="var(--chord)" stroke-width="2" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
   return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--text-dim)" stroke-width="2" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
 }
+// (2026-07-13) add iconUndo and iconRedo SVG functions; prev: none
+function iconUndo(){ return `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>`; }
+function iconRedo(){ return `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v0A5.5 5.5 0 0 0 9.5 20H13"/></svg>`; }
 function iconMusic(){ return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`; }
 function iconImport(){ return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`; }
 // (2026-07-13) export arrow icon; prev: none
