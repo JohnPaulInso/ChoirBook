@@ -647,41 +647,41 @@ function uid(){ return Date.now().toString(36) + Math.random().toString(36).slic
 const DEFAULT_MASS_PARTS = ['Entrance','Kyrie','Gloria','Responsorial Psalm','Gospel Acclamation',
   'Offertory','Sanctus','Memorial Acclamation','Our Father','Lamb of God','Communion','Recessional','Other'];
 
-// (2026-07-13) boost piano audio volume & clarity; prev: 0.85 master gain
+// (2026-07-13) clean distortion-free piano tone with limiter; prev: clipped gain
 let pianoAudioCtx = null, pianoMasterBus = null;
 function playPianoNote(noteIdx){
   try{
     if(!pianoAudioCtx) pianoAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
     if(pianoAudioCtx.state === 'suspended') pianoAudioCtx.resume();
     if(!pianoMasterBus){
-      const comp = pianoAudioCtx.createDynamicsCompressor();
-      comp.threshold.value = -1.0;
-      comp.knee.value = 6;
-      comp.ratio.value = 16;
-      comp.attack.value = 0.002;
-      comp.release.value = 0.15;
       const masterGain = pianoAudioCtx.createGain();
-      masterGain.gain.value = 1.65;
-      comp.connect(masterGain);
-      masterGain.connect(pianoAudioCtx.destination);
-      pianoMasterBus = comp;
+      masterGain.gain.value = 0.95;
+      const comp = pianoAudioCtx.createDynamicsCompressor();
+      comp.threshold.value = -3.0;
+      comp.knee.value = 8;
+      comp.ratio.value = 8;
+      comp.attack.value = 0.003;
+      comp.release.value = 0.20;
+      masterGain.connect(comp);
+      comp.connect(pianoAudioCtx.destination);
+      pianoMasterBus = masterGain;
     }
     const now = pianoAudioCtx.currentTime;
     // (2026-07-13) support multi-octave pitch calculation; prev: modulo 12 only
     const freq = 261.6256 * Math.pow(2, noteIdx / 12);
     const filter = pianoAudioCtx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(freq * 8, now);
-    filter.frequency.exponentialRampToValueAtTime(Math.max(freq * 2.4, 520), now + 1.4);
-    filter.Q.value = 1.0;
+    filter.frequency.setValueAtTime(freq * 7, now);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(freq * 2.2, 480), now + 1.2);
+    filter.Q.value = 0.9;
     filter.connect(pianoMasterBus);
 
     const partials = [
-      { mult: 1, type: 'sine', peak: 0.95, decay: 1.8 },
-      { mult: 1, type: 'triangle', peak: 0.38, decay: 1.4 },
-      { mult: 2, type: 'sine', peak: 0.32, decay: 1.0 },
-      { mult: 3, type: 'sine', peak: 0.14, decay: 0.55 },
-      { mult: 4, type: 'sine', peak: 0.05, decay: 0.3 }
+      { mult: 1, type: 'sine', peak: 0.65, decay: 1.8 },
+      { mult: 1, type: 'triangle', peak: 0.20, decay: 1.2 },
+      { mult: 2, type: 'sine', peak: 0.18, decay: 0.9 },
+      { mult: 3, type: 'sine', peak: 0.08, decay: 0.5 },
+      { mult: 4, type: 'sine', peak: 0.03, decay: 0.3 }
     ];
     partials.forEach(p=>{
       const osc = pianoAudioCtx.createOscillator();
@@ -997,6 +997,8 @@ function normalizeSong(song){
   if(song.referenceUrl===undefined) song.referenceUrl = '';
   if(song.importedGuid===undefined) song.importedGuid = null;
   if(!Array.isArray(song.excludedFolders)) song.excludedFolders = [];
+  // (2026-07-13) preserve transposeOffset in normalizeSong; prev: omitted
+  if(song.transposeOffset===undefined || song.transposeOffset===null) song.transposeOffset = 0;
   if(song.body){
     const nextBody = normalizeBodyChordLines(song.body);
     if(nextBody !== song.body){
@@ -2296,6 +2298,24 @@ function renderListView(animateChipScroll){
     };
   }
   document.getElementById('btn-manage-cats').onclick = ()=>{ state.modal = {type:'categories'}; renderListView(); };
+  // (2026-07-13) wire desktop horizontal drag on chiprow; prev: none
+  const chipRow = document.querySelector('.chiprow');
+  if(chipRow){
+    let isChipDown = false, chipStartX = 0, chipScrollLeft = 0;
+    chipRow.addEventListener('mousedown', (e)=>{
+      if(e.button !== 0) return;
+      isChipDown = true;
+      chipStartX = e.pageX - chipRow.offsetLeft;
+      chipScrollLeft = chipRow.scrollLeft;
+    });
+    window.addEventListener('mouseup', ()=>{ isChipDown = false; });
+    chipRow.addEventListener('mousemove', (e)=>{
+      if(!isChipDown) return;
+      e.preventDefault();
+      const x = e.pageX - chipRow.offsetLeft;
+      chipRow.scrollLeft = chipScrollLeft - (x - chipStartX) * 1.5;
+    });
+  }
   document.getElementById('btn-open-sidebar').onclick = ()=>{ state.sidebarOpen = true; renderListView(); };
   // (2026-07-13) persist selected filter category to cache; prev: state only
   document.querySelectorAll('.chip[data-cat]').forEach(el=>{
@@ -2596,12 +2616,19 @@ function renderCuePianoFinder(){
   return `
     <div class="cue-piano-wrap">
       <div class="cue-piano-toolbar">
+        <!-- (2026-07-13) circular radio note buttons; prev: select dropdown -->
         <div class="cue-piano-mode-wrap">
           <span class="cue-piano-label">Find Priest Key:</span>
-          <select class="cue-note-mode-select" title="Select which note the priest is chanting">
-            <option value="2nd" ${mode==='2nd'?'selected':''}>2nd Note</option>
-            <option value="1st" ${mode==='1st'?'selected':''}>1st Note</option>
-          </select>
+          <div class="cue-note-radio-group">
+            <button type="button" class="cue-note-circle-btn ${(mode||'2nd')==='1st'?'selected':''}" data-note-mode="1st" title="Find by 1st Note">
+              <span class="circle-radio-dot"></span>
+              <span>1st Note</span>
+            </button>
+            <button type="button" class="cue-note-circle-btn ${(mode||'2nd')==='2nd'?'selected':''}" data-note-mode="2nd" title="Find by 2nd Note">
+              <span class="circle-radio-dot"></span>
+              <span>2nd Note</span>
+            </button>
+          </div>
         </div>
         <div class="cue-piano-key-badge">Key: <b class="cue-key-readout">${escapeHtml(keyName)}</b></div>
       </div>
@@ -2844,24 +2871,27 @@ function renderViewer(){
     </div>
     <div class="viewer-body">
       <div class="chart-wrap" id="chart-wrap" style="font-size:${fontSize}px">
-        ${renderMassPartCueCard(song)}
-        <div class="chart-title" style="display:flex;align-items:center;gap:6px;">
-          ${(()=>{ const vf = getSongFlag(song); return vf ? `<span class="song-flag-pill" style="background-color:${vf.color};"></span>` : ''; })()}
-          <span>${escapeHtml(cleanSongTitleForDisplay(song.title))}</span>
+        <!-- (2026-07-13) hardware subpixel scroll content container; prev: direct chart children -->
+        <div class="chart-scroll-content" id="chart-scroll-content">
+          ${renderMassPartCueCard(song)}
+          <div class="chart-title" style="display:flex;align-items:center;gap:6px;">
+            ${(()=>{ const vf = getSongFlag(song); return vf ? `<span class="song-flag-pill" style="background-color:${vf.color};"></span>` : ''; })()}
+            <span>${escapeHtml(cleanSongTitleForDisplay(song.title))}</span>
+          </div>
+          <div class="chart-artist">${escapeHtml(song.artist||'')}</div>
+          <div class="chart-meta-inline">
+            <span>Key <b>${escapeHtml(transposeKeyLabel(song.key, offset)||'—')}</b></span>
+            <span>Capo <b>${song.capo||0}</b></span>
+            <span>Tempo <b>${song.tempo||'—'}</b> BPM</span>
+            <span>Time <b>${escapeHtml(song.timeSig||'4/4')}</b></span>
+            <span>Style <b>${escapeHtml(song.style||'—')}</b></span>
+            <span>Instr. <b>${escapeHtml(song.instrument||'—')}</b></span>
+            ${song.referenceUrl ? `<span><a href="${escapeHtml(song.referenceUrl)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;font-weight:700;">&#9654; Reference</a></span>` : ''}
+          </div>
+          ${renderIntroMelodySection(song.introMelody)}
+          <div class="chart-body" id="chart-body">${lines}</div>
+          ${renderMassPartFooterCue(song)}
         </div>
-        <div class="chart-artist">${escapeHtml(song.artist||'')}</div>
-        <div class="chart-meta-inline">
-          <span>Key <b>${escapeHtml(transposeKeyLabel(song.key, offset)||'—')}</b></span>
-          <span>Capo <b>${song.capo||0}</b></span>
-          <span>Tempo <b>${song.tempo||'—'}</b> BPM</span>
-          <span>Time <b>${escapeHtml(song.timeSig||'4/4')}</b></span>
-          <span>Style <b>${escapeHtml(song.style||'—')}</b></span>
-          <span>Instr. <b>${escapeHtml(song.instrument||'—')}</b></span>
-          ${song.referenceUrl ? `<span><a href="${escapeHtml(song.referenceUrl)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;font-weight:700;">&#9654; Reference</a></span>` : ''}
-        </div>
-        ${renderIntroMelodySection(song.introMelody)}
-        <div class="chart-body" id="chart-body">${lines}</div>
-        ${renderMassPartFooterCue(song)}
       </div>
       <!-- (2026-07-13) toggleable scroll overlay & min speed 1; prev: always visible -->
       <div class="scroll-overlay ${state.showSpeedControls === false ? 'hidden' : ''}" id="scroll-overlay">
@@ -2936,7 +2966,10 @@ function renderViewer(){
     // (2026-07-13) spell cue key and chords with sharps; prev: preferFlat
     const keyName = spellNote(keyIdx, false);
     const semis = getCueSemis();
-    document.querySelectorAll('.cue-note-mode-select').forEach(sel=>{ sel.value = mode; });
+    // (2026-07-13) sync circular radio note buttons; prev: select dropdown
+    document.querySelectorAll('.cue-note-circle-btn').forEach(btn=>{
+      btn.classList.toggle('selected', btn.dataset.noteMode === mode);
+    });
     document.querySelectorAll('.cue-key-readout').forEach(el=>{ el.textContent = keyName; });
     document.querySelectorAll('.cue-piano-key').forEach(btn=>{
       btn.classList.toggle('is-active', parseInt(btn.dataset.pianoNote, 10) === activeNoteIdx);
@@ -2950,9 +2983,9 @@ function renderViewer(){
       });
     });
   };
-  document.querySelectorAll('.cue-note-mode-select').forEach(sel=>{
-    sel.onchange = (e)=>{
-      state.cueNoteMode = e.target.value === '1st' ? '1st' : '2nd';
+  document.querySelectorAll('.cue-note-circle-btn').forEach(btn=>{
+    btn.onclick = ()=>{
+      state.cueNoteMode = btn.dataset.noteMode === '1st' ? '1st' : '2nd';
       syncCuePianoDom();
     };
   });
@@ -2997,39 +3030,81 @@ function renderViewer(){
   const viewerBodyEl = document.querySelector('.viewer-body');
   if(viewerBodyEl){
     let startX = 0, startY = 0, startTime = 0;
-    viewerBodyEl.addEventListener('touchstart', (e)=>{
-      if(e.target.closest('#masspart-cue-card, .cue-piano-wrap, .cue-piano-key, .speed-slider-wrap, .scroll-square, button, select, input, textarea, a, .melody-staff-section')){
-        startX = 0; startY = 0; startTime = 0;
+    // (2026-07-13) desktop mouse & touch horizontal swipe navigation with peek; prev: touch only
+    let isSwipeDrag = false, swipeStartX = 0, swipeStartY = 0, swipeDx = 0, swipeStartT = 0;
+    const resetPeek = ()=>{
+      if(chartWrap){
+        chartWrap.style.transition = 'transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1)';
+        chartWrap.style.transform = 'translateX(0)';
+        setTimeout(()=>{ if(chartWrap) chartWrap.style.transition = ''; }, 240);
+      }
+    };
+    const handleSwipeStart = (clientX, clientY, target)=>{
+      if(target.closest('#masspart-cue-card, .cue-piano-wrap, .cue-piano-key, .speed-slider-wrap, .scroll-square, button, select, input, textarea, a, .melody-staff-section, .chord-tok')){
+        return false;
+      }
+      isSwipeDrag = true;
+      swipeStartX = clientX;
+      swipeStartY = clientY;
+      swipeDx = 0;
+      swipeStartT = Date.now();
+      if(chartWrap) chartWrap.style.transition = 'none';
+      return true;
+    };
+    const handleSwipeMove = (clientX, clientY)=>{
+      if(!isSwipeDrag) return;
+      const dx = clientX - swipeStartX;
+      const dy = clientY - swipeStartY;
+      if(Math.abs(dy) > Math.abs(dx) * 1.5 && Math.abs(dy) > 15){
+        isSwipeDrag = false;
+        resetPeek();
         return;
       }
-      if(e.touches && e.touches.length === 1){
-        startX = e.touches[0].clientX;
-        startY = e.touches[0].clientY;
-        startTime = Date.now();
+      swipeDx = dx;
+      if(chartWrap){
+        const resist = (dx < 0 && !nextSong) || (dx > 0 && !prevSong) ? 0.15 : 0.45;
+        chartWrap.style.transform = `translateX(${(dx * resist).toFixed(1)}px)`;
       }
-    }, {passive:true});
-    viewerBodyEl.addEventListener('touchend', (e)=>{
-      if(!startTime || !startX || (Date.now() - startTime > 700)){
-        startX = 0; startY = 0; startTime = 0;
-        return;
-      }
-      if(e.target.closest('#masspart-cue-card, .cue-piano-wrap, .cue-piano-key, .speed-slider-wrap, .scroll-square, button, select, input, textarea, a, .melody-staff-section')){
-        startX = 0; startY = 0; startTime = 0;
-        return;
-      }
-      if(e.changedTouches && e.changedTouches.length === 1){
-        const dx = e.changedTouches[0].clientX - startX;
-        const dy = e.changedTouches[0].clientY - startY;
-        if(Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.5){
-          if(dx < 0 && nextSong){
-            openViewer(nextSong.id, state.cameFromSetlistId);
-          } else if(dx > 0 && prevSong){
-            openViewer(prevSong.id, state.cameFromSetlistId);
-          }
+    };
+    const handleSwipeEnd = ()=>{
+      if(!isSwipeDrag) return;
+      isSwipeDrag = false;
+      const dt = Date.now() - swipeStartT;
+      if(dt < 800 && Math.abs(swipeDx) > 55){
+        if(swipeDx < 0 && nextSong){
+          if(chartWrap) chartWrap.style.transform = 'translateX(-100%)';
+          setTimeout(()=> openViewer(nextSong.id, state.cameFromSetlistId), 120);
+          return;
+        } else if(swipeDx > 0 && prevSong){
+          if(chartWrap) chartWrap.style.transform = 'translateX(100%)';
+          setTimeout(()=> openViewer(prevSong.id, state.cameFromSetlistId), 120);
+          return;
         }
       }
-      startX = 0; startY = 0; startTime = 0;
+      resetPeek();
+    };
+
+    viewerBodyEl.addEventListener('touchstart', (e)=>{
+      if(e.touches && e.touches.length === 1) handleSwipeStart(e.touches[0].clientX, e.touches[0].clientY, e.target);
     }, {passive:true});
+    viewerBodyEl.addEventListener('touchmove', (e)=>{
+      if(e.touches && e.touches.length === 1) handleSwipeMove(e.touches[0].clientX, e.touches[0].clientY);
+    }, {passive:true});
+    viewerBodyEl.addEventListener('touchend', handleSwipeEnd, {passive:true});
+
+    viewerBodyEl.addEventListener('mousedown', (e)=>{
+      if(e.button !== 0) return;
+      if(handleSwipeStart(e.clientX, e.clientY, e.target)){
+        const onMouseMove = (me)=> handleSwipeMove(me.clientX, me.clientY);
+        const onMouseUp = ()=>{
+          window.removeEventListener('mousemove', onMouseMove);
+          window.removeEventListener('mouseup', onMouseUp);
+          handleSwipeEnd();
+        };
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+      }
+    });
   }
   document.onkeydown = (e)=>{
     if(state.view==='viewer' && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)){
@@ -3039,10 +3114,12 @@ function renderViewer(){
   };
   document.getElementById('btn-adjust').onclick = ()=>{ state.modal = {type:'adjust', id:song.id}; renderViewer(); };
   // (2026-07-13) 7s delay at top on restart; prev: 5000ms
+  // (2026-07-13) 8s restart delay at top; prev: 7000ms
   document.getElementById('btn-restart').onclick = ()=>{
     chartWrap.scrollTo({top:0, behavior:'smooth'});
     autoscrollFloatPos = 0;
     lastUserScrollAt = 0;
+    autoscrollTopDelayUntil = performance.now() + 8000;
     startAutoscroll(song, false);
     const pb = document.getElementById('btn-playpause');
     if(pb) pb.innerHTML = iconPlay();
@@ -3104,20 +3181,28 @@ function renderViewer(){
   /* Pinch-to-zoom directly on chart-wrap: reflows text incrementally and saves per-song. */
   wirePinchZoom(chartWrap, chartBody, song);
 
-  // (2026-07-13) 5s top autoscroll pause when scrolled back to top; prev: no pause
-  const markUserScroll = ()=>{ lastUserScrollAt = performance.now(); };
+  // (2026-07-13) 8s top autoscroll pause when scrolled back to top; prev: 5000ms
+  const markUserScroll = ()=>{
+    lastUserScrollAt = performance.now();
+    const sc = document.getElementById('chart-scroll-content');
+    if(sc) sc.style.transform = 'none';
+  };
   chartWrap.addEventListener('touchmove', markUserScroll, {passive:true});
   chartWrap.addEventListener('wheel', markUserScroll, {passive:true});
   chartWrap.addEventListener('scroll', ()=>{
     if(!state.autoscroll) return;
     if(chartWrap.scrollTop <= 5 && autoscrollFloatPos > 25){
-      autoscrollTopDelayUntil = performance.now() + 5000;
+      autoscrollTopDelayUntil = performance.now() + 8000;
       autoscrollFloatPos = 0;
+      const sc = document.getElementById('chart-scroll-content');
+      if(sc) sc.style.transform = 'none';
       const pb = document.getElementById('btn-playpause');
       if(pb) pb.innerHTML = iconPlay();
     }
     if(Math.abs(chartWrap.scrollTop - Math.floor(autoscrollFloatPos)) > 18){
       lastUserScrollAt = performance.now();
+      const sc = document.getElementById('chart-scroll-content');
+      if(sc) sc.style.transform = 'none';
     }
   }, {passive:true});
 
@@ -3147,18 +3232,24 @@ function startAutoscroll(song, immediate){
     autoscrollTopDelayUntil = 0;
     lastUserScrollAt = 0;
   } else {
-    autoscrollTopDelayUntil = performance.now() + 7000;
+    // (2026-07-13) 8s initial pause at top before autoscroll starts; prev: 7000ms
+    autoscrollTopDelayUntil = performance.now() + 8000;
   }
   let iconSynced = !!immediate;
+  // (2026-07-13) sub-pixel continuous smooth glide via transform; prev: Math.round scrollTop
   const step = (ts)=>{
     if(!state.autoscroll){
       autoscrollRAF = null;
+      const sc = document.getElementById('chart-scroll-content');
+      if(sc) sc.style.transform = 'none';
       return;
     }
     const chart = document.getElementById('chart-wrap');
+    const scrollContent = document.getElementById('chart-scroll-content');
     if(chart){
       if(Math.abs(chart.scrollTop - autoscrollFloatPos) > 25){
         autoscrollFloatPos = chart.scrollTop;
+        if(scrollContent) scrollContent.style.transform = 'none';
       }
       if(autoscrollLastTs != null){
         const dt = Math.min((ts - autoscrollLastTs) / 1000, 0.05);
@@ -3167,8 +3258,10 @@ function startAutoscroll(song, immediate){
         const now = performance.now();
         if(now < autoscrollTopDelayUntil){
           autoscrollFloatPos = chart.scrollTop;
+          if(scrollContent) scrollContent.style.transform = 'none';
         } else if(now - lastUserScrollAt < 600){
           autoscrollFloatPos = chart.scrollTop;
+          if(scrollContent) scrollContent.style.transform = 'none';
         } else {
           if(!iconSynced){
             iconSynced = true;
@@ -3178,7 +3271,12 @@ function startAutoscroll(song, immediate){
           const maxScroll = chart.scrollHeight - chart.clientHeight;
           if(maxScroll > 0 && autoscrollFloatPos < maxScroll){
             autoscrollFloatPos = Math.min(maxScroll, autoscrollFloatPos + pxPerSecondFromSpeed(speed) * dt);
-            chart.scrollTop = Math.round(autoscrollFloatPos);
+            const baseScroll = Math.floor(autoscrollFloatPos);
+            chart.scrollTop = baseScroll;
+            const subPx = autoscrollFloatPos - baseScroll;
+            if(scrollContent){
+              scrollContent.style.transform = `translate3d(0, -${subPx.toFixed(2)}px, 0)`;
+            }
           }
         }
       }
@@ -3191,6 +3289,8 @@ function startAutoscroll(song, immediate){
 function stopAutoscroll(){
   state.autoscroll = false;
   autoscrollTopDelayUntil = 0;
+  const scrollContent = document.getElementById('chart-scroll-content');
+  if(scrollContent) scrollContent.style.transform = 'none';
   if(autoscrollRAF){
     cancelAnimationFrame(autoscrollRAF);
     autoscrollRAF = null;
@@ -3472,14 +3572,15 @@ function renderEditor(){
           }).join('')}
         </div>
       </div>
-      <!-- (2026-07-13) dedicated intro melody notes box in editor; prev: none -->
+      <!-- (2026-07-13) large intro melody textarea with live staff preview; prev: 56px no preview -->
       <div class="field" style="margin-bottom:14px;">
         <label style="display:flex;align-items:center;justify-content:space-between;">
           <span style="font-weight:700;color:var(--accent);">&#9835; Intro Melody Notes (Staff)</span>
           <span style="font-size:11px;color:var(--text-dim);text-transform:none;">1 line = 1 staff &middot; e.g. e a b g d &nbsp; g</span>
         </label>
-        <textarea id="f-intro-melody" rows="2" placeholder="e a b g d   g&#10;e a b g d   g" style="font-family:'JetBrains Mono',monospace;font-size:13px;padding:9px 12px;resize:vertical;min-height:56px;background:var(--bg-elev);border:1px solid var(--line);border-radius:8px;color:var(--text);width:100%;box-sizing:border-box;">${escapeHtml(d.introMelody || '')}</textarea>
+        <textarea id="f-intro-melody" rows="4" placeholder="e a b g d   g&#10;e a b g d   g" style="font-family:'JetBrains Mono',monospace;font-size:13px;padding:9px 12px;resize:vertical;min-height:110px;height:110px;background:var(--bg-elev);border:1px solid var(--line);border-radius:8px;color:var(--text);width:100%;box-sizing:border-box;">${escapeHtml(d.introMelody || '')}</textarea>
         <div class="hint" style="font-size:11px;color:var(--text-dim);margin-top:3px;">Type note letters separated by spaces. If you add 2 lines, 2 separate staffs will be drawn over the intro.</div>
+        <div id="f-intro-melody-preview" style="margin-top:8px;background:var(--bg-elev2);border:1px dashed var(--line);border-radius:8px;padding:8px 12px;">${renderIntroMelodySection(d.introMelody)}</div>
       </div>
       <div class="field" id="field-massparts">
         <label>Mass Part <span class="req">*</span></label>
@@ -3537,9 +3638,14 @@ function renderEditor(){
     d.title = cleanSongTitleForDisplay(d.title);
     renderEditor();
   };
+  // (2026-07-13) live update staff preview on intro melody input; prev: value only
   const edIntroMelody = document.getElementById('f-intro-melody');
   if(edIntroMelody){
-    edIntroMelody.oninput = (e)=>{ d.introMelody = e.target.value; };
+    edIntroMelody.oninput = (e)=>{
+      d.introMelody = e.target.value;
+      const prevEl = document.getElementById('f-intro-melody-preview');
+      if(prevEl) prevEl.innerHTML = renderIntroMelodySection(d.introMelody);
+    };
   }
   document.getElementById('f-timesig').onchange = e=>{
     document.getElementById('custom-timesig-wrap').style.display = e.target.value==='custom' ? 'block':'none';
@@ -4339,9 +4445,12 @@ function modalHtml(){
       <div class="modal-backdrop center" id="modal-bg">
         <div class="modal card" style="max-width:320px;">
           <button class="icon-btn modal-close" id="modal-x">${iconClose()}</button>
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding-right:26px;">
+          <div style="display:flex;align-items:center;margin-bottom:12px;padding-right:26px;">
             <h3 style="margin:0;">Adjustments</h3>
-            <button class="btn btn-secondary" id="adj-edit" style="padding:4px 10px;font-size:12px;min-height:30px;">Edit Details</button>
+          </div>
+          <!-- (2026-07-13) 100% width Edit Details above metronome; prev: inline in header -->
+          <div style="margin-bottom:14px;">
+            <button class="btn btn-secondary" id="adj-edit" style="width:100%;min-height:38px;font-size:13px;font-weight:700;">Edit Details</button>
           </div>
           <div class="field">
             <label>Metronome (${song.tempo||90} BPM)</label>
@@ -4977,11 +5086,14 @@ function wireModal(){
     closeActiveModal();
     openEditor(id);
   };
+  // (2026-07-13) persist transpose offset to state & database on change; prev: missing state array sync
   const adjDown = document.getElementById('adj-down');
   if(adjDown) adjDown.onclick = async ()=>{
     const song = getAdjSong();
     if(!song) return;
     song.transposeOffset = (song.transposeOffset||0)-1;
+    const idx = state.songs.findIndex(s=>s.id===song.id);
+    if(idx>=0) state.songs[idx] = song;
     await Store.saveSong(song); render();
   };
   const adjUp = document.getElementById('adj-up');
@@ -4989,6 +5101,8 @@ function wireModal(){
     const song = getAdjSong();
     if(!song) return;
     song.transposeOffset = (song.transposeOffset||0)+1;
+    const idx = state.songs.findIndex(s=>s.id===song.id);
+    if(idx>=0) state.songs[idx] = song;
     await Store.saveSong(song); render();
   };
   const adjReset = document.getElementById('adj-reset');
@@ -4996,6 +5110,8 @@ function wireModal(){
     const song = getAdjSong();
     if(!song) return;
     song.transposeOffset = 0;
+    const idx = state.songs.findIndex(s=>s.id===song.id);
+    if(idx>=0) state.songs[idx] = song;
     await Store.saveSong(song); render();
   };
   const adjZoomUp = document.getElementById('adj-zoom-up');
@@ -5308,3 +5424,46 @@ function subscribeRealtimeSync(){
 })();
 
 })();
+
+// (2026-07-13) universal back button handling for modals & viewer; prev: none
+function handleUniversalBack(){
+  if(state.modal){
+    closeActiveModal();
+    return true;
+  }
+  if(state.view === 'viewer'){
+    stopAutoscroll();
+    stopMetronome();
+    if(state.cameFromSetlistId){
+      state.currentSetlistId = state.cameFromSetlistId;
+      state.cameFromSetlistId = null;
+      state.view = 'setlist-editor';
+    } else {
+      state.view = 'list';
+    }
+    render();
+    return true;
+  }
+  if(state.view === 'editor'){
+    closeEditorOverlay(()=>{
+      state.view = state.currentId ? 'viewer' : 'list';
+      render();
+    });
+    return true;
+  }
+  if(state.view === 'setlist-editor'){
+    state.view = 'setlists';
+    state.currentSetlistId = null;
+    render();
+    return true;
+  }
+  return false;
+}
+window.addEventListener('popstate', ()=>{ handleUniversalBack(); });
+if(typeof window !== 'undefined' && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App){
+  window.Capacitor.Plugins.App.addListener('backButton', ({canGoBack})=>{
+    if(handleUniversalBack()) return;
+    if(canGoBack){ window.history.back(); }
+    else { window.Capacitor.Plugins.App.exitApp(); }
+  });
+}
