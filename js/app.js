@@ -215,6 +215,97 @@ function normalizeBodyChordLines(body){
     return line;
   }).join('\n');
 }
+// (2026-07-13) harmonic key detection using diatonic degree weights; prev: none
+const MAJOR_KEYS = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
+const MINOR_KEYS = ['Cm', 'C#m', 'Dm', 'Ebm', 'Em', 'Fm', 'F#m', 'Gm', 'G#m', 'Am', 'Bbm', 'Bm'];
+
+function parseChordToken(token){
+  const clean = token.replace(/^[>(<]+|[.)>'+]+$/g, '');
+  const m = CHORD_RE.exec(clean);
+  if(!m) return null;
+  const root = m[1];
+  const acc = m[2] || '';
+  const quality = m[3] || '';
+  const isMinor = quality === 'm' || quality === 'min' || quality === 'min7' || quality === 'm7' || quality === 'm6';
+  return { rootIndex: noteIndex(root, acc), isMinor, root, acc, quality };
+}
+
+function extractChordsFromBody(body){
+  if(!body) return [];
+  const normalized = normalizeBodyChordLines(body);
+  const chords = [];
+  const lines = normalized.split(/\r?\n/);
+  for(const line of lines){
+    const trimmed = line.trim();
+    if(!trimmed || !line.startsWith('>')) continue;
+    const cleanLine = line.slice(1).trim();
+    if(!cleanLine || cleanLine.startsWith('<>')) continue;
+    const tokens = cleanLine.split(/\s+/);
+    for(const tok of tokens){
+      if(tok.includes('-') && tok !== '-'){
+        tok.split('-').forEach(p => {
+          const c = parseChordToken(p);
+          if(c) chords.push(c);
+        });
+      } else {
+        const c = parseChordToken(tok);
+        if(c) chords.push(c);
+      }
+    }
+  }
+  return chords;
+}
+
+function detectKeyFromBody(body){
+  const chords = extractChordsFromBody(body);
+  if(!chords || chords.length === 0) return '';
+  const firstChord = chords[0];
+  const lastChord = chords[chords.length - 1];
+  let bestKey = '';
+  let maxScore = -999;
+  for(let root = 0; root < 12; root++){
+    let score = 0;
+    const I = root, ii = (root + 2) % 12, iii = (root + 4) % 12, IV = (root + 5) % 12, V = (root + 7) % 12, vi = (root + 9) % 12;
+    chords.forEach(c => {
+      if(c.rootIndex === I && !c.isMinor) score += 10;
+      else if(c.rootIndex === V) score += 7;
+      else if(c.rootIndex === IV && !c.isMinor) score += 6;
+      else if(c.rootIndex === vi && c.isMinor) score += 4;
+      else if(c.rootIndex === ii && c.isMinor) score += 3;
+      else if(c.rootIndex === iii && c.isMinor) score += 2;
+      else if(c.rootIndex === I && c.isMinor) score -= 4;
+      else score -= 1;
+    });
+    if(firstChord.rootIndex === I && !firstChord.isMinor) score += 12;
+    if(lastChord.rootIndex === I && !lastChord.isMinor) score += 14;
+    if(score > maxScore){ maxScore = score; bestKey = MAJOR_KEYS[root]; }
+  }
+  for(let root = 0; root < 12; root++){
+    let score = 0;
+    const i = root, iv = (root + 5) % 12, V = (root + 7) % 12, III = (root + 3) % 12, VI = (root + 8) % 12, VII = (root + 10) % 12;
+    chords.forEach(c => {
+      if(c.rootIndex === i && c.isMinor) score += 10;
+      else if(c.rootIndex === V) score += 6;
+      else if(c.rootIndex === iv && c.isMinor) score += 5;
+      else if(c.rootIndex === III && !c.isMinor) score += 4;
+      else if(c.rootIndex === VI && !c.isMinor) score += 3;
+      else if(c.rootIndex === VII && !c.isMinor) score += 2;
+      else if(c.rootIndex === i && !c.isMinor) score -= 4;
+      else score -= 1;
+    });
+    if(firstChord.rootIndex === i && firstChord.isMinor) score += 12;
+    if(lastChord.rootIndex === i && lastChord.isMinor) score += 14;
+    if(score > maxScore){ maxScore = score; bestKey = MINOR_KEYS[root]; }
+  }
+  return bestKey;
+}
+
+function getEffectiveSongKey(song){
+  if(!song) return '';
+  if(song.key && song.key.trim() && song.key.trim() !== '—') return song.key.trim();
+  return detectKeyFromBody(song.body) || '';
+}
+
 // (2026-07-13) melody staff only for explicit <> prefix or intro; prev: auto-detected chords as melody
 function isMelodyNoteLine(line){
   if(!line) return false;
@@ -1063,15 +1154,25 @@ function normalizeSong(song){
       song._chordPrefixMigrated = true;
     }
   }
+  // (2026-07-13) auto-detect key from chord body when empty; prev: unset key
+  if((!song.key || !song.key.trim() || song.key.trim() === '—') && song.body){
+    const detectedKey = detectKeyFromBody(song.body);
+    if(detectedKey){
+      song.key = detectedKey;
+      song._keyDetectedMigrated = true;
+    }
+  }
   return song;
 }
 
 // (2026-07-13) persist migrated title cleanup and chord prefix fixes; prev: chord only
+// (2026-07-13) persist migrated title, key & chord fixes; prev: chord/title only
 async function persistMigratedChordSongs(){
   for(const s of state.songs){
-    if(s && (s._chordPrefixMigrated || s._titleCleanedMigrated)){
+    if(s && (s._chordPrefixMigrated || s._titleCleanedMigrated || s._keyDetectedMigrated)){
       delete s._chordPrefixMigrated;
       delete s._titleCleanedMigrated;
+      delete s._keyDetectedMigrated;
       try{ await Store.saveSong(s); }catch(e){}
     }
   }
@@ -1762,7 +1863,8 @@ function parseGSMA(text, overrideFolder){
     songs.push({
       title: cleanTitle,
       artist: '',
-      key: '',
+      // (2026-07-13) detect key on gsma song import; prev: empty string
+      key: detectKeyFromBody(body) || '',
       capo: 0,
       tempo: tempo || 90,
       timeSig: '4/4',
@@ -1954,7 +2056,7 @@ function sortSongsArray(arr, massPart){
     if(state.sortBy==='title-desc') return cleanSongTitleForDisplay(b.title).localeCompare(cleanSongTitleForDisplay(a.title));
     if(state.sortBy==='artist') return (a.artist||'').localeCompare(b.artist||'');
     if(state.sortBy==='date') return b.dateAdded - a.dateAdded;
-    if(state.sortBy==='key') return (a.key||'').localeCompare(b.key||'');
+    if(state.sortBy==='key') return (getEffectiveSongKey(a)).localeCompare(getEffectiveSongKey(b));
     return 0;
   });
 }
@@ -2188,7 +2290,7 @@ function renderSongRowHtml(s, secMassPart){
       ${leftControl}
       <div style="flex:1;min-width:0;">
         <div class="song-title" style="display:flex;align-items:center;min-width:0;">${flagPill}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(displayTitle)}</span>${excludedBadge}</div>
-        <div class="song-sub">${escapeHtml(s.artist||'Unknown')} &middot; Key ${escapeHtml(transposeKeyLabel(s.key, s.transposeOffset||0)||'—')}${(s.categories&&s.categories.length)?' &middot; '+escapeHtml(s.categories.join(', ')):''}</div>
+        <div class="song-sub">${escapeHtml(s.artist||'Unknown')} &middot; Key ${escapeHtml(transposeKeyLabel(getEffectiveSongKey(s), s.transposeOffset||0)||'—')}${(s.categories&&s.categories.length)?' &middot; '+escapeHtml(s.categories.join(', ')):''}</div>
         ${lyricSnippetHtml}
       </div>
       ${rightControl}
@@ -3231,7 +3333,9 @@ function renderIntroMelodySection(introMelody){
 function renderSongSheetContent(s, isPeek){
   if(!s) return '';
   const offset = s.transposeOffset||0;
-  const preferFlat = FLAT_KEYS.has(transposeKeyLabel(s.key, offset));
+  // (2026-07-13) use getEffectiveSongKey for viewer transpose; prev: s.key
+  const effKey = getEffectiveSongKey(s);
+  const preferFlat = FLAT_KEYS.has(transposeKeyLabel(effKey, offset));
   const body = offset ? transposeBody(s.body, offset, preferFlat) : s.body;
   const flag = getSongFlag(s);
   const flagPill = flag ? `<span class="song-flag-pill" style="background-color:${flag.color};"></span>` : '';
@@ -3346,7 +3450,7 @@ function renderSongSheetContent(s, isPeek){
     </div>
     <div class="chart-artist">${escapeHtml(s.artist||'')}</div>
     <div class="chart-meta-inline">
-      <span>Key <b>${escapeHtml(transposeKeyLabel(s.key, offset)||'—')}</b></span>
+      <span>Key <b>${escapeHtml(transposeKeyLabel(effKey, offset)||'—')}</b></span>
       <span>Capo <b>${s.capo||0}</b></span>
       <span>Tempo <b>${s.tempo||'—'}</b> BPM</span>
       <span>Time <b>${escapeHtml(s.timeSig||'4/4')}</b></span>
@@ -4074,7 +4178,8 @@ function renderEditor(){
       <div class="field" id="field-title"><label>Title <span class="req">*</span></label><input id="f-title" value="${escapeHtml(cleanSongTitleForDisplay(d.title))}" placeholder="Song title"/></div>
       <div class="field"><label>Artist</label><input id="f-artist" value="${escapeHtml(d.artist)}" placeholder="Artist / writer"/></div>
       <div class="field-row">
-        <div class="field"><label>Key</label><input id="f-key" value="${escapeHtml(d.key)}" placeholder="e.g. G, Bbm"/></div>
+        <!-- (2026-07-13) fallback to detected key in editor; prev: d.key -->
+        <div class="field"><label>Key</label><input id="f-key" value="${escapeHtml(d.key || getEffectiveSongKey(d))}" placeholder="e.g. G, Bbm"/></div>
         <div class="field"><label>Capo</label><input id="f-capo" type="number" value="${d.capo}" /></div>
       </div>
       <div class="field-row">
@@ -4286,7 +4391,8 @@ function renderEditor(){
       // (2026-07-13) clean sorting numbers from title on save; prev: raw titleVal
       title: cleanSongTitleForDisplay(titleVal),
       artist: document.getElementById('f-artist').value.trim(),
-      key: document.getElementById('f-key').value.trim(),
+      // (2026-07-13) auto-detect key on save if left blank; prev: blank
+      key: document.getElementById('f-key').value.trim() || detectKeyFromBody(document.getElementById('f-body').value) || '',
       capo: +document.getElementById('f-capo').value || 0,
       tempo: +document.getElementById('f-tempo').value || 90,
       timeSig: timeVal,
@@ -4387,7 +4493,7 @@ function renderSetlistEditor(){
     }
     const song = state.songs.find(s=>s.id===item.songId);
     const title = song ? song.title : '(song removed)';
-    const sub = song ? `${escapeHtml(song.artist||'Unknown')} &middot; Key ${escapeHtml(transposeKeyLabel(song.key, song.transposeOffset||0)||'—')}` : '';
+    const sub = song ? `${escapeHtml(song.artist||'Unknown')} &middot; Key ${escapeHtml(transposeKeyLabel(getEffectiveSongKey(song), song.transposeOffset||0)||'—')}` : '';
     return `
       <div class="song-row" data-song-item-idx="${idx}">
         ${upDown}
@@ -5101,7 +5207,7 @@ function modalHtml(){
             <label>Transpose</label>
             <div class="transpose-readout">
               <span class="transpose-delta">${offset===0 ? '\u00b10' : (offset>0?'+':'') + offset}</span>
-              <span class="transpose-key">${escapeHtml(transposeKeyLabel(song.key, offset)||'—')}</span>
+              <span class="transpose-key">${escapeHtml(transposeKeyLabel(getEffectiveSongKey(song), offset)||'—')}</span>
             </div>
             <div style="display:flex;gap:8px;margin-top:8px;">
               <button class="toolbtn" style="flex:1;" id="adj-down">&minus;</button>
@@ -5206,7 +5312,7 @@ function modalHtml(){
     const rows = matches.map(s=>`
       <div class="cat-item" data-pick-song="${s.id}" style="cursor:pointer;">
         <span>${escapeHtml(s.title)}</span>
-        <span class="side-count">${escapeHtml(s.key||'')}</span>
+        <span class="side-count">${escapeHtml(getEffectiveSongKey(s)||'')}</span>
       </div>`).join('') || `<div class="hint" style="padding:12px 0;">No songs match.</div>`;
     return `
       <div class="modal-backdrop" id="modal-bg">
