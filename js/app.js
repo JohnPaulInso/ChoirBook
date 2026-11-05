@@ -3586,7 +3586,7 @@ function openViewer(id, fromSetlistId, preferredMassPart){
 }
 function currentSong(){ return state.songs.find(s=>s.id===state.currentId); }
 
-// (2026-07-13) skip excluded songs when swiping/navigating viewer order; prev: included all
+// (2026-07-13) filter folder songs strictly on swipe; prev: lit included
 function getViewerSongList(){
   if(state.cameFromSetlistId){
     const sl = state.setlists.find(s=>s.id===state.cameFromSetlistId);
@@ -3594,6 +3594,24 @@ function getViewerSongList(){
       const ids = sl.items.filter(it=>it.type==='song'&&it.songId).map(it=>it.songId);
       const res = ids.map(id=>state.songs.find(s=>s.id===id)).filter(Boolean);
       if(res.length > 0) return res;
+    }
+  }
+  if(state.filterCat && state.filterCat !== 'All'){
+    const folderSongs = state.songs.filter(s=>!(s.id && String(s.id).startsWith('lit-')) && (s.categories||[]).includes(state.filterCat));
+    if(folderSongs.length > 0){
+      const sections = getOrderedSongSections(folderSongs);
+      const ordered = [];
+      const seen = new Set();
+      sections.forEach(sec=>{
+        sec.songs.forEach(s=>{
+          if(isSongExcluded(s) && s.id !== state.currentId) return;
+          if(!seen.has(s.id) && !(s.id && String(s.id).startsWith('lit-'))){
+            seen.add(s.id);
+            ordered.push(s);
+          }
+        });
+      });
+      if(ordered.length > 0) return ordered;
     }
   }
   const songs = getFilteredSongsForCurrentView();
@@ -4329,8 +4347,9 @@ function renderViewer(){
         setTimeout(()=>{ if(sliderTrack) sliderTrack.style.transition = ''; }, 240);
       }
     };
+    // (2026-07-13) allow swiping on chords; prev: chord-tok blocked swipe
     const handleSwipeStart = (clientX, clientY, target)=>{
-      if(target.closest('#masspart-cue-card, .cue-piano-wrap, .cue-piano-key, .speed-slider-wrap, .scroll-square, button, select, input, textarea, a, .melody-staff-section, .chord-tok')){
+      if(target.closest('.cue-piano-key, .speed-slider-wrap, .scroll-square, button, select, input, textarea, a, .staff-play-btn')){
         return false;
       }
       isSwipeDrag = true;
@@ -4360,7 +4379,7 @@ function renderViewer(){
       if(!isSwipeDrag) return;
       isSwipeDrag = false;
       const dt = Date.now() - swipeStartT;
-      if(dt < 800 && Math.abs(swipeDx) > 55){
+      if(dt < 800 && Math.abs(swipeDx) > 40){
         if(swipeDx < 0 && nextSong){
           if(sliderTrack){
             sliderTrack.style.transition = 'transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1)';

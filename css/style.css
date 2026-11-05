@@ -29,7 +29,8 @@ img,svg{-webkit-user-drag:none;user-drag:none;}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
   font-family:'Manrope',system-ui,-apple-system,sans-serif; height:100%; -webkit-tap-highlight-color:transparent;
   overscroll-behavior:none; scroll-behavior:smooth;transition:background-color .2s ease;}
-#app{max-width:520px;margin:0 auto;height:100vh;height:100dvh;display:flex;flex-direction:column;background:var(--bg);position:relative;overflow:hidden;transition:background-color .2s ease;}
+/* (2026-07-13) edge-to-edge full width layout; prev: max-width 520px margin auto */
+#app{width:100%!important;max-width:100%!important;margin:0!important;height:100vh;height:100dvh;display:flex;flex-direction:column;background:var(--bg);position:relative;overflow:hidden;transition:background-color .2s ease;}
 
 /* (2026-07-13) compact topbar, searchrow & chiprow height; prev: tall header */
 .topbar{display:flex;align-items:center;gap:4px;padding:calc(6px + env(safe-area-inset-top, 0px)) 8px 6px 8px;background:var(--bg-elev);
@@ -638,6 +639,7 @@ body.theme-light .dropdown-item:active {
   #app {
     max-width: 100% !important;
     width: 100% !important;
+    margin: 0 !important;
   }
   .topbar {
     padding: calc(8px + env(safe-area-inset-top, 0px)) 24px 8px;
