@@ -3044,8 +3044,9 @@ function renderListView(animateChipScroll){
           <button class="icon-btn" id="btn-add-checked-to-folder" title="Add Selected Songs to Folder" style="color:var(--accent);">${iconFolder()}</button>
           <button class="icon-btn" id="btn-delete-checked" title="Delete Checked Songs" style="color:var(--danger);">${iconTrash()}</button>
         ` : ''}
-        ${!state.listEditMode ? `
-          <button class="icon-btn ${isSearching?'active':''}" id="btn-search-toggle" title="Search Songs">${iconSearch()}</button>
+        <!-- (2026-07-13) hide search icon when search bar visible; prev: icon shown -->
+        ${(!state.listEditMode && !isSearching) ? `
+          <button class="icon-btn" id="btn-search-toggle" title="Search Songs">${iconSearch()}</button>
         ` : ''}
         ${state.filterMassPart && !state.listEditMode ? `
           <button class="toolbtn" id="btn-edit-mp-cue-top" title="Edit Liturgical Cue for ${escapeHtml(state.filterMassPart)}" style="height:32px;padding:0 9px;border-radius:10px;background:var(--bg-elev2);border:1px solid var(--line);color:var(--text);font-size:11px;font-weight:700;display:inline-flex;align-items:center;gap:4px;cursor:pointer;">
