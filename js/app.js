@@ -3941,6 +3941,8 @@ function handleStaffPlayClick(btn){
   }, currentTimeMs + 100);
   timers.push(endT);
 }
+window.handleStaffPlayClick = handleStaffPlayClick;
+window.playPianoNote = playPianoNote;
 
 // (2026-07-13) render accordion dropdown for intro melody; prev: static box
 function renderIntroMelodySection(introMelody, isCollapsed, songId){
@@ -3971,8 +3973,8 @@ function renderIntroMelodySection(introMelody, isCollapsed, songId){
           <span style="display:flex;align-items:center;gap:6px;">&#9835; Intro Melody</span>
           ${collapsed ? '<span class="intro-collapsed-hint" style="font-size:10px;font-weight:600;color:var(--text-dim);letter-spacing:0.4px;text-transform:none;opacity:0.75;">(Tap to view)</span>' : ''}
         </div>
-        <div style="display:flex;align-items:center;gap:8px;" onclick="event.stopPropagation();">
-          <button type="button" class="staff-play-btn" data-play-staff-all="true" title="Play Intro Melody" style="touch-action:manipulation;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button type="button" class="staff-play-btn" data-play-staff-all="true" onclick="event.stopPropagation(); handleStaffPlayClick(this);" title="Play Intro Melody" style="touch-action:manipulation;">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> <span>Play</span>
           </button>
         </div>
@@ -7410,7 +7412,7 @@ function subscribeRealtimeSync(){
   }
 
 
-// (2026-07-13) delegated click/pointer for staff play button & note audio; prev: viewer-only
+// (2026-07-13) capture phase for staff play & note audio; prev: bubble blocked
 document.addEventListener('pointerdown', (e)=>{
   if(e.target.closest('.staff-play-btn, [data-staff-note]')){
     try{
@@ -7418,21 +7420,21 @@ document.addEventListener('pointerdown', (e)=>{
       if(pianoAudioCtx.state === 'suspended') pianoAudioCtx.resume();
     }catch(err){}
   }
-}, {passive:true});
+}, {capture: true, passive: true});
 
 document.addEventListener('click', (e)=>{
-  const noteEl = e.target.closest('[data-staff-note]');
-  if(noteEl){
-    const raw = noteEl.dataset.staffNote || '';
-    const semis = raw.split(',').map(s=>parseInt(s.trim(), 10)).filter(n=>!isNaN(n));
-    semis.forEach(semi => playPianoNote(semi));
-    return;
-  }
   const btn = e.target.closest('.staff-play-btn');
   if(btn){
     e.preventDefault();
     e.stopPropagation();
     handleStaffPlayClick(btn);
+    return;
+  }
+  const noteEl = e.target.closest('[data-staff-note]');
+  if(noteEl){
+    const raw = noteEl.dataset.staffNote || '';
+    const semis = raw.split(',').map(s=>parseInt(s.trim(), 10)).filter(n=>!isNaN(n));
+    semis.forEach(semi => playPianoNote(semi));
     return;
   }
   // (2026-07-13) accordion toggle for intro melody with persistence; prev: none
