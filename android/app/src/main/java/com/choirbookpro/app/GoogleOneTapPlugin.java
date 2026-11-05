@@ -2,6 +2,7 @@ package com.choirbookpro.app;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.view.WindowManager;
 import androidx.activity.result.ActivityResult;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -15,7 +16,7 @@ import com.google.android.gms.auth.api.signin.GoogleSignInClient;
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions;
 import com.google.android.gms.common.api.ApiException;
 
-// (2026-07-13) native Android Google One Tap / account picker without browser; prev: none
+// (2026-07-13) Google sign-in & wake lock bridge; prev: one-tap only
 @CapacitorPlugin(name = "GoogleOneTap")
 public class GoogleOneTapPlugin extends Plugin {
     private static final String SERVER_CLIENT_ID = "303741150656-5ptj9tt99ff0lroco66brhmrt51a2eeh.apps.googleusercontent.com";
@@ -28,9 +29,20 @@ public class GoogleOneTapPlugin extends Plugin {
                 .requestIdToken(SERVER_CLIENT_ID)
                 .requestEmail()
                 .build();
-            googleSignInClient = GoogleSignIn.getClient(getActivity(), gso);
-            Intent signInIntent = googleSignInClient.getSignInIntent();
-            startActivityForResult(call, signInIntent, "handleSignInResult");
+            Activity activity = getActivity();
+            if (activity == null) {
+                call.reject("Activity is null");
+                return;
+            }
+            googleSignInClient = GoogleSignIn.getClient(activity, gso);
+            googleSignInClient.signOut().addOnCompleteListener(activity, task -> {
+                try {
+                    Intent signInIntent = googleSignInClient.getSignInIntent();
+                    startActivityForResult(call, signInIntent, "handleSignInResult");
+                } catch (Exception ex) {
+                    call.reject("Launch sign-in intent failed: " + ex.getMessage(), ex);
+                }
+            });
         } catch (Exception e) {
             call.reject("Google One Tap error: " + e.getMessage(), e);
         }
@@ -60,5 +72,22 @@ public class GoogleOneTapPlugin extends Plugin {
             call.reject("Google sign-in was cancelled or dismissed");
         }
     }
-}
 
+    @PluginMethod
+    public void setKeepScreenOn(PluginCall call) {
+        boolean enable = call.getBoolean("enable", true);
+        Activity activity = getActivity();
+        if (activity != null) {
+            activity.runOnUiThread(() -> {
+                if (enable) {
+                    activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                } else {
+                    activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                }
+                call.resolve();
+            });
+        } else {
+            call.resolve();
+        }
+    }
+}

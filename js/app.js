@@ -1341,7 +1341,8 @@ function openCueEditor(targetMassPart){
    APP STATE
    ============================================================ */
 const state = {
-  view: 'list', // list | viewer | editor | auth
+  view: 'list', // list | viewer | editor | auth | settings
+  theme: (typeof localStorage !== 'undefined' && localStorage.getItem('cbp_theme')) || 'dark',
   skippedAuth: false,
   songs: [],
   // (2026-07-13) empty default categories & add profileMenuOpen; prev: ['Uncategorized']
@@ -1405,15 +1406,48 @@ function getFolderTheme(catName){
   return FOLDER_THEMES[key] || FOLDER_THEMES.gold;
 }
 
+// (2026-07-13) theme switching & light mode variable mapping; prev: dark-only
+function setTheme(newTheme) {
+  state.theme = newTheme === 'light' ? 'light' : 'dark';
+  try { localStorage.setItem('cbp_theme', state.theme); } catch (e) {}
+  if (typeof document !== 'undefined' && document.body) {
+    document.body.classList.toggle('theme-light', state.theme === 'light');
+  }
+  applyFolderTheme(state.filterCat);
+}
+
+try {
+  const initSavedTheme = (typeof localStorage !== 'undefined' && localStorage.getItem('cbp_theme')) || 'dark';
+  if (typeof document !== 'undefined' && document.body) {
+    document.body.classList.toggle('theme-light', initSavedTheme === 'light');
+  }
+} catch (e) {}
+
 function applyFolderTheme(catName){
   const t = getFolderTheme(catName || state.filterCat || 'All');
   const root = document.documentElement;
   if(!root) return;
-  root.style.setProperty('--bg', t.bg);
-  root.style.setProperty('--bg-elev', t.elev);
-  root.style.setProperty('--bg-elev2', t.elev2);
-  root.style.setProperty('--bg-elev3', t.elev3);
-  root.style.setProperty('--line', t.line);
+  if(state.theme === 'light'){
+    root.style.setProperty('--bg', '#f6f8fa');
+    root.style.setProperty('--bg-elev', '#ffffff');
+    root.style.setProperty('--bg-elev2', '#edf2f7');
+    root.style.setProperty('--bg-elev3', '#e2e8f0');
+    root.style.setProperty('--line', '#cbd5e1');
+    root.style.setProperty('--text', '#0f172a');
+    root.style.setProperty('--text-dim', '#64748b');
+    root.style.setProperty('--chord', '#b45309');
+    root.style.setProperty('--chord-dim', 'rgba(180, 83, 9, 0.14)');
+  } else {
+    root.style.setProperty('--bg', t.bg);
+    root.style.setProperty('--bg-elev', t.elev);
+    root.style.setProperty('--bg-elev2', t.elev2);
+    root.style.setProperty('--bg-elev3', t.elev3);
+    root.style.setProperty('--line', t.line);
+    root.style.setProperty('--text', '#f0f6fc');
+    root.style.setProperty('--text-dim', '#8b949e');
+    root.style.setProperty('--chord', '#ffe600');
+    root.style.setProperty('--chord-dim', 'rgba(255,230,0,0.2)');
+  }
   root.style.setProperty('--accent', t.accent);
   root.style.setProperty('--accent-dim', t.dim);
   // (2026-07-13) update --accent-shadow for folder theme; prev: static orange
@@ -1947,9 +1981,11 @@ async function seedIfEmpty(){
    RENDER
    ============================================================ */
 const app = document.getElementById('app');
-// (2026-07-13) render view directly without loading spinner; prev: loading check
+// (2026-07-13) render view & sync wake lock with settings view; prev: loading check
 function render(){
+  syncWakeLock();
   if(state.view==='auth') return renderAuthView();
+  if(state.view==='settings') return renderSettingsView();
   if(state.view==='list') return renderListView();
   if(state.view==='viewer') return renderViewer();
   if(state.view==='editor') return renderEditor();
@@ -1992,15 +2028,23 @@ function renderAuthView(){
     errBox.style.display = 'block';
   };
 
-  // (2026-07-13) resilient mobile Google auth & offline guest unlock; prev: blocked popup
+  // (2026-07-13) resilient Google One Tap sign-in with loader; prev: silent stuck
   const googleBtn = document.getElementById('btn-google-signin');
   if(googleBtn){
     googleBtn.onclick = async ()=>{
       if(errBox) errBox.style.display = 'none';
-      if(window.Capacitor && window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable('GoogleOneTap')){
+      const origText = googleBtn.innerHTML;
+      googleBtn.disabled = true;
+      googleBtn.style.opacity = '0.7';
+
+      const isNative = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+
+      if(NativeGoogleOneTap && typeof NativeGoogleOneTap.signIn === 'function'){
         try{
-          const res = await window.Capacitor.Plugins.GoogleOneTap.signIn();
+          googleBtn.innerHTML = '<span>Connecting to Google...</span>';
+          const res = await NativeGoogleOneTap.signIn();
           if(res && res.idToken){
+            googleBtn.innerHTML = '<span>Signing in...</span>';
             const cred = firebase.auth.GoogleAuthProvider.credential(res.idToken);
             await firebase.auth().signInWithCredential(cred);
             return;
@@ -2008,17 +2052,31 @@ function renderAuthView(){
         }catch(err){
           const msg = (err && (err.message || err.toString())) || '';
           if(msg.toLowerCase().includes('cancel') || msg.toLowerCase().includes('dismiss')){
+            googleBtn.disabled = false;
+            googleBtn.style.opacity = '1';
+            googleBtn.innerHTML = origText;
+            return;
+          }
+          if(isNative){
+            showAuthError(msg || 'Google sign-in failed. Please try again or use Email / Guest.');
+            googleBtn.disabled = false;
+            googleBtn.style.opacity = '1';
+            googleBtn.innerHTML = origText;
             return;
           }
         }
       }
-      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-      const isNative = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+
       if(isNative){
-        showAuthError('Please use Email sign-in or Continue as Guest for full offline access.');
+        showAuthError('Google sign-in is not ready. Please use Email or Guest mode.');
+        googleBtn.disabled = false;
+        googleBtn.style.opacity = '1';
+        googleBtn.innerHTML = origText;
         return;
       }
+
       try{
+        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
         const provider = new firebase.auth.GoogleAuthProvider();
         if(isMobile){
           await firebase.auth().signInWithRedirect(provider);
@@ -2031,6 +2089,12 @@ function renderAuthView(){
           await firebase.auth().signInWithRedirect(provider);
         }catch(err){
           showAuthError('Google sign-in unavailable. Please use Email or Continue as Guest.');
+        }
+      } finally {
+        if(googleBtn){
+          googleBtn.disabled = false;
+          googleBtn.style.opacity = '1';
+          googleBtn.innerHTML = origText;
         }
       }
     };
@@ -2362,6 +2426,7 @@ function profileAvatarHtml(){
   const letter = (name[0] || 'C').toUpperCase();
   return `<div class="profile-avatar">${letter}</div>`;
 }
+// (2026-07-13) profile dropdown with light mode & app settings; prev: folder order only
 function profileDropdownHtml(){
   if(!state.profileMenuOpen) return '';
   const userName = firebaseUser ? (firebaseUser.displayName || 'Choir Director') : 'Guest User';
@@ -2372,6 +2437,21 @@ function profileDropdownHtml(){
         <div style="font-weight:700;font-size:13.5px;color:var(--text);">${escapeHtml(userName)}</div>
         ${userEmail ? `<div style="font-size:11px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;">${escapeHtml(userEmail)}</div>` : ''}
         <div style="font-size:10px;color:var(--accent);font-weight:700;margin-top:3px;">&#9729; Database Synced</div>
+      </div>
+      <div class="dropdown-divider"></div>
+      <div class="dropdown-item" id="menu-toggle-theme">
+        <span class="dropdown-icon">${state.theme === 'light' ? '&#9789;' : '&#9728;'}</span>
+        <div>
+          <div style="font-weight:600;">${state.theme === 'light' ? 'Dark Mode' : 'Light Mode'}</div>
+          <div class="dropdown-subtext">Switch color appearance</div>
+        </div>
+      </div>
+      <div class="dropdown-item" id="menu-open-settings">
+        <span class="dropdown-icon">&#9881;</span>
+        <div>
+          <div style="font-weight:600;">App Settings</div>
+          <div class="dropdown-subtext">Screen keep awake & display</div>
+        </div>
       </div>
       <div class="dropdown-divider"></div>
       <div class="dropdown-item" id="menu-sort-folders">
@@ -3110,6 +3190,23 @@ function renderListView(animateChipScroll){
         renderListView();
       }
     });
+  }
+  // (2026-07-13) wire theme toggle & app settings menu items; prev: none
+  const toggleThemeMenu = document.getElementById('menu-toggle-theme');
+  if(toggleThemeMenu){
+    toggleThemeMenu.onclick = ()=>{
+      state.profileMenuOpen = false;
+      setTheme(state.theme === 'light' ? 'dark' : 'light');
+      renderListView();
+    };
+  }
+  const openSettingsMenu = document.getElementById('menu-open-settings');
+  if(openSettingsMenu){
+    openSettingsMenu.onclick = ()=>{
+      state.profileMenuOpen = false;
+      state.view = 'settings';
+      render();
+    };
   }
   const sortFoldersMenu = document.getElementById('menu-sort-folders');
   if(sortFoldersMenu){
@@ -5088,6 +5185,155 @@ function renderSetlistsView(){
   wireModal();
 }
 
+
+// (2026-07-13) full settings view & battery keep-screen config; prev: none
+function renderSettingsView() {
+  syncWakeLock();
+  const keepScreenPref = (typeof localStorage !== 'undefined' && localStorage.getItem('cbp_keep_screen')) || 'viewer';
+  const userDisplay = firebaseUser ? (firebaseUser.displayName || firebaseUser.email || 'Director') : 'Guest';
+  const userSub = firebaseUser ? (firebaseUser.email || (firebaseUser.isAnonymous ? 'Guest Account' : '')) : 'Local Storage Mode';
+
+  app.innerHTML = `
+    <div class="topbar">
+      <button class="icon-btn" id="btn-back-from-settings">${iconBack()}</button>
+      <h1>App Settings</h1>
+    </div>
+    <div class="list-wrap settings-page-wrap" style="padding:16px 20px 80px;">
+      
+      <!-- Account Card -->
+      <div class="settings-section-card" style="display:flex;align-items:center;gap:14px;padding:16px;background:var(--bg-elev);border:1px solid var(--line);border-radius:18px;margin-bottom:18px;">
+        <div style="width:48px;height:48px;border-radius:50%;background:var(--bg-elev2);border:1.5px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:var(--text);flex-shrink:0;">
+          ${firebaseUser && firebaseUser.photoURL ? `<img src="${escapeHtml(firebaseUser.photoURL)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;"/>` : escapeHtml(userDisplay[0]||'C')}
+        </div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:800;font-size:15px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(userDisplay)}</div>
+          <div style="font-size:12px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(userSub)}</div>
+          <div style="font-size:11px;color:var(--accent);font-weight:700;margin-top:2px;">&#9729; Database Sync Active</div>
+        </div>
+        ${Store.mode==='firebase' ? `
+          <button class="btn btn-secondary" id="btn-settings-signout" style="padding:6px 12px;font-size:12px;min-height:32px;">Sign Out</button>
+        ` : `
+          <button class="btn btn-primary" id="btn-settings-signin" style="padding:6px 12px;font-size:12px;min-height:32px;">Sign In</button>
+        `}
+      </div>
+
+      <!-- Appearance -->
+      <div class="letter-divider" style="margin-top:8px;">APPEARANCE & THEME</div>
+      <div class="settings-card" style="background:var(--bg-elev);border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <div>
+            <div style="font-weight:700;font-size:14px;color:var(--text);">Color Appearance</div>
+            <div style="font-size:12px;color:var(--text-dim);margin-top:2px;">Switch between Dark theme and Light high-contrast theme</div>
+          </div>
+          <div style="display:flex;background:var(--bg-elev2);border:1px solid var(--line);border-radius:12px;padding:3px;gap:2px;">
+            <button id="btn-theme-dark" class="setting-toggle-btn ${state.theme==='dark'?'active':''}" style="border:none;background:${state.theme==='dark'?'var(--accent)':'transparent'};color:${state.theme==='dark'?'#000':'var(--text)'};font-weight:700;font-size:12px;padding:6px 12px;border-radius:9px;cursor:pointer;">&#9789; Dark</button>
+            <button id="btn-theme-light" class="setting-toggle-btn ${state.theme==='light'?'active':''}" style="border:none;background:${state.theme==='light'?'var(--accent)':'transparent'};color:${state.theme==='light'?'#000':'var(--text)'};font-weight:700;font-size:12px;padding:6px 12px;border-radius:9px;cursor:pointer;">&#9728; Light</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Display & Battery Optimization -->
+      <div class="letter-divider">SCREEN WAKE LOCK (STAGE & BATTERY)</div>
+      <div class="settings-card" style="background:var(--bg-elev);border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:18px;">
+        <div style="font-size:12.5px;color:var(--text-dim);margin-bottom:12px;line-height:1.45;">
+          Prevents tablet from turning off during rehearsal or Mass. Preserves battery by releasing wake lock in lists and when minimized.
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <label style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text);cursor:pointer;padding:8px 10px;border-radius:10px;background:var(--bg-elev2);">
+            <input type="radio" name="opt_wake_lock" value="viewer" ${keepScreenPref==='viewer'?'checked':''} style="accent-color:var(--accent);">
+            <div style="flex:1;">
+              <span style="font-weight:700;">Viewer Only (Recommended)</span>
+              <div style="font-size:11.5px;color:var(--text-dim);">Screen stays awake only when reading sheet music. Maximum battery life.</div>
+            </div>
+          </label>
+          <label style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text);cursor:pointer;padding:8px 10px;border-radius:10px;background:var(--bg-elev2);">
+            <input type="radio" name="opt_wake_lock" value="always" ${keepScreenPref==='always'?'checked':''} style="accent-color:var(--accent);">
+            <div style="flex:1;">
+              <span style="font-weight:700;">Always Awake</span>
+              <div style="font-size:11.5px;color:var(--text-dim);">Never turns off while app is open.</div>
+            </div>
+          </label>
+          <label style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text);cursor:pointer;padding:8px 10px;border-radius:10px;background:var(--bg-elev2);">
+            <input type="radio" name="opt_wake_lock" value="off" ${keepScreenPref==='off'?'checked':''} style="accent-color:var(--accent);">
+            <div style="flex:1;">
+              <span style="font-weight:700;">System Default</span>
+              <div style="font-size:11.5px;color:var(--text-dim);">Follows tablet OS sleep timeout.</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- Liturgical & Folder Config -->
+      <div class="letter-divider">ORGANIZATION & MASS PARTS</div>
+      <div class="settings-card" style="background:var(--bg-elev);border:1px solid var(--line);border-radius:18px;padding:8px 16px;margin-bottom:18px;">
+        <div class="dropdown-item" id="btn-settings-sort-folders" style="padding:12px 0;border-bottom:1px solid var(--line);cursor:pointer;">
+          <span class="dropdown-icon">&#128193;</span>
+          <div style="flex:1;">
+            <div style="font-weight:700;font-size:13.5px;color:var(--text);">Folder Order & Sorting</div>
+            <div class="dropdown-subtext">Reorder categories and customize folder colors</div>
+          </div>
+          <span style="color:var(--text-dim);">&rsaquo;</span>
+        </div>
+        <div class="dropdown-item" id="btn-settings-sort-massparts" style="padding:12px 0;cursor:pointer;">
+          <span class="dropdown-icon">&#10022;</span>
+          <div style="flex:1;">
+            <div style="font-weight:700;font-size:13.5px;color:var(--text);">Mass Parts Order</div>
+            <div class="dropdown-subtext">Manage fixed liturgical order and custom parts</div>
+          </div>
+          <span style="color:var(--text-dim);">&rsaquo;</span>
+        </div>
+      </div>
+
+      <!-- About / Device Info -->
+      <div class="letter-divider">APP INFO & TABLET SPECS</div>
+      <div class="settings-card" style="background:var(--bg-elev);border:1px solid var(--line);border-radius:18px;padding:16px;font-size:12.5px;color:var(--text-dim);line-height:1.6;">
+        <div><strong>App:</strong> Choir Book Pro v2.4 (Tablet Optimized)</div>
+        <div><strong>Screen View:</strong> ${window.innerWidth} x ${window.innerHeight} (${window.screen ? window.screen.width + ' x ' + window.screen.height : 'Tablet'})</div>
+        <div><strong>Platform:</strong> ${window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform() ? 'Android Native APK' : 'Web App / PWA'}</div>
+        <div><strong>Songs Loaded:</strong> ${state.songs.length} &middot; <strong>Folders:</strong> ${state.categories.length}</div>
+      </div>
+
+    </div>
+  `;
+
+  document.getElementById('btn-back-from-settings').onclick = ()=>{
+    state.view = 'list';
+    render();
+  };
+
+  const btnDark = document.getElementById('btn-theme-dark');
+  const btnLight = document.getElementById('btn-theme-light');
+  if(btnDark) btnDark.onclick = ()=>{ setTheme('dark'); renderSettingsView(); };
+  if(btnLight) btnLight.onclick = ()=>{ setTheme('light'); renderSettingsView(); };
+
+  document.querySelectorAll('input[name="opt_wake_lock"]').forEach(el=>{
+    el.onchange = (e)=>{
+      try{ localStorage.setItem('cbp_keep_screen', e.target.value); }catch(err){}
+      syncWakeLock();
+      showToast('Wake lock preference updated');
+    };
+  });
+
+  const sortFold = document.getElementById('btn-settings-sort-folders');
+  if(sortFold) sortFold.onclick = ()=>{ state.modal = { type:'sort-folders' }; render(); };
+
+  const sortMp = document.getElementById('btn-settings-sort-massparts');
+  if(sortMp) sortMp.onclick = ()=>{ state.modal = { type:'massparts' }; render(); };
+
+  const signoutBtn = document.getElementById('btn-settings-signout');
+  if(signoutBtn) signoutBtn.onclick = async ()=>{
+    await firebase.auth().signOut();
+    state.view = 'list';
+    render();
+  };
+
+  const signinBtn = document.getElementById('btn-settings-signin');
+  if(signinBtn) signinBtn.onclick = ()=>{
+    state.view = 'auth';
+    render();
+  };
+}
+
 function currentSetlist(){ return state.setlists.find(s=>s.id===state.currentSetlistId); }
 
 function renderSetlistEditor(){
@@ -7057,6 +7303,11 @@ function handleUniversalBack(){
       state.view = state.currentId ? 'viewer' : 'list';
       render();
     });
+    return true;
+  }
+  if(state.view === 'settings'){
+    state.view = 'list';
+    render();
     return true;
   }
   if(state.view === 'setlist-editor'){

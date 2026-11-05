@@ -529,3 +529,187 @@ svg.fretboard, svg.keyboard{display:block;margin:0 auto;}
 /* (2026-07-13) intro melody accordion dropdown & collapse styles; prev: none */
 .intro-melody-header:active { opacity: 0.85; }
 .intro-melody-box.is-collapsed { background: rgba(255,255,255,0.015); border-color: rgba(255,255,255,0.05); }
+
+
+/* (2026-07-13) light theme & staff notation overrides; prev: dark only */
+body.theme-light {
+  --bg: #f6f8fa;
+  --bg-elev: #ffffff;
+  --bg-elev2: #edf2f7;
+  --bg-elev3: #e2e8f0;
+  --line: #cbd5e1;
+  --text: #0f172a;
+  --text-dim: #64748b;
+  --chord: #b45309;
+  --chord-dim: rgba(180, 83, 9, 0.14);
+  --accent: #d97706;
+  --accent-dim: rgba(217, 119, 6, 0.16);
+  --accent-shadow: rgba(217, 119, 6, 0.25);
+  --danger: #dc2626;
+  --danger-dim: rgba(220, 38, 38, 0.15);
+  --priest: #059669;
+  --priest-dim: rgba(5, 150, 105, 0.15);
+  --response: #0284c7;
+  --response-dim: rgba(2, 132, 199, 0.15);
+}
+body.theme-light .btn-done-edit,
+body.theme-light .fab {
+  color: #ffffff !important;
+}
+body.theme-light .staff-line {
+  stroke: #94a3b8 !important;
+}
+body.theme-light .staff-note-head,
+body.theme-light .staff-note-stem,
+body.theme-light .staff-note-flag {
+  fill: #0f172a !important;
+  stroke: #0f172a !important;
+}
+body.theme-light .staff-clef {
+  color: #2563eb !important;
+  fill: #2563eb !important;
+}
+body.theme-light .intro-melody-box {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+body.theme-light .intro-melody-box.is-collapsed {
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+}
+body.theme-light .piano-keyboard {
+  background: #e2e8f0;
+  border-color: #cbd5e1;
+}
+body.theme-light .key-white {
+  background: #ffffff;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+body.theme-light .key-black {
+  background: #1e293b;
+  color: #f8fafc;
+}
+body.theme-light .cue-card {
+  background: #ffffff;
+  border-color: #cbd5e1;
+}
+body.theme-light .modal {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.2);
+}
+body.theme-light .topbar {
+  background: #ffffff;
+  border-color: #cbd5e1;
+}
+body.theme-light .sidebar {
+  background: #ffffff;
+  border-color: #cbd5e1;
+}
+body.theme-light .profile-dropdown {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.15);
+}
+body.theme-light .batch-action-bar {
+  background: rgba(255, 255, 255, 0.94);
+  color: #0f172a;
+  border-color: var(--accent);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.15);
+}
+body.theme-light .auth-card {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  box-shadow: 0 16px 48px rgba(15,23,42,0.15);
+}
+body.theme-light .auth-input {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+body.theme-light .dropdown-item:hover,
+body.theme-light .dropdown-item:active {
+  background: #f1f5f9;
+}
+
+/* (2026-07-13) responsive tablet layout for 1280x800; prev: 520px fixed */
+@media (min-width: 600px) {
+  #app {
+    max-width: 100% !important;
+    width: 100% !important;
+  }
+  .topbar {
+    padding: calc(8px + env(safe-area-inset-top, 0px)) 24px 8px;
+  }
+  .topbar > h1,
+  .topbar > .topbar-search-box {
+    font-size: 17px;
+  }
+  .list-wrap,
+  .chiprow,
+  .chip-color-bar,
+  .setlist-list-wrap,
+  .settings-page-wrap {
+    max-width: 900px;
+    margin-left: auto;
+    margin-right: auto;
+    width: 100%;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .song-row {
+    padding: 14px 18px;
+    border-radius: 12px;
+    margin: 4px 0;
+    border: 1px solid var(--line);
+    background: var(--bg-elev);
+  }
+  .chart-wrap {
+    padding: 24px max(32px, calc((100vw - 920px) / 2)) 45vh;
+  }
+  .chart-scroll-content {
+    max-width: 920px;
+    margin: 0 auto;
+  }
+  .cue-card,
+  .intro-melody-box {
+    max-width: 920px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .modal-backdrop {
+    align-items: center;
+    padding: 20px;
+  }
+  .modal {
+    border-radius: 24px !important;
+    max-width: 580px;
+    border-bottom: 1px solid var(--line) !important;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+  }
+  .auth-card {
+    max-width: 440px;
+    padding: 34px 28px;
+  }
+}
+
+@media (min-width: 960px) and (orientation: landscape) {
+  .chart-wrap {
+    padding: 24px max(48px, calc((100vw - 1100px) / 2)) 45vh;
+  }
+  .chart-scroll-content {
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  .list-wrap,
+  .chiprow,
+  .chip-color-bar,
+  .setlist-list-wrap,
+  .settings-page-wrap {
+    max-width: 1060px;
+  }
+  .topbar {
+    padding: calc(10px + env(safe-area-inset-top, 0px)) 36px 10px;
+  }
+}
