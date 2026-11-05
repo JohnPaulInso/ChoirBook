@@ -579,18 +579,114 @@ body.theme-light .btn-done-edit,
 body.theme-light .fab {
   color: #ffffff !important;
 }
+/* (2026-07-13) high contrast light theme staff & cue elements; prev: faded */
 body.theme-light .staff-line {
-  stroke: #94a3b8 !important;
+  background: #64748b !important;
 }
-body.theme-light .staff-note-head,
-body.theme-light .staff-note-stem,
-body.theme-light .staff-note-flag {
-  fill: #0f172a !important;
-  stroke: #0f172a !important;
+body.theme-light .staff-barline {
+  background: #64748b !important;
 }
-body.theme-light .staff-clef {
-  color: #2563eb !important;
-  fill: #2563eb !important;
+body.theme-light .staff-ledger {
+  background: #475569 !important;
+}
+body.theme-light .staff-bar-label {
+  color: #64748b !important;
+}
+body.theme-light .staff-g-clef {
+  color: var(--accent) !important;
+}
+body.theme-light .staff-notehead {
+  background: #0f172a !important;
+}
+body.theme-light .staff-stem {
+  background: #0f172a !important;
+}
+body.theme-light .staff-note-label {
+  color: var(--chord) !important;
+}
+body.theme-light .staff-acc {
+  color: var(--chord) !important;
+}
+body.theme-light .staff-play-btn {
+  background: #ffffff !important;
+  border: 1px solid #cbd5e1 !important;
+  color: var(--accent) !important;
+}
+body.theme-light .masspart-cue-card {
+  background: #ffffff !important;
+  border-bottom: 1.5px solid #cbd5e1 !important;
+}
+body.theme-light .masspart-cue-header {
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+body.theme-light .cue-piano-wrap {
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+body.theme-light .cue-piano-label {
+  color: #475569 !important;
+}
+body.theme-light .cue-piano-key.white-key {
+  background: #ffffff !important;
+  border: 1px solid #94a3b8 !important;
+  color: #0f172a !important;
+}
+body.theme-light .cue-piano-key.white-key.is-active,
+body.theme-light .cue-piano-key.white-key:active {
+  background: var(--accent) !important;
+  color: #ffffff !important;
+  border-color: var(--accent) !important;
+}
+body.theme-light .cue-piano-key.black-key {
+  background: #1e293b !important;
+  color: #ffffff !important;
+  border: 1px solid #0f172a !important;
+}
+body.theme-light .cue-piano-key.black-key.is-active,
+body.theme-light .cue-piano-key.black-key:active {
+  background: var(--accent) !important;
+  color: #ffffff !important;
+  border-color: var(--accent) !important;
+}
+body.theme-light .cue-note-circle-btn {
+  background: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #334155 !important;
+}
+body.theme-light .cue-note-circle-btn.selected {
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+  background: var(--accent-dim) !important;
+}
+body.theme-light .cue-toggle-btn {
+  background: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #334155 !important;
+}
+body.theme-light .masspart-cue-badge {
+  background: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #334155 !important;
+}
+body.theme-light .cue-piano-key-badge {
+  background: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #334155 !important;
+}
+body.theme-light .cue-priest {
+  color: #334155 !important;
+}
+body.theme-light .cue-response {
+  color: #0f172a !important;
+}
+body.theme-light .priest-badge {
+  background: rgba(5, 150, 105, 0.12) !important;
+  color: #047857 !important;
+  border: 1px solid rgba(5, 150, 105, 0.35) !important;
+}
+body.theme-light .response-badge {
+  background: rgba(2, 132, 199, 0.12) !important;
+  color: #0369a1 !important;
+  border: 1px solid rgba(2, 132, 199, 0.35) !important;
 }
 body.theme-light .intro-melody-box {
   background: #f8fafc;
