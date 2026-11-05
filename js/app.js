@@ -4945,6 +4945,7 @@ function openEditor(id){
   const lw = document.getElementById('list-wrap');
   if(lw) state.lastListScroll = lw.scrollTop;
   state.modal = null;
+  state.isSavingSong = false;
   document.querySelectorAll('.modal-backdrop, #modal-bg').forEach(el=>el.remove());
   const song = id ? state.songs.find(s=>s.id===id) : null;
   state.editingDraft = song ? {...song, introMelody: song.introMelody || ''} : {
@@ -5264,7 +5265,10 @@ function renderEditor(){
       }
     });
   };
-  document.getElementById('btn-save').onclick = async ()=>{
+  // (2026-07-13) instant optimistic save & background sync; prev: await freeze
+  document.getElementById('btn-save').onclick = ()=>{
+    if(state.isSavingSong) return;
+    const saveBtn = document.getElementById('btn-save');
     let hasError = false;
     const titleVal = document.getElementById('f-title').value.trim();
     const titleField = document.getElementById('field-title');
@@ -5288,6 +5292,13 @@ function renderEditor(){
       const targetEl = titleVal ? document.getElementById('field-massparts') : titleField;
       if(targetEl && targetEl.scrollIntoView) targetEl.scrollIntoView({behavior:'smooth', block:'center'});
       return;
+    }
+
+    state.isSavingSong = true;
+    if(saveBtn){
+      saveBtn.disabled = true;
+      saveBtn.style.opacity = '0.65';
+      saveBtn.textContent = 'Saving...';
     }
 
     const timeSel = document.getElementById('f-timesig').value;
@@ -5317,12 +5328,12 @@ function renderEditor(){
     const idx = state.songs.findIndex(s=>s.id===song.id);
     if(idx>=0) state.songs[idx] = song; else state.songs.push(song);
     state.currentId = song.id;
-    // (2026-07-13) await Store.saveSong before closing for cloud persistence; prev: un-awaited
-    try{
-      await Store.saveSong(song);
-    }catch(e){
-      console.error('Background save failed:', e);
-    }
+    try{ LocalAdapter.set('song:' + song.id, JSON.stringify(song)).catch(()=>{}); }catch(e){}
+
+    Store.saveSong(song).catch(e=>console.error('Background save failed:', e)).finally(()=>{
+      state.isSavingSong = false;
+    });
+
     closeEditorOverlay(()=>{
       state.view = 'viewer';
       render();
@@ -6517,6 +6528,7 @@ function modalHtml(){
 function closeActiveModal(){
   const closingModal = state.modal;
   state.modal = null;
+  state.isSavingSong = false;
   document.querySelectorAll('.modal-backdrop, #modal-bg').forEach(el=>el.remove());
   if(state.view === 'list') renderListView();
   else if(state.view === 'viewer') renderViewer();
