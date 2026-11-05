@@ -1,6 +1,58 @@
 (function(){
 "use strict";
 
+// (2026-07-13) native GoogleOneTap plugin bridge & wake lock; prev: none
+const NativeGoogleOneTap = (typeof window !== 'undefined' && window.Capacitor && typeof window.Capacitor.registerPlugin === 'function')
+  ? window.Capacitor.registerPlugin('GoogleOneTap')
+  : (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.Plugins ? window.Capacitor.Plugins.GoogleOneTap : null);
+
+let activeWakeLockSentinel = null;
+
+async function setScreenKeepAwake(enable) {
+  if (NativeGoogleOneTap && typeof NativeGoogleOneTap.setKeepScreenOn === 'function') {
+    try {
+      await NativeGoogleOneTap.setKeepScreenOn({ enable: !!enable });
+    } catch (e) {}
+  }
+  if (typeof navigator !== 'undefined' && 'wakeLock' in navigator && navigator.wakeLock) {
+    try {
+      if (enable) {
+        if (!activeWakeLockSentinel) {
+          activeWakeLockSentinel = await navigator.wakeLock.request('screen');
+          activeWakeLockSentinel.addEventListener('release', () => {
+            activeWakeLockSentinel = null;
+          });
+        }
+      } else {
+        if (activeWakeLockSentinel) {
+          await activeWakeLockSentinel.release();
+          activeWakeLockSentinel = null;
+        }
+      }
+    } catch (e) {}
+  }
+}
+
+function syncWakeLock() {
+  const pref = (typeof localStorage !== 'undefined' && localStorage.getItem('cbp_keep_screen')) || 'viewer';
+  if (pref === 'off') {
+    setScreenKeepAwake(false);
+    return;
+  }
+  if (pref === 'always') {
+    setScreenKeepAwake(typeof document === 'undefined' || document.visibilityState === 'visible');
+    return;
+  }
+  const isViewing = (typeof state !== 'undefined' && state.view === 'viewer') && (typeof document === 'undefined' || document.visibilityState === 'visible');
+  setScreenKeepAwake(isViewing);
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    syncWakeLock();
+  });
+}
+
 /* ============================================================
    MUSIC THEORY CONSTANTS
    ============================================================ */

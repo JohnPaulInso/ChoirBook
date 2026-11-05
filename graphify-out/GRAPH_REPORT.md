@@ -11,22 +11,22 @@
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
-- Community 0
-- Community 1
-- Community 2
-- Community 3
-- Community 4
-- Community 5
-- Community 6
-- Community 7
-- Community 8
-- Community 9
-- Community 10
-- Community 11
-- Community 13
-- Community 14
-- Community 15
-- Community 16
+- Viewer Navigation & Overlay System
+- Music Rendering & SVG Visualizers
+- Folder Organization & GSMA Sync
+- Key Detection & Song Filtering
+- Android Google One Tap Plugin
+- Liturgical Dialogue & Line Classifier
+- Package Configuration & Dependencies
+- Folder Themes & State Hydration
+- Android Native Unit Tests
+- PWA Web App Manifest
+- Android Main Bridge Activity
+- Chord Parser & Mass Part Heuristics
+- Architecture Specs & Mass Flow Docs
+- HTML Host & Setup Guide
+- Offline Service Worker Shell
+- Root Service Worker Cache
 
 ## God Nodes (most connected - your core abstractions)
 1. `renderViewer()` - 41 edges
@@ -53,43 +53,43 @@
 
 ## Communities (24 total, 14 thin omitted)
 
-### Community 0 - "Community 0"
+### Community 0 - "Viewer Navigation & Overlay System"
 Cohesion: 0.06
 Nodes (53): closeEditorOverlay(), _col(), currentSong(), delete(), deleteSetlist(), deleteSong(), get(), getAll() (+45 more)
 
-### Community 1 - "Community 1"
+### Community 1 - "Music Rendering & SVG Visualizers"
 Cohesion: 0.07
 Nodes (39): buildFretboardSVG(), buildKeyboardSVG(), buildSongListRowsHtml(), chordTones(), currentSetlist(), getActiveScopeKey(), getCurrentViewSectionTitle(), getEffectiveSongArtist() (+31 more)
 
-### Community 2 - "Community 2"
+### Community 2 - "Folder Organization & GSMA Sync"
 Cohesion: 0.12
 Nodes (28): autoAssignFoldersByTitle(), autoOrganizeAllSongsByTitle(), downloadGSMA(), findMassPartCue(), generateGSMA(), getMassPartCueKey(), iconMenu(), iconPalette() (+20 more)
 
-### Community 3 - "Community 3"
+### Community 3 - "Key Detection & Song Filtering"
 Cohesion: 0.13
 Nodes (23): cleanSongTitleForDisplay(), detectKeyFromBody(), getEffectiveSongKey(), getFilteredSongsForCurrentView(), getLiturgicalDialogueSongs(), getOrderedSongSections(), getSongFlag(), getSongFlagRank() (+15 more)
 
-### Community 5 - "Community 5"
+### Community 5 - "Liturgical Dialogue & Line Classifier"
 Cohesion: 0.21
 Nodes (20): classifyLine(), escapeHtml(), extractPriestData(), extractResponseData(), iconCueHide(), iconCueShow(), iconPeopleGroup(), iconPriestCross() (+12 more)
 
-### Community 6 - "Community 6"
+### Community 6 - "Package Configuration & Dependencies"
 Cohesion: 0.11
 Nodes (18): author, dependencies, @capacitor/android, @capacitor/cli, @capacitor/core, description, keywords, license (+10 more)
 
-### Community 7 - "Community 7"
+### Community 7 - "Folder Themes & State Hydration"
 Cohesion: 0.19
 Nodes (17): applyFolderTheme(), ensureGreatAmenMigration(), getFolderTheme(), hydrateInitialState(), iconBack(), iconSetlist(), loadAll(), normalizeSetlist() (+9 more)
 
-### Community 9 - "Community 9"
+### Community 9 - "PWA Web App Manifest"
 Cohesion: 0.20
 Nodes (9): background_color, description, display, icons, name, orientation, short_name, start_url (+1 more)
 
-### Community 11 - "Community 11"
+### Community 11 - "Chord Parser & Mass Part Heuristics"
 Cohesion: 0.40
 Nodes (6): extractChordsFromBody(), inferMassPartFromGsmaTitle(), isRealChordToken(), normalizeBodyChordLines(), parseGSMA(), tokenLooksLikeChord()
 
-### Community 13 - "Community 13"
+### Community 13 - "Architecture Specs & Mass Flow Docs"
 Cohesion: 0.67
 Nodes (3): Choir Book Pro Design Plan, Choir Book Pro Improvements & History, Catholic Mass Flow Order & Liturgical Dialogues
 
@@ -101,17 +101,17 @@ Nodes (3): Choir Book Pro Design Plan, Choir Book Pro Improvements & History, Ca
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `renderEditor()` connect `Community 3` to `Community 0`, `Community 1`, `Community 2`, `Community 5`, `Community 7`?**
+- **Why does `renderEditor()` connect `Key Detection & Song Filtering` to `Viewer Navigation & Overlay System`, `Music Rendering & SVG Visualizers`, `Folder Organization & GSMA Sync`, `Liturgical Dialogue & Line Classifier`, `Folder Themes & State Hydration`?**
   _High betweenness centrality (0.021) - this node is a cross-community bridge._
 - **What connects `@capacitor/android`, `@capacitor/cli`, `@capacitor/core` to the rest of the system?**
   _7 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `Community 0` be split into smaller, more focused modules?**
+- **Should `Viewer Navigation & Overlay System` be split into smaller, more focused modules?**
   _Cohesion score 0.058384547848990345 - nodes in this community are weakly interconnected._
-- **Why does `renderViewer()` connect `Community 0` to `Community 1`, `Community 2`, `Community 3`, `Community 5`, `Community 7`?**
+- **Why does `renderViewer()` connect `Viewer Navigation & Overlay System` to `Music Rendering & SVG Visualizers`, `Folder Organization & GSMA Sync`, `Key Detection & Song Filtering`, `Liturgical Dialogue & Line Classifier`, `Folder Themes & State Hydration`?**
   _High betweenness centrality (0.008) - this node is a cross-community bridge._
-- **Should `Community 1` be split into smaller, more focused modules?**
+- **Should `Music Rendering & SVG Visualizers` be split into smaller, more focused modules?**
   _Cohesion score 0.0728744939271255 - nodes in this community are weakly interconnected._
-- **Why does `renderListView()` connect `Community 2` to `Community 0`, `Community 1`, `Community 5`, `Community 7`?**
+- **Why does `renderListView()` connect `Folder Organization & GSMA Sync` to `Viewer Navigation & Overlay System`, `Music Rendering & SVG Visualizers`, `Liturgical Dialogue & Line Classifier`, `Folder Themes & State Hydration`?**
   _High betweenness centrality (0.004) - this node is a cross-community bridge._
-- **Should `Community 2` be split into smaller, more focused modules?**
+- **Should `Folder Organization & GSMA Sync` be split into smaller, more focused modules?**
   _Cohesion score 0.12433862433862433 - nodes in this community are weakly interconnected._
