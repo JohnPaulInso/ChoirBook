@@ -6286,7 +6286,8 @@ function modalHtml(){
             <div class="cat-toggle-wrap">${folderToggles}</div>
             <div class="hint">Tap any folder to file this same song there too — it's still one song, edited in one place.</div>
           </div>
-          <button class="btn btn-secondary" id="ctx-done" style="width:100%;min-height:40px;">Done</button>
+          <!-- (2026-07-13) solid colored primary Done button; prev: btn-secondary -->
+          <button class="btn btn-primary" id="ctx-done" style="width:100%;min-height:42px;font-weight:800;">Done</button>
         </div>
       </div>`;
   }
@@ -6343,7 +6344,8 @@ function modalHtml(){
             </button>
           </div>
           <div style="margin-top:14px;">
-            <button class="btn btn-secondary" id="adj-done" style="width:100%;">Done</button>
+            <!-- (2026-07-13) solid colored primary Done button; prev: btn-secondary -->
+            <button class="btn btn-primary" id="adj-done" style="width:100%;min-height:42px;font-weight:800;">Done</button>
           </div>
         </div>
       </div>`;
