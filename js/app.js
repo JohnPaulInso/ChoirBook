@@ -6313,6 +6313,23 @@ function modalHtml(){
   }
   return '';
 }
+
+// (2026-07-13) scope closeActiveModal across IIFE; prev: wireModal local
+function closeActiveModal(){
+  const closingModal = state.modal;
+  state.modal = null;
+  document.querySelectorAll('.modal-backdrop, #modal-bg').forEach(el=>el.remove());
+  if(state.view === 'list') renderListView();
+  else if(state.view === 'viewer') renderViewer();
+  else if(state.view === 'setlists') renderSetlistsView();
+  else if(state.view === 'setlist-editor') renderSetlistEditor();
+  else render();
+  if(closingModal && closingModal.type === 'song-context' && closingModal.dirty){
+    const s = state.songs.find(item=>item.id===closingModal.id);
+    if(s) showToast(`${cleanSongTitleForDisplay(s.title)} saved.`);
+  }
+}
+
 function wireModal(){
   const bg = document.getElementById('modal-bg');
   if(!bg) return;
@@ -6330,7 +6347,6 @@ function wireModal(){
       e.preventDefault();
     }
   }, {capture: true});
-  // (2026-07-13) universal closeActiveModal with complete DOM cleanup & toast; prev: stuck modal
   // (2026-07-13) wire modal confirmation actions; prev: browser confirm
   const confirmBtn = document.getElementById('modal-confirm-btn');
   if(confirmBtn){
@@ -6346,20 +6362,6 @@ function wireModal(){
       closeActiveModal();
     };
   }
-  const closeActiveModal = ()=>{
-    const closingModal = state.modal;
-    state.modal = null;
-    document.querySelectorAll('.modal-backdrop, #modal-bg').forEach(el=>el.remove());
-    if(state.view === 'list') renderListView();
-    else if(state.view === 'viewer') renderViewer();
-    else if(state.view === 'setlists') renderSetlistsView();
-    else if(state.view === 'setlist-editor') renderSetlistEditor();
-    else render();
-    if(closingModal && closingModal.type === 'song-context' && closingModal.dirty){
-      const s = state.songs.find(item=>item.id===closingModal.id);
-      if(s) showToast(`${cleanSongTitleForDisplay(s.title)} saved.`);
-    }
-  };
   bg.onclick = (e)=>{
     if(e.target===bg || e.target.closest('#modal-x, .modal-close, #adj-done, [data-modal-close]')){
       closeActiveModal();
@@ -7279,53 +7281,79 @@ function subscribeRealtimeSync(){
   }
 })();
 
-// (2026-07-13) universal back button handling for modals & viewer; prev: none
-function handleUniversalBack(){
-  if(state.modal){
-    closeActiveModal();
-    return true;
-  }
-  if(state.view === 'viewer'){
-    stopAutoscroll();
-    stopMetronome();
-    if(state.cameFromSetlistId){
-      state.currentSetlistId = state.cameFromSetlistId;
-      state.cameFromSetlistId = null;
-      state.view = 'setlist-editor';
-    } else {
-      state.view = 'list';
+  // (2026-07-13) modal & viewer back navigation; prev: closed app on modal back
+  function handleUniversalBack(){
+    try{
+      if(state.modal || document.querySelector('.modal-backdrop, .modal, #modal-bg')){
+        closeActiveModal();
+        return true;
+      }
+      if(state.profileMenuOpen){
+        state.profileMenuOpen = false;
+        renderListView();
+        return true;
+      }
+      if(state.sidebarOpen){
+        closeSidebar();
+        return true;
+      }
+      const speedSlider = document.getElementById('speed-slider-wrap');
+      if(speedSlider && !speedSlider.classList.contains('hidden')){
+        speedSlider.classList.add('hidden');
+        return true;
+      }
+      if(state.view === 'viewer'){
+        stopAutoscroll();
+        stopMetronome();
+        if(state.cameFromSetlistId){
+          state.currentSetlistId = state.cameFromSetlistId;
+          state.cameFromSetlistId = null;
+          state.view = 'setlist-editor';
+        } else {
+          state.view = 'list';
+        }
+        render();
+        return true;
+      }
+      if(state.view === 'editor'){
+        closeEditorOverlay(()=>{
+          state.view = state.currentId ? 'viewer' : 'list';
+          render();
+        });
+        return true;
+      }
+      if(state.view === 'settings'){
+        state.view = 'list';
+        render();
+        return true;
+      }
+      if(state.view === 'setlist-editor'){
+        state.view = 'setlists';
+        state.currentSetlistId = null;
+        render();
+        return true;
+      }
+      if(state.view === 'setlists'){
+        state.view = 'list';
+        render();
+        return true;
+      }
+    }catch(err){
+      return true;
     }
-    render();
-    return true;
+    return false;
   }
-  if(state.view === 'editor'){
-    closeEditorOverlay(()=>{
-      state.view = state.currentId ? 'viewer' : 'list';
-      render();
+  window.handleUniversalBack = handleUniversalBack;
+  window.addEventListener('popstate', ()=>{ handleUniversalBack(); });
+  if(typeof window !== 'undefined' && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App){
+    window.Capacitor.Plugins.App.addListener('backButton', ({canGoBack})=>{
+      try{
+        if(handleUniversalBack()) return;
+        if(canGoBack){ window.history.back(); }
+        else { window.Capacitor.Plugins.App.exitApp(); }
+      }catch(err){}
     });
-    return true;
   }
-  if(state.view === 'settings'){
-    state.view = 'list';
-    render();
-    return true;
-  }
-  if(state.view === 'setlist-editor'){
-    state.view = 'setlists';
-    state.currentSetlistId = null;
-    render();
-    return true;
-  }
-  return false;
-}
-window.addEventListener('popstate', ()=>{ handleUniversalBack(); });
-if(typeof window !== 'undefined' && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App){
-  window.Capacitor.Plugins.App.addListener('backButton', ({canGoBack})=>{
-    if(handleUniversalBack()) return;
-    if(canGoBack){ window.history.back(); }
-    else { window.Capacitor.Plugins.App.exitApp(); }
-  });
-}
 
 
 // (2026-07-13) delegated click/pointer for staff play button & note audio; prev: viewer-only
