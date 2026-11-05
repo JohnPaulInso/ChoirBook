@@ -1,117 +1,120 @@
-# Graph Report - Choir Book Pro  (2026-11-05)
+# Graph Report - Choir Book Pro  (2026-11-06)
 
 ## Corpus Check
-- 55 files · ~115,114 words
+- 55 files · ~120,071 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 25 file(s) not represented in the graph (top: .xml 10, (none) 3, .bat 3)
 
 ## Summary
-- 288 nodes · 696 edges · 24 communities (10 shown, 14 thin omitted)
-- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 5 edges (avg confidence: 0.85)
+- 300 nodes · 765 edges · 27 communities (9 shown, 18 thin omitted)
+- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 4 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
-- Viewer Navigation & Overlay System
-- Music Rendering & SVG Visualizers
-- Folder Organization & GSMA Sync
-- Key Detection & Song Filtering
-- Android Google One Tap Plugin
-- Liturgical Dialogue & Line Classifier
-- Package Configuration & Dependencies
-- Folder Themes & State Hydration
-- Android Native Unit Tests
+- Storage & Firestore Sync
+- List View & SVG Renderers
+- Setlist & Modal Management
+- Liturgical Catalog & Folders
+- Text Classification & Dialogue Badges
+- Android Google OneTap Plugin
+- Song Transpose & Key Utilities
+- NPM Dependencies & Build Config
+- Android Instrumentation & Unit Tests
+- Chord Parsing & Guitar Voicings
 - PWA Web App Manifest
-- Android Main Bridge Activity
-- Chord Parser & Mass Part Heuristics
-- Architecture Specs & Mass Flow Docs
-- HTML Host & Setup Guide
-- Offline Service Worker Shell
-- Root Service Worker Cache
+- Android Main Activity & Bridge
+- Service Worker Script (js/sw.js)
+- Root Service Worker (sw.js)
+- Design Plan Architecture Spec
+- Improvements & Change History
+- PWA HTML Entrypoint
+- Catholic Mass Liturgical Order
+- Android APK Setup Guide
 
 ## God Nodes (most connected - your core abstractions)
-1. `renderViewer()` - 41 edges
-2. `renderListView()` - 34 edges
-3. `wireModal()` - 30 edges
-4. `renderEditor()` - 27 edges
-5. `escapeHtml()` - 25 edges
-6. `modalHtml()` - 25 edges
-7. `renderSongSheetContent()` - 22 edges
-8. `renderSetlistEditor()` - 20 edges
-9. `render()` - 18 edges
-10. `sidebarHtml()` - 15 edges
+1. `renderViewer()` - 44 edges
+2. `renderListView()` - 38 edges
+3. `wireModal()` - 37 edges
+4. `modalHtml()` - 31 edges
+5. `renderEditor()` - 29 edges
+6. `escapeHtml()` - 28 edges
+7. `renderSetlistEditor()` - 25 edges
+8. `render()` - 22 edges
+9. `renderSongSheetContent()` - 22 edges
+10. `renderFoldersView()` - 16 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `Choir Book Pro Improvements & History` --conceptually_related_to--> `Catholic Mass Flow Order & Liturgical Dialogues`  [INFERRED]
-  IMPROVEMENTS.md → Mass-Flow.md
-- `Choir Book Pro Design Plan` --references--> `Catholic Mass Flow Order & Liturgical Dialogues`  [EXTRACTED]
-  DESIGN_PLAN.md → Mass-Flow.md
-- `App HTML Shell & PWA Host` --references--> `Android APK & Capacitor Setup Instructions`  [EXTRACTED]
-  index.html → SETUP_INSTRUCTIONS.md
+- `modalHtml()` --calls--> `noteIndex()`  [EXTRACTED]
+  js/app.js → js/app.js  _Bridges community 9 → community 1_
+- `renderCuePianoFinder()` --calls--> `spellNote()`  [EXTRACTED]
+  js/app.js → js/app.js  _Bridges community 9 → community 0_
+- `transposeBody()` --calls--> `transposeToken()`  [EXTRACTED]
+  js/app.js → js/app.js  _Bridges community 9 → community 4_
+- `renderSetlistEditor()` --calls--> `transposeKeyLabel()`  [EXTRACTED]
+  js/app.js → js/app.js  _Bridges community 9 → community 2_
+- `renderSongRowHtml()` --calls--> `transposeKeyLabel()`  [EXTRACTED]
+  js/app.js → js/app.js  _Bridges community 9 → community 6_
 
 ## Import Cycles
 - None detected.
 
-## Communities (24 total, 14 thin omitted)
+## Communities (27 total, 18 thin omitted)
 
-### Community 0 - "Viewer Navigation & Overlay System"
+### Community 0 - "Storage & Firestore Sync"
 Cohesion: 0.06
-Nodes (53): closeEditorOverlay(), _col(), currentSong(), delete(), deleteSetlist(), deleteSong(), get(), getAll() (+45 more)
+Nodes (52): _col(), currentSong(), delete(), deleteSetlist(), deleteSong(), findMassPartCue(), get(), getAll() (+44 more)
 
-### Community 1 - "Music Rendering & SVG Visualizers"
-Cohesion: 0.07
-Nodes (39): buildFretboardSVG(), buildKeyboardSVG(), buildSongListRowsHtml(), chordTones(), currentSetlist(), getActiveScopeKey(), getCurrentViewSectionTitle(), getEffectiveSongArtist() (+31 more)
+### Community 1 - "List View & SVG Renderers"
+Cohesion: 0.10
+Nodes (36): buildFretboardSVG(), buildKeyboardSVG(), buildSongListRowsHtml(), downloadGSMA(), getActiveScopeKey(), getCurrentViewSectionTitle(), getFolderTheme(), iconCheck() (+28 more)
 
-### Community 2 - "Folder Organization & GSMA Sync"
+### Community 2 - "Setlist & Modal Management"
 Cohesion: 0.12
-Nodes (28): autoAssignFoldersByTitle(), autoOrganizeAllSongsByTitle(), downloadGSMA(), findMassPartCue(), generateGSMA(), getMassPartCueKey(), iconMenu(), iconPalette() (+20 more)
+Nodes (31): autoAssignFoldersByTitle(), autoOrganizeAllSongsByTitle(), closeActiveModal(), closeEditorOverlay(), currentSetlist(), generateGSMA(), handleUniversalBack(), iconArrowDown() (+23 more)
 
-### Community 3 - "Key Detection & Song Filtering"
-Cohesion: 0.13
-Nodes (23): cleanSongTitleForDisplay(), detectKeyFromBody(), getEffectiveSongKey(), getFilteredSongsForCurrentView(), getLiturgicalDialogueSongs(), getOrderedSongSections(), getSongFlag(), getSongFlagRank() (+15 more)
+### Community 3 - "Liturgical Catalog & Folders"
+Cohesion: 0.11
+Nodes (26): applyFolderTheme(), cleanSongTitleForDisplay(), ensureGreatAmenMigration(), getFilteredSongsForCurrentView(), getLastSyncAt(), getLiturgicalDialogueSongs(), getOrderedSongSections(), getSongFlag() (+18 more)
 
-### Community 5 - "Liturgical Dialogue & Line Classifier"
-Cohesion: 0.21
-Nodes (20): classifyLine(), escapeHtml(), extractPriestData(), extractResponseData(), iconCueHide(), iconCueShow(), iconPeopleGroup(), iconPriestCross() (+12 more)
+### Community 4 - "Text Classification & Dialogue Badges"
+Cohesion: 0.18
+Nodes (23): classifyLine(), escapeHtml(), extractPriestData(), extractResponseData(), iconCueHide(), iconCueShow(), iconPeopleGroup(), iconPriestCross() (+15 more)
 
-### Community 6 - "Package Configuration & Dependencies"
+### Community 6 - "Song Transpose & Key Utilities"
+Cohesion: 0.17
+Nodes (19): detectKeyFromBody(), getEffectiveSongArtist(), getEffectiveSongKey(), iconCheckSmall(), iconRedo(), iconUndo(), inferMassPartFromGsmaTitle(), inferSongArtist() (+11 more)
+
+### Community 7 - "NPM Dependencies & Build Config"
 Cohesion: 0.11
 Nodes (18): author, dependencies, @capacitor/android, @capacitor/cli, @capacitor/core, description, keywords, license (+10 more)
 
-### Community 7 - "Folder Themes & State Hydration"
-Cohesion: 0.19
-Nodes (17): applyFolderTheme(), ensureGreatAmenMigration(), getFolderTheme(), hydrateInitialState(), iconBack(), iconSetlist(), loadAll(), normalizeSetlist() (+9 more)
+### Community 9 - "Chord Parsing & Guitar Voicings"
+Cohesion: 0.20
+Nodes (11): chordTones(), extractChordsFromBody(), getGuitarShape(), noteIndex(), parseChord(), parseChordToken(), shapeQuality(), spellNote() (+3 more)
 
-### Community 9 - "PWA Web App Manifest"
+### Community 10 - "PWA Web App Manifest"
 Cohesion: 0.20
 Nodes (9): background_color, description, display, icons, name, orientation, short_name, start_url (+1 more)
 
-### Community 11 - "Chord Parser & Mass Part Heuristics"
-Cohesion: 0.40
-Nodes (6): extractChordsFromBody(), inferMassPartFromGsmaTitle(), isRealChordToken(), normalizeBodyChordLines(), parseGSMA(), tokenLooksLikeChord()
-
-### Community 13 - "Architecture Specs & Mass Flow Docs"
-Cohesion: 0.67
-Nodes (3): Choir Book Pro Design Plan, Choir Book Pro Improvements & History, Catholic Mass Flow Order & Liturgical Dialogues
-
 ## Knowledge Gaps
-- **7 isolated node(s):** `@capacitor/android`, `@capacitor/cli`, `@capacitor/core`, `Choir Book Pro Design Plan`, `Choir Book Pro Improvements & History` (+2 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 65 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **14 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **8 isolated node(s):** `@capacitor/android`, `@capacitor/cli`, `@capacitor/core`, `Choir Book Pro Design Plan`, `Choir Book Pro Improvements & History` (+3 more)
+  These have ≤1 connection - possible missing edges. (Counts symbols only; 66 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **18 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `renderEditor()` connect `Key Detection & Song Filtering` to `Viewer Navigation & Overlay System`, `Music Rendering & SVG Visualizers`, `Folder Organization & GSMA Sync`, `Liturgical Dialogue & Line Classifier`, `Folder Themes & State Hydration`?**
+- **Why does `renderEditor()` connect `Song Transpose & Key Utilities` to `Storage & Firestore Sync`, `List View & SVG Renderers`, `Setlist & Modal Management`, `Liturgical Catalog & Folders`, `Text Classification & Dialogue Badges`?**
   _High betweenness centrality (0.021) - this node is a cross-community bridge._
 - **What connects `@capacitor/android`, `@capacitor/cli`, `@capacitor/core` to the rest of the system?**
-  _7 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `Viewer Navigation & Overlay System` be split into smaller, more focused modules?**
-  _Cohesion score 0.058384547848990345 - nodes in this community are weakly interconnected._
-- **Why does `renderViewer()` connect `Viewer Navigation & Overlay System` to `Music Rendering & SVG Visualizers`, `Folder Organization & GSMA Sync`, `Key Detection & Song Filtering`, `Liturgical Dialogue & Line Classifier`, `Folder Themes & State Hydration`?**
+  _8 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Should `Storage & Firestore Sync` be split into smaller, more focused modules?**
+  _Cohesion score 0.05924920850293985 - nodes in this community are weakly interconnected._
+- **Why does `renderViewer()` connect `Storage & Firestore Sync` to `List View & SVG Renderers`, `Setlist & Modal Management`, `Liturgical Catalog & Folders`, `Text Classification & Dialogue Badges`, `Song Transpose & Key Utilities`, `Chord Parsing & Guitar Voicings`?**
   _High betweenness centrality (0.008) - this node is a cross-community bridge._
-- **Should `Music Rendering & SVG Visualizers` be split into smaller, more focused modules?**
-  _Cohesion score 0.0728744939271255 - nodes in this community are weakly interconnected._
-- **Why does `renderListView()` connect `Folder Organization & GSMA Sync` to `Viewer Navigation & Overlay System`, `Music Rendering & SVG Visualizers`, `Liturgical Dialogue & Line Classifier`, `Folder Themes & State Hydration`?**
-  _High betweenness centrality (0.004) - this node is a cross-community bridge._
-- **Should `Folder Organization & GSMA Sync` be split into smaller, more focused modules?**
-  _Cohesion score 0.12433862433862433 - nodes in this community are weakly interconnected._
+- **Should `List View & SVG Renderers` be split into smaller, more focused modules?**
+  _Cohesion score 0.09841269841269841 - nodes in this community are weakly interconnected._
+- **Why does `wireModal()` connect `Setlist & Modal Management` to `Storage & Firestore Sync`, `List View & SVG Renderers`, `Liturgical Catalog & Folders`, `Text Classification & Dialogue Badges`, `Song Transpose & Key Utilities`, `Chord Parsing & Guitar Voicings`?**
+  _High betweenness centrality (0.006) - this node is a cross-community bridge._
+- **Should `Setlist & Modal Management` be split into smaller, more focused modules?**
+  _Cohesion score 0.12473118279569892 - nodes in this community are weakly interconnected._

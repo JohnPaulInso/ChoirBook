@@ -900,10 +900,31 @@ const ClaudeAdapter = {
   }
 };
 
-// (2026-07-13) optimize FirestoreAdapter to query collection without index hangs; prev: documentId range query
+// (2026-07-13) smart timestamp sync for Firestore reads; prev: download all
+function getLastSyncAt(){ return parseInt(localStorage.getItem('cbp_last_synced_at') || '0', 10); }
+function setLastSyncAt(ts){ localStorage.setItem('cbp_last_synced_at', String(ts || Date.now())); }
+
+// (2026-07-13) optimize FirestoreAdapter with incremental sync; prev: full download
 const FirestoreAdapter = {
   _col(){
     return firebase.firestore().collection('users').doc(firebaseUser.uid).collection('data');
+  },
+  async getUpdatedSince(lastTs){
+    try{
+      let ref = this._col();
+      if(lastTs && lastTs > 0){
+        ref = ref.where('updatedAt', '>', lastTs);
+      }
+      const snap = await ref.get();
+      const docs = snap.docs.map(d => ({ key: d.id, value: d.data().value, updatedAt: d.data().updatedAt || 0 }));
+      docs.forEach(item => {
+        if(item.value !== null && item.value !== undefined) LocalAdapter.set(item.key, item.value);
+      });
+      return docs;
+    }catch(e){
+      console.warn('Timestamp sync fallback', e);
+      return [];
+    }
   },
   async list(prefix){
     try{
@@ -1426,6 +1447,8 @@ const state = {
   sidebarOpen: false,
   currentId: null,
   editingDraft: null,
+  // (2026-07-13) track editor source view to return correctly; prev: forced viewer
+  editorCameFrom: 'list',
   // (2026-07-13) default autoscroll to on; prev: autoscroll: false
   autoscroll: true,
   metronomeOn: false,
@@ -1549,9 +1572,10 @@ function normalizeSong(song){
   if(song.referenceUrl===undefined) song.referenceUrl = '';
   if(song.importedGuid===undefined) song.importedGuid = null;
   if(!Array.isArray(song.excludedFolders)) song.excludedFolders = [];
-  // (2026-07-13) preserve transpose & introMelodyCollapsed; prev: omitted
+  // (2026-07-13) preserve transpose, introMelodyCollapsed & hideCueCard; prev: omitted
   if(song.transposeOffset===undefined || song.transposeOffset===null) song.transposeOffset = 0;
   if(song.introMelodyCollapsed===undefined) song.introMelodyCollapsed = false;
+  if(song.hideCueCard===undefined) song.hideCueCard = false;
   // (2026-07-13) preserve explicit flag & clean leading digits; prev: reset none
   if(song.title){
     if(song.flag === undefined || song.flag === null || song.flag === ''){
@@ -1686,7 +1710,35 @@ async function loadAll(){
     }
   }catch(e){ state.loading = true; render(); }
 
+  // (2026-07-13) incremental timestamp sync for cloud data; prev: download all
   try{
+    const lastSync = getLastSyncAt();
+    if(lastSync > 0 && state.songs && state.songs.length > 0 && FirestoreAdapter.getUpdatedSince){
+      const updatedDocs = await FirestoreAdapter.getUpdatedSince(lastSync);
+      if(updatedDocs.length > 0){
+        let dirty = false;
+        updatedDocs.forEach(item => {
+          if(item.key.startsWith('song:')){
+            try{
+              const s = normalizeSong(JSON.parse(item.value));
+              const idx = state.songs.findIndex(x=>x.id===s.id);
+              if(idx >= 0) state.songs[idx] = s; else state.songs.push(s);
+              dirty = true;
+            }catch(e){}
+          } else if(item.key.startsWith('setlist:')){
+            try{
+              const sl = normalizeSetlist(JSON.parse(item.value));
+              const idx = state.setlists.findIndex(x=>x.id===sl.id);
+              if(idx >= 0) state.setlists[idx] = sl; else state.setlists.push(sl);
+              dirty = true;
+            }catch(e){}
+          }
+        });
+        if(dirty) render();
+      }
+      setLastSyncAt(Date.now());
+      return;
+    }
     const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500));
     const dataFetch = Promise.all([
       Store.getAllSongs(),
@@ -1699,6 +1751,7 @@ async function loadAll(){
       Store.getCustomCues()
     ]);
     const [rawSongs, cats, parts, rawSetlists, fColors, cChords, cCues] = await Promise.race([dataFetch, timeout]);
+    setLastSyncAt(Date.now());
     if(rawSongs && rawSongs.length > 0){
       state.songs = rawSongs.map(normalizeSong);
       persistMigratedChordSongs();
@@ -2011,7 +2064,8 @@ function syncLiturgicalDialogues(persist){
       if((!existing.userEdited && existing.litVersion !== 4) || existing.title !== ls.title){
         existing.title = ls.title;
         if(!existing.userEdited) existing.body = ls.body;
-        existing.litVersion = 3;
+        // (2026-07-13) update dialogue litVersion to 4; prev: stuck at 3
+        existing.litVersion = 4;
         if(persist) Store.saveSong(existing).catch(()=>{});
       }
     }
@@ -2044,6 +2098,8 @@ function render(){
   if(state.view==='editor') return renderEditor();
   if(state.view==='setlists') return renderSetlistsView();
   if(state.view==='setlist-editor') return renderSetlistEditor();
+  // (2026-07-13) render dedicated folders page view; prev: list/viewer only
+  if(state.view==='folders') return renderFoldersView();
 }
 // (2026-07-13) mandatory Google login screen without offline skip; prev: skip auth button
 // (2026-07-13) add guest sign-in & offline fallback; prev: Google sign-in only
@@ -2601,13 +2657,10 @@ function getFilteredSongsForCurrentView(catOverride){
   } else if(effectiveCat==='Favorites'){
     songs = songs.filter(s=>s.favorite);
   } else if(effectiveCat!=='All'){
+    // (2026-07-13) all folders include lit dialogues; prev: empty if no songs
     const folderReg = songs.filter(s=>!(s.id && String(s.id).startsWith('lit-')) && (s.categories||[]).includes(effectiveCat));
-    if(folderReg.length > 0){
-      const litAll = songs.filter(s=>s.id && String(s.id).startsWith('lit-'));
-      songs = folderReg.concat(litAll);
-    } else {
-      songs = [];
-    }
+    const litAll = state.songs.filter(s=>s.id && String(s.id).startsWith('lit-'));
+    songs = folderReg.concat(litAll);
   }
   // (2026-07-13) filter favorited only songs when toggle active; prev: none
   if(state.favOnly && catOverride === undefined){
@@ -2627,6 +2680,61 @@ function matchesAnchorPart(mpName, anchorPart){
   const cueA = findMassPartCue(mpName);
   const cueB = findMassPartCue(anchorPart);
   return !!(cueA && cueB && cueA === cueB);
+}
+
+// (2026-07-13) match songs to mass part for picker; prev: exact massParts only
+function isSongMatchingMassPart(s, targetMp){
+  if(!s || !targetMp) return false;
+  const parts = (s.massParts || []).map(p => (p||'').trim().toLowerCase());
+  const t = targetMp.trim().toLowerCase();
+  if(parts.includes(t)) return true;
+  if(t === 'sanctus' || t === 'santos'){
+    if(parts.includes('sanctus') || parts.includes('santos')) return true;
+    if(/\b(santos|sanctus)\b/i.test(s.title)) return true;
+  }
+  if(t === 'kyrie'){
+    if(parts.includes('kyrie') || /\b(kyrie|isugid ko|ginoo kaloy-?i|panginoon maawa ka)\b/i.test(s.title)) return true;
+  }
+  if(t === 'gloria'){
+    if(parts.includes('gloria') || /\b(gloria|himaya|papuri)\b/i.test(s.title)) return true;
+  }
+  if(t === 'great amen' || t === 'amen'){
+    if(parts.includes('great amen') || parts.includes('amen')) return true;
+    if(/\bamen\b/i.test(s.title) && !/\b(mag-?ampo|pasiuna)\b/i.test(s.title)) return true;
+  }
+  if(t === 'lamb of god' || t === 'agnus dei' || t === 'kordero'){
+    if(parts.includes('lamb of god') || parts.includes('agnus dei') || parts.includes('kordero')) return true;
+    if(/\b(kordero|agnus dei|lamb of god)\b/i.test(s.title)) return true;
+  }
+  if(t === 'our father' || t === 'amahan namo' || t === 'ama namin'){
+    if(parts.includes('our father') || parts.includes('amahan namo') || parts.includes('ama namin')) return true;
+    if(/\b(amahan namo|ama namin|our father|pater noster)\b/i.test(s.title)) return true;
+  }
+  if(t === 'memorial acclamation' || t === 'acclamation'){
+    if(parts.includes('memorial acclamation') || parts.includes('acclamation')) return true;
+    if(/\b(si kristo namatay|si kristo ay namatay|anamnesis|memorial acclamation)\b/i.test(s.title)) return true;
+  }
+  if(t === 'entrance'){
+    if(parts.includes('entrance') || parts.includes('entrance song') || parts.includes('pasiuna')) return true;
+  }
+  if(t === 'offertory'){
+    if(parts.includes('offertory') || parts.includes('halad') || parts.includes('pag-aalay')) return true;
+  }
+  if(t === 'communion'){
+    if(parts.includes('communion') || parts.includes('kalawat') || parts.includes('pakikinabang')) return true;
+  }
+  if(t === 'recessional'){
+    if(parts.includes('recessional') || parts.includes('panapos')) return true;
+  }
+  if(t === 'responsorial psalm' || t === 'psalm'){
+    if(parts.includes('responsorial psalm') || parts.includes('psalm') || parts.includes('salmo')) return true;
+    if(/\b(salmo|psalm)\b/i.test(s.title)) return true;
+  }
+  if(t === 'gospel acclamation' || t === 'alleluia'){
+    if(parts.includes('gospel acclamation') || parts.includes('alleluia') || parts.includes('aleluya')) return true;
+    if(/\b(alleluia|aleluya|gospel acclamation)\b/i.test(s.title)) return true;
+  }
+  return false;
 }
 
 function getOrderedSongSections(songs){
@@ -2655,6 +2763,10 @@ function getOrderedSongSections(songs){
     return 0;
   });
 
+  // (2026-07-13) preserve empty mass part dividers in folders; prev: omitted empty
+  const shouldKeepEmptyParts = !state.favOnly && !state.search?.trim() && !state.filterMassPart && !state.filterFlag;
+  const coreParts = new Set(DEFAULT_MASS_PARTS.filter(p => p !== 'Other'));
+
   activeParts.forEach(mp=>{
     litSongs.forEach(ls=>{
       const meta = litMetaMap[ls.id] || ls;
@@ -2672,7 +2784,7 @@ function getOrderedSongSections(songs){
     });
 
     const mpReg = sortSongsArray(regSongs.filter(s=>(s.massParts||[]).includes(mp)), mp);
-    if(mpReg.length > 0){
+    if(mpReg.length > 0 || (shouldKeepEmptyParts && coreParts.has(mp))){
       mpReg.forEach(s=>placedRegIds.add(s.id));
       sections.push({
         title: mp,
@@ -2889,7 +3001,15 @@ function buildSongListRowsHtml(catOverride){
             <span>${sec.isLiturgical ? '&#10022; ' : ''}${escapeHtml(sec.title)}</span>
             ${rightControls || toggle}
           </div>`;
-        sec.songs.forEach(s=>{ secHtml += renderSongRowHtml(s, sec.massPart); });
+        // (2026-07-13) styled empty mass part slot pill with gap; prev: smushed text
+        if(sec.songs.length === 0){
+          secHtml += `<div class="empty-mass-part-slot clickable" data-open-mp-picker="${escapeHtml(sec.massPart || sec.title)}" role="button" tabindex="0" title="Find ${escapeHtml(sec.title)} songs" style="padding:6px 12px;font-size:11.5px;color:var(--text-dim);display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all 0.15s ease;border-radius:8px;margin:3px 10px 5px;background:rgba(255,255,255,0.02);border:1px dashed rgba(255,255,255,0.12);">
+            <span style="font-style:italic;opacity:0.65;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">No ${escapeHtml(sec.title)} song${state.filterCat && state.filterCat !== 'All' ? ' in this folder' : ''}</span>
+            <span style="color:var(--accent);font-weight:700;font-size:11px;display:inline-flex;align-items:center;gap:4px;flex-shrink:0;padding:2px 9px;border-radius:12px;background:var(--accent-dim, rgba(224,142,66,0.18));border:1px solid var(--accent);white-space:nowrap;">&plus; Select</span>
+          </div>`;
+        } else {
+          sec.songs.forEach(s=>{ secHtml += renderSongRowHtml(s, sec.massPart); });
+        }
       }
       rows += `<div class="song-section-group" data-group-mp="${escapeHtml(sec.massPart||'')}">${secHtml}</div>`;
     });
@@ -2954,6 +3074,16 @@ function wireListWrapRows(){
       renderListView();
     };
   });
+  // (2026-07-13) wire empty mass part slot to open picker modal; prev: none
+  document.querySelectorAll('[data-open-mp-picker]').forEach(el=>{
+    el.onclick = (e)=>{
+      e.stopPropagation();
+      e.preventDefault();
+      const mp = el.dataset.openMpPicker;
+      state.modal = { type: 'masspart-picker', massPart: mp, search: '' };
+      render();
+    };
+  });
   const curWrap = document.getElementById('list-wrap');
   if(curWrap){
     curWrap.querySelectorAll('.song-row').forEach(el=>{
@@ -2996,7 +3126,7 @@ function renderListView(animateChipScroll){
         ? `style="background:${ct.dim};border-color:${ct.accent};color:${ct.accent};"`
         : `style="border-color:${ct.dim};"`;
       return `<div class="chip ${isActive?'active':''}" data-cat="${escapeHtml(c)}" ${styleAttr}><span class="chip-dot" style="background:${ct.swatch};"></span>${escapeHtml(c)}</div>`;
-    }).join('') + `<button class="chip-palette-btn ${state.showChipColorPicker?'active':''}" id="btn-chip-palette" title="Folder Color Theme">${iconPalette()}</button>`;
+    }).join('') + `<!-- (2026-07-13) add folders page button to chip bar; prev: palette only --><button class="chip-palette-btn ${state.showChipColorPicker?'active':''}" id="btn-chip-palette" title="Folder Color Theme">${iconPalette()}</button><button class="chip-palette-btn" id="btn-goto-folders" title="Folders & Sort Chips" style="margin-left:3px;">${iconFolder()}</button>`;
   }
 
   const activeThemeKey = (state.folderColors && state.folderColors[state.filterCat]) || 'gold';
@@ -3049,12 +3179,7 @@ function renderListView(animateChipScroll){
         ${(!state.listEditMode && !isSearching) ? `
           <button class="icon-btn" id="btn-search-toggle" title="Search Songs">${iconSearch()}</button>
         ` : ''}
-        ${state.filterMassPart && !state.listEditMode ? `
-          <button class="toolbtn" id="btn-edit-mp-cue-top" title="Edit Liturgical Cue for ${escapeHtml(state.filterMassPart)}" style="height:32px;padding:0 9px;border-radius:10px;background:var(--bg-elev2);border:1px solid var(--line);color:var(--text);font-size:11px;font-weight:700;display:inline-flex;align-items:center;gap:4px;cursor:pointer;">
-            <span style="display:inline-flex;align-items:center;width:12px;height:12px;">${iconEdit()}</span>
-            <span>Edit Cue</span>
-          </button>
-        ` : ''}
+        <!-- (2026-07-13) remove edit cue button from topbar header; prev: shown -->
         <button class="${state.listEditMode?'btn-done-edit':'icon-btn'}" id="btn-edit-list" title="${state.listEditMode?'Done Editing':'Edit & Reorder Songs'}" ${state.listEditMode ? 'style="background:var(--accent);color:#0f1115;border:none;font-weight:800;font-size:12px;padding:5px 12px;border-radius:16px;min-height:30px;display:inline-flex;align-items:center;gap:4px;cursor:pointer;box-shadow:0 2px 8px var(--accent-dim);"' : ''}>
           ${state.listEditMode ? `${iconCheck()}<span>Done</span>` : iconEdit()}
         </button>
@@ -3074,10 +3199,24 @@ function renderListView(animateChipScroll){
       </div>
     </div>
     ${!state.modal && state.listEditMode && state.checkedSongIds.length > 0 ? `
+      <!-- (2026-07-13) fix batch bar buttons sizing; prev: oversized btn classes -->
       <div class="batch-action-bar" id="batch-action-bar">
-        <span style="font-size:13px;font-weight:700;color:var(--accent);">${state.checkedSongIds.length} selected</span>
-        <button class="btn btn-primary" id="btn-batch-add-folder" style="padding:7px 16px;min-height:36px;font-size:13px;flex:0 0 auto;">Add to Folder</button>
-        <button class="btn btn-secondary" id="btn-batch-export" style="padding:7px 14px;min-height:36px;font-size:13px;flex:0 0 auto;">Export</button>
+        <span class="batch-count-pill">${state.checkedSongIds.length} selected</span>
+        <button type="button" class="batch-btn batch-btn-folder" id="btn-batch-add-folder" title="Add to Folder">
+          ${iconFolder()}
+          <span>Folder</span>
+        </button>
+        <button type="button" class="batch-btn batch-btn-export" id="btn-batch-export" title="Export Selected">
+          ${iconExport()}
+          <span>Export</span>
+        </button>
+        <button type="button" class="batch-btn batch-btn-delete" id="btn-batch-delete" title="Delete Selected">
+          ${iconTrash()}
+          <span>Delete</span>
+        </button>
+        <button type="button" class="batch-close-btn" id="btn-batch-cancel" title="Clear selection">
+          ${iconClose()}
+        </button>
       </div>
     ` : (state.listEditMode ? '' : '<button class="fab" id="fab-add">+</button>')}
     ${sidebarHtml()}
@@ -3215,7 +3354,7 @@ function renderListView(animateChipScroll){
   if(addFolderBtn) addFolderBtn.onclick = triggerBatchAddFolder;
   const batchAddBtn = document.getElementById('btn-batch-add-folder');
   if(batchAddBtn) batchAddBtn.onclick = triggerBatchAddFolder;
-  // (2026-07-13) wire batch export of selected songs; prev: none
+  // (2026-07-13) wire batch delete & clear selection; prev: add/export only
   const batchExpBtn = document.getElementById('btn-batch-export');
   if(batchExpBtn){
     batchExpBtn.onclick = ()=>{
@@ -3226,12 +3365,70 @@ function renderListView(animateChipScroll){
       showToast(`Exported ${selected.length} song(s) to "${scope}.gsma"`);
     };
   }
+  const batchDelBtn = document.getElementById('btn-batch-delete');
+  if(batchDelBtn){
+    batchDelBtn.onclick = ()=>{
+      const count = state.checkedSongIds.length;
+      if(!count) return;
+      showConfirmModal({
+        title: 'Delete Selected Songs',
+        message: `Delete ${count} selected song(s)? This cannot be undone.`,
+        confirmText: 'Delete All',
+        danger: true,
+        onConfirm: async ()=>{
+          // (2026-07-13) prevent deleting lit dialogues; prev: all checked
+          const toDel = [...state.checkedSongIds].filter(sid=>{
+            const s = state.songs.find(item=>item.id===sid);
+            return !(s && ((s.id && String(s.id).startsWith('lit-')) || (s.artist||'').includes('Misal Romano')));
+          });
+          if(!toDel.length){
+            state.checkedSongIds = [];
+            showToast('Misal Romano items cannot be deleted');
+            renderListView();
+            return;
+          }
+          for(const sid of toDel){
+            const row = document.querySelector(`.song-row[data-id="${sid}"]`);
+            if(row){
+              row.style.transition = 'opacity 0.28s ease, transform 0.28s ease';
+              row.style.opacity = '0';
+              row.style.transform = 'translateX(-24px)';
+            }
+          }
+          await new Promise(r => setTimeout(r, 260));
+          state.songs = state.songs.filter(s=>!toDel.includes(s.id));
+          for(const sid of toDel){
+            await Store.deleteSong(sid);
+          }
+          state.checkedSongIds = [];
+          showToast(`Deleted ${count} song(s)`);
+          renderListView();
+        }
+      });
+    };
+  }
+  const batchCancelBtn = document.getElementById('btn-batch-cancel');
+  if(batchCancelBtn){
+    batchCancelBtn.onclick = ()=>{
+      state.checkedSongIds = [];
+      renderListView();
+    };
+  }
   const paletteBtn = document.getElementById('btn-chip-palette');
   if(paletteBtn){
     paletteBtn.onclick = (e)=>{
       e.stopPropagation();
       state.showChipColorPicker = !state.showChipColorPicker;
       renderListView();
+    };
+  }
+  // (2026-07-13) wire button navigating to folders page; prev: none
+  const btnGotoFolders = document.getElementById('btn-goto-folders');
+  if(btnGotoFolders){
+    btnGotoFolders.onclick = (e)=>{
+      e.stopPropagation();
+      state.view = 'folders';
+      render();
     };
   }
   document.querySelectorAll('[data-pick-folder-color]').forEach(btn=>{
@@ -3310,13 +3507,7 @@ function renderListView(animateChipScroll){
       render();
     };
   }
-  // (2026-07-13) wire top bar edit cue button for current mass part; prev: none
-  const editCueTop = document.getElementById('btn-edit-mp-cue-top');
-  if(editCueTop){
-    editCueTop.onclick = ()=>{
-      openCueEditor(state.filterMassPart);
-    };
-  }
+  // (2026-07-13) remove topbar edit cue click handler; prev: wired
   const manageCatsBtn = document.getElementById('btn-manage-cats');
   if(manageCatsBtn){
     manageCatsBtn.onclick = ()=>{ state.modal = {type:'categories'}; renderListView(); };
@@ -3629,12 +3820,23 @@ function wireSongRowInteractions(el, id, sectionMassPart){
     favEl.onmouseup = (e)=>e.stopPropagation();
   }
 
-  // (2026-07-13) instant touch/click feedback on song row; prev: delay on active
+  // (2026-07-13) tap row to check in edit mode with slop; prev: checkbox only
+  let touchStartX = 0, touchStartY = 0, isTouch = false;
   const clearPressed = ()=> el.classList.remove('is-pressed');
   const start = (e)=>{
     if(e.target.closest('.fav, .song-check-btn, .song-drag-handle')) return;
     el.classList.add('is-pressed');
     moved = false; longFired = false;
+    if(e.touches && e.touches[0]){
+      isTouch = true;
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+    } else {
+      isTouch = false;
+      touchStartX = e.clientX;
+      touchStartY = e.clientY;
+    }
+    if(state.listEditMode) return;
     pressTimer = setTimeout(()=>{
       longFired = true;
       clearPressed();
@@ -3655,7 +3857,15 @@ function wireSongRowInteractions(el, id, sectionMassPart){
   };
   const cancel = ()=>{ clearTimeout(pressTimer); clearPressed(); };
   el.addEventListener('touchstart', start, {passive:true});
-  el.addEventListener('touchmove', ()=>{ moved = true; cancel(); }, {passive:true});
+  el.addEventListener('touchmove', (e)=>{
+    if(e.touches && e.touches[0]){
+      const dist = Math.hypot(e.touches[0].clientX - touchStartX, e.touches[0].clientY - touchStartY);
+      if(dist > 10){
+        moved = true;
+        cancel();
+      }
+    }
+  }, {passive:true});
   el.addEventListener('touchend', (e)=>{
     if(e.target.closest('.fav, .song-check-btn, .song-drag-handle')) return;
     cancel();
@@ -3665,16 +3875,20 @@ function wireSongRowInteractions(el, id, sectionMassPart){
       return;
     }
     if(!moved){
+      if(e.cancelable) e.preventDefault();
       if(state.listEditMode){
-        // (2026-07-13) tap row to toggle batch selection in edit mode; prev: exclude
         toggleSongChecked(id);
       } else {
         openViewer(id, null, sectionMassPart);
       }
     }
   });
-  el.addEventListener('mousedown', start);
+  el.addEventListener('mousedown', (e)=>{
+    if(isTouch) return;
+    start(e);
+  });
   el.addEventListener('mouseup', (e)=>{
+    if(isTouch) return;
     if(e.target.closest('.fav, .song-check-btn, .song-drag-handle')) return;
     cancel();
     if(longFired){
@@ -3682,10 +3896,12 @@ function wireSongRowInteractions(el, id, sectionMassPart){
       e.stopPropagation();
       return;
     }
-    if(state.listEditMode){
-      toggleSongChecked(id);
-    } else {
-      openViewer(id, null, sectionMassPart);
+    if(!moved){
+      if(state.listEditMode){
+        toggleSongChecked(id);
+      } else {
+        openViewer(id, null, sectionMassPart);
+      }
     }
   });
   el.addEventListener('touchcancel', cancel);
@@ -3713,7 +3929,7 @@ function openViewer(id, fromSetlistId, preferredMassPart){
 }
 function currentSong(){ return state.songs.find(s=>s.id===state.currentId); }
 
-// (2026-07-13) filter folder songs strictly on swipe; prev: lit included
+// (2026-07-13) include lit dialogues in swipe list; prev: excluded on swipe
 function getViewerSongList(){
   if(state.cameFromSetlistId){
     const sl = state.setlists.find(s=>s.id===state.cameFromSetlistId);
@@ -3721,24 +3937,6 @@ function getViewerSongList(){
       const ids = sl.items.filter(it=>it.type==='song'&&it.songId).map(it=>it.songId);
       const res = ids.map(id=>state.songs.find(s=>s.id===id)).filter(Boolean);
       if(res.length > 0) return res;
-    }
-  }
-  if(state.filterCat && state.filterCat !== 'All'){
-    const folderSongs = state.songs.filter(s=>!(s.id && String(s.id).startsWith('lit-')) && (s.categories||[]).includes(state.filterCat));
-    if(folderSongs.length > 0){
-      const sections = getOrderedSongSections(folderSongs);
-      const ordered = [];
-      const seen = new Set();
-      sections.forEach(sec=>{
-        sec.songs.forEach(s=>{
-          if(isSongExcluded(s) && s.id !== state.currentId) return;
-          if(!seen.has(s.id) && !(s.id && String(s.id).startsWith('lit-'))){
-            seen.add(s.id);
-            ordered.push(s);
-          }
-        });
-      });
-      if(ordered.length > 0) return ordered;
     }
   }
   const songs = getFilteredSongsForCurrentView();
@@ -3828,6 +4026,85 @@ function renderCueChordPills(chordStr, cueId){
   return `<div class="cue-chord-row" data-base-chords="${escapeHtml(raw)}">${renderChordLine('>' + transposed)}</div>`;
 }
 
+// (2026-07-13) custom dropdown component & cue card selector; prev: select
+function renderCustomDropdown({ id, value, options, className = '', style = '', placeholder = 'Select…' }){
+  const normalized = options.map(opt => typeof opt === 'object' ? opt : { value: opt, label: opt });
+  const current = normalized.find(o => String(o.value) === String(value)) || normalized[0] || { value: '', label: placeholder };
+  return `
+    <div class="custom-select ${className}" data-custom-select="${id}" style="${style}">
+      <input type="hidden" id="${id}" value="${escapeHtml(current.value)}"/>
+      <button type="button" class="custom-select-trigger" aria-haspopup="listbox" aria-expanded="false">
+        <span class="custom-select-label">${escapeHtml(current.label)}</span>
+        <svg class="custom-select-chevron" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+      </button>
+      <div class="custom-select-menu" role="listbox">
+        ${normalized.map(opt => {
+          const isSelected = String(opt.value) === String(current.value);
+          return `<div class="custom-select-option ${isSelected ? 'selected' : ''}" role="option" data-value="${escapeHtml(opt.value)}" aria-selected="${isSelected}">
+            <span>${escapeHtml(opt.label)}</span>
+            ${isSelected ? `<span class="custom-select-check">${iconCheckSmall()}</span>` : ''}
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
+
+function wireCustomDropdowns(root = document){
+  root.querySelectorAll('[data-custom-select]').forEach(container => {
+    const id = container.dataset.customSelect;
+    const trigger = container.querySelector('.custom-select-trigger');
+    const menu = container.querySelector('.custom-select-menu');
+    const hiddenInput = container.querySelector('input[type="hidden"]');
+    const labelSpan = container.querySelector('.custom-select-label');
+    if(!trigger || !menu || !hiddenInput) return;
+
+    const closeMenu = ()=>{
+      container.classList.remove('open');
+      trigger.setAttribute('aria-expanded', 'false');
+    };
+
+    const openMenu = ()=>{
+      document.querySelectorAll('[data-custom-select].open').forEach(c => {
+        if(c !== container){
+          c.classList.remove('open');
+          c.querySelector('.custom-select-trigger')?.setAttribute('aria-expanded', 'false');
+        }
+      });
+      container.classList.add('open');
+      trigger.setAttribute('aria-expanded', 'true');
+    };
+
+    trigger.onclick = (e)=>{
+      e.stopPropagation();
+      if(container.classList.contains('open')) closeMenu();
+      else openMenu();
+    };
+
+    container.querySelectorAll('.custom-select-option').forEach(opt => {
+      opt.onclick = (e)=>{
+        e.stopPropagation();
+        const val = opt.dataset.value;
+        const text = opt.querySelector('span')?.textContent || val;
+        hiddenInput.value = val;
+        if(labelSpan) labelSpan.textContent = text;
+        container.querySelectorAll('.custom-select-option').forEach(o => {
+          o.classList.remove('selected');
+          o.setAttribute('aria-selected', 'false');
+          o.querySelector('.custom-select-check')?.remove();
+        });
+        opt.classList.add('selected');
+        opt.setAttribute('aria-selected', 'true');
+        opt.insertAdjacentHTML('beforeend', `<span class="custom-select-check">${iconCheckSmall()}</span>`);
+        closeMenu();
+        hiddenInput.dispatchEvent(new Event('change', { bubbles: true }));
+        if(typeof hiddenInput.onchange === 'function'){
+          hiddenInput.onchange({ target: hiddenInput });
+        }
+      };
+    });
+  });
+}
+
 function renderMassPartCueCard(song){
   // (2026-07-13) render piano pitch finder on liturgical dialogue songs; prev: omitted
   if(song.id && String(song.id).startsWith('lit-')){
@@ -3871,20 +4148,24 @@ function renderMassPartCueCard(song){
   const cue = findMassPartCue(currentPart);
   if(!cue) return '';
 
-  const selectorHtml = parts.length > 1 ? `
-    <select id="viewer-masspart-select" class="viewer-masspart-select" title="Switch Mass Part Cue">
-      ${parts.map(p=>`<option value="${escapeHtml(p)}" ${p===currentPart?'selected':''}>${escapeHtml(p)}</option>`).join('')}
-    </select>
-  ` : `<span class="masspart-cue-badge">${escapeHtml(currentPart)}</span>`;
+  // (2026-07-13) masspart as cue title without badge; prev: cue.title & badge
+  const selectorHtml = parts.length > 1 ? renderCustomDropdown({
+    id: 'viewer-masspart-select',
+    value: currentPart,
+    options: parts.map(p=>({ value: p, label: p })),
+    className: 'compact',
+    style: 'display:inline-block;width:auto;min-width:96px;'
+  }) : '';
 
-  // (2026-07-13) pin cue toggle top-right with svg icons & remove cue-sing; prev: wrapped
-  if(state.hideCueCard){
+  // (2026-07-13) collapse cue card from song or state; prev: state.hideCueCard
+  const isCueHidden = song.hideCueCard !== undefined ? !!song.hideCueCard : !!state.hideCueCard;
+  if(isCueHidden){
     return `
       <div class="masspart-cue-card collapsed" id="masspart-cue-card">
         <div class="masspart-cue-header">
           <div class="masspart-cue-title">
             <span class="masspart-cue-star">&#10022;</span>
-            <span class="masspart-cue-title-text">${escapeHtml(cue.title)}</span>
+            <span class="masspart-cue-title-text">${escapeHtml(currentPart.toUpperCase())}</span>
           </div>
           <div class="masspart-cue-actions">
             ${selectorHtml}
@@ -3937,12 +4218,13 @@ function renderMassPartCueCard(song){
       <div class="masspart-cue-header">
         <div class="masspart-cue-title">
           <span class="masspart-cue-star">&#10022;</span>
-          <span class="masspart-cue-title-text">${escapeHtml(cue.title)}</span>
+          <!-- (2026-07-13) show uppercase mass part as title; prev: cue.title -->
+          <span class="masspart-cue-title-text">${escapeHtml(currentPart.toUpperCase())}</span>
         </div>
         <div class="masspart-cue-actions">
           ${selectorHtml}
-          <!-- (2026-07-13) edit cue button in cue card header; prev: none -->
-          <button class="cue-toggle-btn" id="btn-open-cue-editor" title="Edit Liturgical Dialogue & Chords" data-mp="${escapeHtml(currentPart)}">
+          <!-- (2026-07-13) edit cue button with class & id; prev: id only -->
+          <button class="cue-toggle-btn btn-open-cue-editor" id="btn-open-cue-editor" title="Edit Liturgical Dialogue & Chords" data-mp="${escapeHtml(currentPart)}">
             <span style="display:inline-flex;align-items:center;width:11px;height:11px;">${iconEdit()}</span>
             <span>Edit Cue</span>
           </button>
@@ -4110,8 +4392,9 @@ function renderIntroMelodySection(introMelody, isCollapsed, songId){
     </div>
   `).join('');
   const collapsed = !!isCollapsed;
+  // (2026-07-13) remove inline border to allow theme card outline; prev: inline
   return `
-    <div class="intro-melody-box ${collapsed ? 'is-collapsed' : ''}" data-song-id="${escapeHtml(songId||'')}" style="margin:4px 0 16px 0;padding:${collapsed ? '8px 14px' : '12px 14px'};background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:12px;transition:padding 0.2s ease;">
+    <div class="intro-melody-box ${collapsed ? 'is-collapsed' : ''}" data-song-id="${escapeHtml(songId||'')}" style="margin:4px 0 16px 0;padding:${collapsed ? '8px 14px' : '12px 14px'};border-radius:12px;transition:padding 0.2s ease;">
       <div class="intro-melody-header" data-toggle-intro-melody="true" style="font-size:11px;font-weight:800;color:var(--accent);letter-spacing:0.8px;text-transform:uppercase;margin-bottom:${collapsed ? '0' : '10px'};display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;">
         <div class="intro-melody-toggle" style="display:flex;align-items:center;gap:7px;flex:1;cursor:pointer;">
           <svg class="intro-chevron-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.2s ease;transform:${collapsed ? 'rotate(-90deg)' : 'rotate(0deg)'};color:var(--text-dim);"><polyline points="6 9 12 15 18 9"></polyline></svg>
@@ -4140,7 +4423,9 @@ function renderSongSheetContent(s, isPeek){
   const body = offset ? transposeBody(s.body, offset, preferFlat) : s.body;
   const flag = getSongFlag(s);
   const flagPill = flag ? `<span class="song-flag-pill" style="background-color:${flag.color};"></span>` : '';
-  // (2026-07-13) prayer dialogue parser aligning response chords & text; prev: unaligned
+  const isLit = !!(s && s.id && String(s.id).startsWith('lit-'));
+  const isMisalRomano = isLit || /misal\s*romano/i.test(s.artist || '') || /misal\s*romano/i.test(s.title || '') || (s.categories || []).some(c => /misal\s*romano/i.test(c));
+  // (2026-07-13) compact dialogue cue rendering; prev: pre-wrap newlines
   const rawLines = (body||'').split('\n');
   const renderedLines = [];
   for(let i = 0; i < rawLines.length; i++){
@@ -4152,8 +4437,12 @@ function renderSongSheetContent(s, isPeek){
       renderedLines.push(`<div class="lyric-line">${renderBracketLine(line)}</div>`);
     } else if(cls === 'divider'){
       renderedLines.push(`<hr class="chart-hr"/>`);
+      while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){ i++; }
     } else if(cls === 'section'){
-      renderedLines.push(`<div class="section-line">${escapeHtml(line)}</div>`);
+      if(!isMisalRomano){
+        renderedLines.push(`<div class="section-line">${escapeHtml(line)}</div>`);
+      }
+      while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){ i++; }
     } else if(cls === 'priest'){
       const pData = extractPriestData(line);
       let nextIdx = i + 1;
@@ -4177,28 +4466,12 @@ function renderSongSheetContent(s, isPeek){
         const mSpaces = chordLine ? chordLine.match(/^>\s*/) : null;
         const leadCount = mSpaces ? (mSpaces[0].length - 1) : 0;
         const alignedChordLine = chordLine ? (leadCount < 8 ? ('>' + ' '.repeat(8 - leadCount) + chordLine.replace(/^>\s*/, '')) : chordLine) : null;
-        // (2026-07-13) place response chip on left of text & chords above; prev: on chord
-        renderedLines.push(`
-          <div class="cue-item dialogue-cue-item">
-            <div class="cue-line cue-priest"><span class="dialogue-badge priest-badge">${iconPriestCross()} ${escapeHtml(pData.role)}</span><span class="cue-text">${escapeHtml(pData.text)}</span></div>
-            ${alignedChordLine ? `<!-- (2026-07-13) bind data-base-chords for reactive pitch transposing; prev: static -->
-            <div class="cue-chord-row" data-base-chords="${escapeHtml(alignedChordLine.replace(/^>/, ''))}">${renderChordLine(alignedChordLine)}</div>` : ''}
-            <div class="cue-line cue-response">
-              <span class="dialogue-badge response-badge">${iconPeopleGroup()} ${escapeHtml(rData.role)}</span>
-              <span class="cue-text">${escapeHtml(rData.text)}</span>
-            </div>
-          </div>`);
-        while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){
-          i++;
-        }
+        const chordHtml = alignedChordLine ? `<div class="cue-chord-row" data-base-chords="${escapeHtml(alignedChordLine.replace(/^>/, ''))}">${renderChordLine(alignedChordLine)}</div>` : '';
+        renderedLines.push(`<div class="cue-item dialogue-cue-item"><div class="cue-line cue-priest"><span class="dialogue-badge priest-badge">${iconPriestCross()} ${escapeHtml(pData.role)}</span><span class="cue-text">${escapeHtml(pData.text)}</span></div>${chordHtml}<div class="cue-line cue-response"><span class="dialogue-badge response-badge">${iconPeopleGroup()} ${escapeHtml(rData.role)}</span><span class="cue-text">${escapeHtml(rData.text)}</span></div></div>`);
+        while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){ i++; }
       } else {
-        renderedLines.push(`
-          <div class="cue-item dialogue-cue-item">
-            <div class="cue-line cue-priest"><span class="dialogue-badge priest-badge">${iconPriestCross()} ${escapeHtml(pData.role)}</span><span class="cue-text">${escapeHtml(pData.text)}</span></div>
-          </div>`);
-        while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){
-          i++;
-        }
+        renderedLines.push(`<div class="cue-item dialogue-cue-item"><div class="cue-line cue-priest"><span class="dialogue-badge priest-badge">${iconPriestCross()} ${escapeHtml(pData.role)}</span><span class="cue-text">${escapeHtml(pData.text)}</span></div></div>`);
+        while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){ i++; }
       }
     } else if(cls === 'chord'){
       let nextIdx = i + 1;
@@ -4209,56 +4482,42 @@ function renderSongSheetContent(s, isPeek){
         const mSpaces = line.match(/^>\s*/);
         const leadCount = mSpaces ? (mSpaces[0].length - 1) : 0;
         const alignedChordLine = leadCount < 8 ? ('>' + ' '.repeat(8 - leadCount) + line.replace(/^>\s*/, '')) : line;
-        renderedLines.push(`
-          <div class="cue-item dialogue-cue-item">
-            <div class="cue-chord-row">${renderChordLine(alignedChordLine)}</div>
-            <div class="cue-line cue-response">
-              <span class="dialogue-badge response-badge">${iconPeopleGroup()} ${escapeHtml(rData.role)}</span>
-              <span class="cue-text">${escapeHtml(rData.text)}</span>
-            </div>
-          </div>`);
-        while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){
-          i++;
-        }
+        renderedLines.push(`<div class="cue-item dialogue-cue-item"><div class="cue-chord-row">${renderChordLine(alignedChordLine)}</div><div class="cue-line cue-response"><span class="dialogue-badge response-badge">${iconPeopleGroup()} ${escapeHtml(rData.role)}</span><span class="cue-text">${escapeHtml(rData.text)}</span></div></div>`);
+        while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){ i++; }
       } else {
         renderedLines.push(`<div class="lyric-line">${renderChordLine(line)}</div>`);
       }
     } else if(cls === 'response'){
       const rData = extractResponseData(line);
-      renderedLines.push(`
-        <div class="cue-item dialogue-cue-item">
-          <div class="cue-line cue-response">
-            <span class="dialogue-badge response-badge">${iconPeopleGroup()} ${escapeHtml(rData.role)}</span>
-            <span class="cue-text">${escapeHtml(rData.text)}</span>
-          </div>
-        </div>`);
-      while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){
-        i++;
-      }
+      renderedLines.push(`<div class="cue-item dialogue-cue-item"><div class="cue-line cue-response"><span class="dialogue-badge response-badge">${iconPeopleGroup()} ${escapeHtml(rData.role)}</span><span class="cue-text">${escapeHtml(rData.text)}</span></div></div>`);
+      while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){ i++; }
     } else if(cls === 'blank'){
-      renderedLines.push(`<div>&nbsp;</div>`);
+      if(!isLit) renderedLines.push(`<div>&nbsp;</div>`);
     } else {
       renderedLines.push(`<div class="lyric-line">${escapeHtml(line)}</div>`);
     }
   }
   const lines = renderedLines.join('');
 
+  // (2026-07-13) omit redundant titles/meta for Misal Romano; prev: rendered all
   return `
-    ${renderMassPartCueCard(s)}
-    <div class="chart-title" style="display:flex;align-items:center;gap:6px;">
-      ${flagPill}
-      <span>${escapeHtml(cleanSongTitleForDisplay(s.title))}</span>
-    </div>
-    <div class="chart-artist">${escapeHtml(getEffectiveSongArtist(s)||s.artist||'')}</div>
-    <div class="chart-meta-inline">
-      <span>Key <b>${escapeHtml(transposeKeyLabel(effKey, offset)||'—')}</b></span>
-      <span>Capo <b>${s.capo||0}</b></span>
-      <span>Tempo <b>${s.tempo||'—'}</b> BPM</span>
-      <span>Time <b>${escapeHtml(s.timeSig||'4/4')}</b></span>
-      <span>Style <b>${escapeHtml(s.style||'—')}</b></span>
-      <span>Instr. <b>${escapeHtml(s.instrument||'—')}</b></span>
-      ${s.referenceUrl ? `<span><a href="${escapeHtml(s.referenceUrl)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;font-weight:700;">&#9654; Reference</a></span>` : ''}
-    </div>
+    ${isPeek ? '' : renderMassPartCueCard(s)}
+    ${isMisalRomano ? '' : `
+      <div class="chart-title" style="display:flex;align-items:center;gap:6px;">
+        ${flagPill}
+        <span>${escapeHtml(cleanSongTitleForDisplay(s.title))}</span>
+      </div>
+      <div class="chart-artist">${escapeHtml(getEffectiveSongArtist(s)||s.artist||'')}</div>
+      <div class="chart-meta-inline">
+        <span>Key <b>${escapeHtml(transposeKeyLabel(effKey, offset)||'—')}</b></span>
+        <span>Capo <b>${s.capo||0}</b></span>
+        <span>Tempo <b>${s.tempo||'—'}</b> BPM</span>
+        <span>Time <b>${escapeHtml(s.timeSig||'4/4')}</b></span>
+        <span>Style <b>${escapeHtml(s.style||'—')}</b></span>
+        <span>Instr. <b>${escapeHtml(s.instrument||'—')}</b></span>
+        ${s.referenceUrl ? `<span><a href="${escapeHtml(s.referenceUrl)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;font-weight:700;">&#9654; Reference</a></span>` : ''}
+      </div>
+    `}
     ${renderIntroMelodySection(s.introMelody, s.introMelodyCollapsed, s.id)}
     <div class="chart-body" ${isPeek ? '' : 'id="chart-body"'}>${lines}</div>
     ${renderMassPartFooterCue(s)}
@@ -4282,7 +4541,9 @@ function renderViewer(){
   const prevScrollTop = existingChartWrap ? existingChartWrap.scrollTop : 0;
   const fontSize = song.viewerFontSize || 15;
   const scrollSpeed = song.viewerScrollSpeed || 30;
-  const isActivelyScrolling = state.autoscroll && performance.now() >= autoscrollTopDelayUntil;
+  // (2026-07-13) mark inactive when modal/overlay open; prev: checked delay only
+  const isOverlayOpen = !!(state.modal || document.getElementById('modal-bg') || document.querySelector('.modal-backdrop, .modal, .sidebar-backdrop'));
+  const isActivelyScrolling = state.autoscroll && !isOverlayOpen && performance.now() >= autoscrollTopDelayUntil;
 
   const beatsPerBar = parseInt((song.timeSig||'4/4').split('/')[0]) || 4;
   let beatDots = '';
@@ -4361,6 +4622,8 @@ function renderViewer(){
   if(nextBtn && nextSong){
     nextBtn.onclick = ()=> openViewer(nextSong.id, state.cameFromSetlistId);
   }
+  // (2026-07-13) wire custom dropdown for viewer mass part; prev: select
+  wireCustomDropdowns(app);
   const mpSelect = document.getElementById('viewer-masspart-select');
   if(mpSelect){
     mpSelect.onchange = (e)=>{
@@ -4368,19 +4631,86 @@ function renderViewer(){
       renderViewer();
     };
   }
-  const toggleCueBtn = document.getElementById('btn-toggle-cue');
-  if(toggleCueBtn){
-    toggleCueBtn.onclick = ()=>{
-      state.hideCueCard = !state.hideCueCard;
-      renderViewer();
+  // (2026-07-13) persist cue card collapse state to song & store; prev: state only
+  const handleToggleCue = (e)=>{
+    if(e){ e.preventDefault(); e.stopPropagation(); }
+    const s = currentSong();
+    if(!s) return;
+    const isHidden = s.hideCueCard !== undefined ? !!s.hideCueCard : !!state.hideCueCard;
+    s.hideCueCard = !isHidden;
+    state.hideCueCard = s.hideCueCard;
+    Store.saveSong(s).catch(()=>{});
+    renderViewer();
+  };
+  document.querySelectorAll('#btn-toggle-cue, .cue-toggle-btn').forEach(btn=>{
+    if(btn.id === 'btn-toggle-cue' || btn.title?.includes('Liturgical Cues')){
+      btn.onclick = handleToggleCue;
+    }
+  });
+  // (2026-07-13) wire edit cue with delegation & queryAll; prev: getElementById
+  const cueEditHandler = (targetEl)=>{
+    const mp = targetEl?.dataset?.mp || state.selectedViewerMassPart;
+    openCueEditor(mp);
+  };
+  document.querySelectorAll('#btn-open-cue-editor, .btn-open-cue-editor').forEach(btn=>{
+    btn.onclick = (e)=>{
+      e.preventDefault();
+      e.stopPropagation();
+      cueEditHandler(btn);
     };
-  }
-  // (2026-07-13) wire edit cue button in viewer cue card; prev: none
-  const btnOpenCueEd = document.getElementById('btn-open-cue-editor');
-  if(btnOpenCueEd){
-    btnOpenCueEd.onclick = ()=>{
-      openCueEditor(btnOpenCueEd.dataset.mp || state.selectedViewerMassPart);
-    };
+  });
+  // (2026-07-13) delegate cue & intro melody toggle on chartWrap; prev: cue editor only
+  if(chartWrap){
+    chartWrap.addEventListener('click', (e)=>{
+      const cueToggle = e.target.closest('#btn-toggle-cue, .cue-toggle-btn');
+      if(cueToggle && (cueToggle.id === 'btn-toggle-cue' || cueToggle.title?.includes('Liturgical Cues'))){
+        handleToggleCue(e);
+        return;
+      }
+      const introToggle = e.target.closest('[data-toggle-intro-melody], .intro-melody-header, .intro-chevron-icon, .intro-melody-toggle');
+      if(introToggle && !e.target.closest('.staff-play-btn')){
+        e.preventDefault();
+        e.stopPropagation();
+        const box = introToggle.closest('.intro-melody-box');
+        if(box){
+          const songId = box.dataset.songId;
+          const s = (state.songs && state.songs.find(x=>x.id===songId)) || currentSong();
+          const isNowCollapsed = !box.classList.contains('is-collapsed');
+          box.classList.toggle('is-collapsed', isNowCollapsed);
+          box.style.padding = isNowCollapsed ? '8px 14px' : '12px 14px';
+          const header = box.querySelector('.intro-melody-header');
+          if(header) header.style.marginBottom = isNowCollapsed ? '0' : '10px';
+          const content = box.querySelector('.intro-melody-content');
+          if(content) content.style.display = isNowCollapsed ? 'none' : 'block';
+          const chevron = box.querySelector('.intro-chevron-icon');
+          if(chevron) chevron.style.transform = isNowCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+          let hint = box.querySelector('.intro-collapsed-hint');
+          if(isNowCollapsed){
+            if(!hint){
+              hint = document.createElement('span');
+              hint.className = 'intro-collapsed-hint';
+              hint.style.cssText = 'font-size:10px;font-weight:600;color:var(--text-dim);letter-spacing:0.4px;text-transform:none;opacity:0.75;';
+              hint.textContent = '(Tap to view)';
+              const wrap = box.querySelector('.intro-melody-toggle') || header;
+              if(wrap) wrap.appendChild(hint);
+            }
+          } else if(hint){
+            hint.remove();
+          }
+          if(s){
+            s.introMelodyCollapsed = isNowCollapsed;
+            Store.saveSong(s).catch(()=>{});
+          }
+        }
+        return;
+      }
+      const btn = e.target.closest('#btn-open-cue-editor, .btn-open-cue-editor');
+      if(btn){
+        e.preventDefault();
+        e.stopPropagation();
+        cueEditHandler(btn);
+      }
+    });
   }
   const editCueBtn = document.getElementById('btn-edit-cue');
   if(editCueBtn){
@@ -4476,9 +4806,9 @@ function renderViewer(){
         setTimeout(()=>{ if(sliderTrack) sliderTrack.style.transition = ''; }, 240);
       }
     };
-    // (2026-07-13) allow swiping on chords; prev: chord-tok blocked swipe
+    // (2026-07-13) exclude cue card & intro melody box from swipe; prev: unexcluded
     const handleSwipeStart = (clientX, clientY, target)=>{
-      if(target.closest('.cue-piano-key, .speed-slider-wrap, .scroll-square, button, select, input, textarea, a, .staff-play-btn')){
+      if(target.closest('.cue-piano-key, .speed-slider-wrap, .scroll-square, button, select, input, textarea, a, .staff-play-btn, .intro-melody-box, .masspart-cue-card, .cue-toggle-btn')){
         return false;
       }
       isSwipeDrag = true;
@@ -4689,6 +5019,12 @@ function startAutoscroll(song, immediate){
       autoscrollRAF = null;
       const sc = document.getElementById('chart-scroll-content');
       if(sc) sc.style.transform = 'none';
+      return;
+    }
+    // (2026-07-13) pause autoscroll while modal/overlay open; prev: kept scrolling
+    if(state.modal || document.getElementById('modal-bg') || document.querySelector('.modal-backdrop, .modal, .sidebar-backdrop')){
+      autoscrollLastTs = ts;
+      autoscrollRAF = requestAnimationFrame(step);
       return;
     }
     const chart = document.getElementById('chart-wrap');
@@ -4967,11 +5303,12 @@ function closeEditorOverlay(afterClose){
   }, 340);
 }
 
-// (2026-07-13) universal modal cleanup on openEditor; prev: stuck modal backdrop
-function openEditor(id){
+// (2026-07-13) preserve editor origin view for return; prev: forced viewer
+function openEditor(id, cameFrom){
   // (2026-07-13) record current list scroll before opening editor; prev: unrecorded
   const lw = document.getElementById('list-wrap');
   if(lw) state.lastListScroll = lw.scrollTop;
+  state.editorCameFrom = cameFrom || (state.view === 'viewer' ? 'viewer' : 'list');
   state.modal = null;
   state.isSavingSong = false;
   document.querySelectorAll('.modal-backdrop, #modal-bg').forEach(el=>el.remove());
@@ -5002,6 +5339,8 @@ function renderEditor(){
   const timeSigs = ['4/4','3/4','6/8','2/4','12/8','5/4'];
   const timeOptions = timeSigs.map(t=>`<option value="${t}" ${d.timeSig===t?'selected':''}>${t}</option>`).join('') + `<option value="custom" ${!timeSigs.includes(d.timeSig)?'selected':''}>Custom…</option>`;
   const isExisting = !!state.songs.find(s=>s.id===d.id);
+  // (2026-07-13) hide delete button for lit dialogues; prev: all existing
+  const isLitDialogue = (d.id && String(d.id).startsWith('lit-')) || ((d.artist||'').includes('Misal Romano'));
   const sectionNames = ['Verse','Chorus','Bridge','Intro','Outro','Pre-Chorus'];
   const container = document.getElementById('editor-overlay') || app;
 
@@ -5009,7 +5348,7 @@ function renderEditor(){
     <div class="topbar">
       <button class="icon-btn" id="btn-cancel">${iconBack()}</button>
       <h1>${isExisting ? 'Edit song' : 'New song'}</h1>
-      ${isExisting ? `<button class="icon-btn" id="btn-delete" style="color:var(--danger)">${iconTrash()}</button>` : ''}
+      ${isExisting && !isLitDialogue ? `<button class="icon-btn" id="btn-delete" style="color:var(--danger)">${iconTrash()}</button>` : ''}
     </div>
     <div class="editor">
       <!-- (2026-07-13) clean title for editor input; prev: raw title -->
@@ -5025,7 +5364,15 @@ function renderEditor(){
         <div class="field"><label>Tempo (BPM)</label><input id="f-tempo" type="number" value="${d.tempo}"/></div>
         <div class="field">
           <label>Time signature</label>
-          <select id="f-timesig">${timeOptions}</select>
+          <!-- (2026-07-13) custom dropdown for editor time signature; prev: select -->
+          ${renderCustomDropdown({
+            id: 'f-timesig',
+            value: timeSigs.includes(d.timeSig) ? d.timeSig : 'custom',
+            options: [
+              ...timeSigs.map(t=>({ value: t, label: t })),
+              { value: 'custom', label: 'Custom…' }
+            ]
+          })}
         </div>
       </div>
       <div class="field" id="custom-timesig-wrap" style="display:${timeSigs.includes(d.timeSig)?'none':'block'}">
@@ -5106,14 +5453,84 @@ function renderEditor(){
     ${modalHtml()}
   `;
 
-  const back = ()=>{
+  // (2026-07-13) swipe close & dirty changes confirmation; prev: immediate close
+  const getEditorSnapshot = ()=>{
+    return JSON.stringify({
+      title: (document.getElementById('f-title')?.value || '').trim(),
+      artist: (document.getElementById('f-artist')?.value || '').trim(),
+      key: (document.getElementById('f-key')?.value || '').trim(),
+      capo: (document.getElementById('f-capo')?.value || '0').trim(),
+      tempo: (document.getElementById('f-tempo')?.value || '90').trim(),
+      timeSig: document.getElementById('f-timesig')?.value === 'custom' ? (document.getElementById('f-timesig-custom')?.value || '').trim() : (document.getElementById('f-timesig')?.value || '4/4'),
+      style: (document.getElementById('f-style')?.value || '').trim(),
+      instrument: (document.getElementById('f-instrument')?.value || '').trim(),
+      introMelody: (document.getElementById('f-intro-melody')?.value || '').trim(),
+      body: document.getElementById('f-body')?.value || '',
+      flag: d.flag || 'none',
+      categories: [...(d.categories || [])].sort().join(','),
+      massParts: [...(d.massParts || [])].sort().join(',')
+    });
+  };
+
+  const initialSnapshot = getEditorSnapshot();
+  const isEditorDirty = ()=> getEditorSnapshot() !== initialSnapshot;
+
+  const attemptClose = ()=>{
+    if(isEditorDirty()){
+      showConfirmModal({
+        title: 'Unsaved Changes',
+        message: 'You have unsaved changes. Discard them and leave?',
+        confirmText: 'Discard',
+        danger: true,
+        onConfirm: ()=>{
+          closeEditorOverlay(()=>{
+            state.view = state.editorCameFrom === 'viewer' ? 'viewer' : 'list';
+            render();
+          });
+        }
+      });
+      return;
+    }
     closeEditorOverlay(()=>{
-      state.view = state.currentId ? 'viewer' : 'list';
+      state.view = state.editorCameFrom === 'viewer' ? 'viewer' : 'list';
       render();
     });
   };
-  document.getElementById('btn-cancel').onclick = back;
-  document.getElementById('btn-cancel2').onclick = back;
+
+  document.getElementById('btn-cancel').onclick = attemptClose;
+  document.getElementById('btn-cancel2').onclick = attemptClose;
+
+  const overlay = document.getElementById('editor-overlay');
+  if(overlay){
+    let touchStartX = 0, touchStartY = 0, touchStartTime = 0, isSwipeActive = false;
+    overlay.addEventListener('touchstart', (e)=>{
+      if(e.touches.length !== 1) return;
+      if(e.target.closest('input, textarea, select, button, .cat-toggle, [data-editor-flag]')) return;
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+      touchStartTime = Date.now();
+      isSwipeActive = true;
+    }, {passive:true});
+
+    overlay.addEventListener('touchmove', (e)=>{
+      if(!isSwipeActive || e.touches.length !== 1) return;
+      const dy = Math.abs(e.touches[0].clientY - touchStartY);
+      const dx = Math.abs(e.touches[0].clientX - touchStartX);
+      if(dy > dx * 1.5 && dy > 15){
+        isSwipeActive = false;
+      }
+    }, {passive:true});
+
+    overlay.addEventListener('touchend', (e)=>{
+      if(!isSwipeActive) return;
+      isSwipeActive = false;
+      const dt = Date.now() - touchStartTime;
+      const dx = e.changedTouches[0].clientX - touchStartX;
+      if(dt < 600 && (dx < -60 || dx > 70)){
+        attemptClose();
+      }
+    }, {passive:true});
+  }
   // (2026-07-13) instant optimistic editor flag select; prev: full renderEditor()
   document.querySelectorAll('[data-editor-flag]').forEach(btn=>{
     btn.onclick = ()=>{
@@ -5136,9 +5553,14 @@ function renderEditor(){
       if(prevEl) prevEl.innerHTML = renderIntroMelodySection(d.introMelody);
     };
   }
-  document.getElementById('f-timesig').onchange = e=>{
-    document.getElementById('custom-timesig-wrap').style.display = e.target.value==='custom' ? 'block':'none';
-  };
+  // (2026-07-13) wire custom dropdown for time signature; prev: select
+  wireCustomDropdowns(container);
+  const timeSigEl = document.getElementById('f-timesig');
+  if(timeSigEl){
+    timeSigEl.onchange = e=>{
+      document.getElementById('custom-timesig-wrap').style.display = e.target.value==='custom' ? 'block':'none';
+    };
+  }
   // (2026-07-13) apply folder theme colors to editor folder chips; prev: default accent
   document.querySelectorAll('.cat-toggle[data-cat]').forEach(el=>{
     el.onclick = ()=>{
@@ -5275,8 +5697,12 @@ function renderEditor(){
     }
   });
   const delBtn = document.getElementById('btn-delete');
-  // (2026-07-13) modal confirmation for editor song delete; prev: confirm()
+  // (2026-07-13) block deleting lit dialogues in editor; prev: allowed
   if(delBtn) delBtn.onclick = ()=>{
+    if((d.id && String(d.id).startsWith('lit-')) || (d.artist||'').includes('Misal Romano')){
+      showToast('Misal Romano items cannot be deleted');
+      return;
+    }
     const songTitle = cleanSongTitleForDisplay(d.title) || 'this song';
     showConfirmModal({
       title: 'Delete Song',
@@ -5336,8 +5762,9 @@ function renderEditor(){
       ...d,
       flag: d.flag !== undefined && d.flag !== null ? d.flag : ((getSongFlag(d)?.key) || 'none'),
       introMelody: (document.getElementById('f-intro-melody')?.value || '').trim(),
-      // (2026-07-13) preserve introMelodyCollapsed in song save; prev: omitted
+      // (2026-07-13) preserve introMelodyCollapsed & hideCueCard; prev: intro only
       introMelodyCollapsed: !!d.introMelodyCollapsed,
+      hideCueCard: !!d.hideCueCard,
       // (2026-07-13) clean sorting numbers from title on save; prev: raw titleVal
       title: cleanSongTitleForDisplay(titleVal),
       // (2026-07-13) fallback to inferred composer on save if blank; prev: blank
@@ -5362,8 +5789,9 @@ function renderEditor(){
       state.isSavingSong = false;
     });
 
+    // (2026-07-13) return to editor origin view on save; prev: state.view = 'viewer'
     closeEditorOverlay(()=>{
-      state.view = 'viewer';
+      state.view = state.editorCameFrom === 'viewer' ? 'viewer' : 'list';
       render();
       showToast('Saved');
     });
@@ -5419,6 +5847,205 @@ function renderSetlistsView(){
     el.onclick = ()=>{ state.currentSetlistId = el.dataset.setlistId; state.view='setlist-editor'; render(); };
   });
   wireModal();
+}
+
+// (2026-07-13) dedicated folders page with 3-line drag sorting; prev: none
+function renderFoldersView(){
+  const renderPreviewChips = ()=>{
+    return state.categories.map(c=>{
+      const ct = getFolderTheme(c);
+      return `<div class="chip" style="background:${ct.dim};border-color:${ct.accent};color:${ct.accent};font-size:12px;padding:4px 10px;flex-shrink:0;">
+        <span class="chip-dot" style="background:${ct.swatch};margin-right:5px;"></span>${escapeHtml(c)}
+      </div>`;
+    }).join('');
+  };
+
+  const rows = state.categories.map(c=>{
+    const count = state.songs.filter(s=>(s.categories||[]).includes(c)).length;
+    const ct = getFolderTheme(c);
+    return `
+      <div class="song-row folder-manage-row" data-cat="${escapeHtml(c)}" style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--bg-elev);border:1px solid var(--line);border-radius:14px;margin-bottom:8px;touch-action:pan-y;">
+        <span style="display:flex;align-items:center;width:22px;height:22px;color:${ct.swatch};flex-shrink:0;">${iconFolder()}</span>
+        <div class="folder-row-clickable" data-open-cat="${escapeHtml(c)}" style="flex:1;min-width:0;cursor:pointer;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-weight:700;font-size:15px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(c)}</span>
+            <span class="chip-dot" style="background:${ct.swatch};flex-shrink:0;"></span>
+          </div>
+          <div style="font-size:12px;color:var(--text-dim);margin-top:2px;">${count} song${count===1?'':'s'} &middot; ${ct.label} Theme</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+          <button class="icon-btn" data-edit-folder-cat="${escapeHtml(c)}" title="Edit folder & songs" style="width:30px;height:30px;padding:5px;opacity:0.8;">${iconEdit()}</button>
+          <button class="icon-btn" data-delete-folder-cat="${escapeHtml(c)}" title="Delete folder" style="width:30px;height:30px;padding:5px;opacity:0.8;color:var(--danger);">${iconTrash()}</button>
+          <span class="song-drag-handle folder-drag-handle" data-folder-drag-handle="1" title="Hold and drag to reorder chips" style="cursor:grab;touch-action:none;padding:6px;display:flex;align-items:center;color:var(--text-dim);user-select:none;">${iconDragBars()}</span>
+        </div>
+      </div>`;
+  }).join('');
+
+  app.innerHTML = `
+    <div class="topbar">
+      <button class="icon-btn" id="btn-back-folders">${iconBack()}</button>
+      <h1>Folders / Seasons</h1>
+      <button class="icon-btn" id="btn-top-add-folder" title="New Folder" style="color:var(--accent);">${iconFolder()}</button>
+    </div>
+    <div class="list-wrap" id="folders-page-wrap" style="padding:14px 16px 80px;">
+      <div style="margin-bottom:12px;">
+        <div style="font-size:11px;font-weight:700;color:var(--text-dim);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:6px;">Folder Chips Order Preview</div>
+        <div id="folders-live-chips" style="display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;scrollbar-width:none;">
+          ${renderPreviewChips()}
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding:0 2px;">
+        <span style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
+          Hold &amp; drag <span style="display:inline-flex;color:var(--text);">${iconDragBars()}</span> to reorder chips &amp; folders
+        </span>
+        <span style="font-size:11.5px;color:var(--accent);font-weight:700;">${state.categories.length} Folders</span>
+      </div>
+      <div id="folders-drag-list">
+        ${rows.length ? rows : '<div class="empty-state">No folders created yet. Tap + to add one.</div>'}
+      </div>
+    </div>
+    <button class="fab" id="fab-add-folder-page" title="Add Folder">+</button>
+    ${modalHtml()}
+  `;
+
+  document.getElementById('btn-back-folders').onclick = ()=>{ state.view='list'; render(); };
+  const addFolder = ()=>{ state.modal = {type:'categories'}; renderFoldersView(); };
+  const topAdd = document.getElementById('btn-top-add-folder');
+  if(topAdd) topAdd.onclick = addFolder;
+  const fabAdd = document.getElementById('fab-add-folder-page');
+  if(fabAdd) fabAdd.onclick = addFolder;
+
+  document.querySelectorAll('[data-open-cat]').forEach(el=>{
+    el.onclick = ()=>{
+      state.filterFlag = null;
+      state.filterMassPart = null;
+      state.filterCat = el.dataset.openCat;
+      state.view = 'list';
+      render();
+    };
+  });
+
+  document.querySelectorAll('[data-edit-folder-cat]').forEach(btn=>{
+    btn.onclick = (e)=>{
+      e.stopPropagation();
+      const folderName = btn.dataset.editFolderCat;
+      state.modal = { type: 'edit-folder', folder: folderName, search: '' };
+      renderFoldersView();
+    };
+  });
+
+  document.querySelectorAll('[data-delete-folder-cat]').forEach(btn=>{
+    btn.onclick = (e)=>{
+      e.stopPropagation();
+      const cat = btn.dataset.deleteFolderCat;
+      showConfirmModal({
+        title: 'Delete Folder',
+        message: `Delete folder "${cat}" from database? Songs inside won't be deleted.`,
+        confirmText: 'Delete',
+        danger: true,
+        onConfirm: async ()=>{
+          state.categories = state.categories.filter(c=>c!==cat);
+          LocalAdapter.save('categories', state.categories);
+          Store.saveCategories(state.categories).catch(err=>console.warn(err));
+          const affected = state.songs.filter(s=>(s.categories||[]).includes(cat));
+          for(const s of affected){
+            s.categories = s.categories.filter(c=>c!==cat);
+            LocalAdapter.save('song:'+s.id, s);
+            Store.saveSong(s).catch(err=>console.warn(err));
+          }
+          if(state.filterCat===cat) state.filterCat = 'All';
+          showToast('Folder deleted from database');
+          renderFoldersView();
+        }
+      });
+    };
+  });
+
+  wireFolderDragSorting();
+  wireModal();
+}
+
+// (2026-07-13) wire drag reordering for folder rows & chips; prev: none
+function wireFolderDragSorting(){
+  const listWrap = document.getElementById('folders-drag-list');
+  const previewWrap = document.getElementById('folders-live-chips');
+  if(!listWrap) return;
+
+  const updatePreviewChips = ()=>{
+    if(!previewWrap) return;
+    const currentCats = Array.from(listWrap.querySelectorAll('.folder-manage-row')).map(r=>r.dataset.cat);
+    previewWrap.innerHTML = currentCats.map(c=>{
+      const ct = getFolderTheme(c);
+      return `<div class="chip" style="background:${ct.dim};border-color:${ct.accent};color:${ct.accent};font-size:12px;padding:4px 10px;flex-shrink:0;">
+        <span class="chip-dot" style="background:${ct.swatch};margin-right:5px;"></span>${escapeHtml(c)}
+      </div>`;
+    }).join('');
+  };
+
+  listWrap.querySelectorAll('.folder-manage-row').forEach(el=>{
+    const handle = el.querySelector('[data-folder-drag-handle]');
+    if(!handle) return;
+
+    const startDrag = (startEvt)=>{
+      startEvt.stopPropagation();
+      if(startEvt.cancelable) startEvt.preventDefault();
+
+      el.classList.add('is-dragging');
+      if(navigator.vibrate) navigator.vibrate(12);
+
+      let currentY = (startEvt.touches && startEvt.touches[0]) ? startEvt.touches[0].clientY : startEvt.clientY;
+      let dragging = true;
+
+      const updateDomOrder = (clientY)=>{
+        const siblings = Array.from(listWrap.querySelectorAll('.folder-manage-row'));
+        for(const sib of siblings){
+          if(sib === el) continue;
+          const r = sib.getBoundingClientRect();
+          const mid = r.top + r.height / 2;
+          if(clientY < mid){
+            listWrap.insertBefore(el, sib);
+            updatePreviewChips();
+            return;
+          }
+        }
+        listWrap.appendChild(el);
+        updatePreviewChips();
+      };
+
+      const onMove = (moveEvt)=>{
+        if(!dragging) return;
+        if(moveEvt.cancelable) moveEvt.preventDefault();
+        currentY = (moveEvt.touches && moveEvt.touches[0]) ? moveEvt.touches[0].clientY : moveEvt.clientY;
+        updateDomOrder(currentY);
+      };
+
+      const onEnd = ()=>{
+        if(!dragging) return;
+        dragging = false;
+        el.classList.remove('is-dragging');
+        window.removeEventListener('touchmove', onMove);
+        window.removeEventListener('touchend', onEnd);
+        window.removeEventListener('touchcancel', onEnd);
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onEnd);
+
+        const newOrder = Array.from(listWrap.querySelectorAll('.folder-manage-row')).map(r=>r.dataset.cat);
+        state.categories = newOrder;
+        LocalAdapter.save('categories', state.categories);
+        Store.saveCategories(state.categories).catch(err=>console.warn(err));
+        showToast('Folder & chips order saved');
+      };
+
+      window.addEventListener('touchmove', onMove, {passive:false});
+      window.addEventListener('touchend', onEnd);
+      window.addEventListener('touchcancel', onEnd);
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onEnd);
+    };
+
+    handle.addEventListener('touchstart', startDrag, {passive:false});
+    handle.addEventListener('mousedown', startDrag);
+  });
 }
 
 
@@ -5572,57 +6199,87 @@ function renderSettingsView() {
 
 function currentSetlist(){ return state.setlists.find(s=>s.id===state.currentSetlistId); }
 
+// (2026-07-13) modern setlist editor cards, numbers & padding; prev: flat
 function renderSetlistEditor(){
   const sl = currentSetlist();
   if(!sl){ state.view='setlists'; return renderSetlistsView(); }
 
+  let songCount = 0;
   const itemRows = sl.items.map((item, idx)=>{
     const isFirst = idx===0, isLast = idx===sl.items.length-1;
-    const upDown = `
-      <div class="reorder-col">
-        <button class="icon-btn reorder-btn" data-move-up="${idx}" ${isFirst?'disabled':''}>${iconArrowUp()}</button>
-        <button class="icon-btn reorder-btn" data-move-down="${idx}" ${isLast?'disabled':''}>${iconArrowDown()}</button>
-      </div>`;
     if(item.type==='section'){
       return `
-        <div class="song-row" data-section-idx="${idx}" style="cursor:default;">
-          ${upDown}
-          <div style="flex:1;min-width:0;" class="section-line" style="font-weight:800;">${escapeHtml(item.label)}</div>
-          <button class="icon-btn" data-rename-section="${idx}">${iconEdit()}</button>
-          <button class="icon-btn" data-remove-item="${idx}" style="color:var(--danger);">${iconCross()}</button>
+        <div class="setlist-section-card" data-section-idx="${idx}" style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:rgba(224,142,66,0.1);border:1px solid rgba(224,142,66,0.3);border-left:4px solid var(--accent);border-radius:12px;margin:14px 0 8px;">
+          <span style="display:flex;align-items:center;color:var(--accent);flex-shrink:0;">${iconForMassPart(item.label)}</span>
+          <div style="flex:1;min-width:0;font-weight:800;font-size:12.5px;letter-spacing:0.6px;text-transform:uppercase;color:var(--accent);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(item.label)}</div>
+          <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+            <button class="icon-btn" data-move-up="${idx}" ${isFirst?'disabled':''} title="Move Up" style="width:28px;height:28px;padding:4px;color:var(--accent);opacity:${isFirst?0.3:0.9};">${iconArrowUp()}</button>
+            <button class="icon-btn" data-move-down="${idx}" ${isLast?'disabled':''} title="Move Down" style="width:28px;height:28px;padding:4px;color:var(--accent);opacity:${isLast?0.3:0.9};">${iconArrowDown()}</button>
+            <button class="icon-btn" data-rename-section="${idx}" title="Rename Section" style="width:28px;height:28px;padding:4px;color:var(--accent);opacity:0.9;">${iconEdit()}</button>
+            <button class="icon-btn" data-remove-item="${idx}" title="Remove Section" style="width:28px;height:28px;padding:4px;color:var(--danger);opacity:0.9;">${iconTrash()}</button>
+          </div>
         </div>`;
     }
+    songCount++;
     const song = state.songs.find(s=>s.id===item.songId);
-    const title = song ? song.title : '(song removed)';
-    const sub = song ? `${escapeHtml(getEffectiveSongArtist(song)||song.artist||'Unknown')} &middot; Key ${escapeHtml(transposeKeyLabel(getEffectiveSongKey(song), song.transposeOffset||0)||'—')}` : '';
+    const title = song ? cleanSongTitleForDisplay(song.title) : '(song removed)';
+    const vf = song ? getSongFlag(song) : null;
+    const effArtist = song ? (getEffectiveSongArtist(song) || song.artist || '') : '';
+    const effKey = song ? transposeKeyLabel(getEffectiveSongKey(song), song.transposeOffset||0) : '';
+    const subParts = [];
+    if(effArtist && effArtist.toLowerCase() !== 'unknown') subParts.push(escapeHtml(effArtist));
+    if(effKey && effKey !== '—') subParts.push(`Key ${escapeHtml(effKey)}`);
+    const sub = subParts.join(' &middot; ');
+
     return `
-      <div class="song-row" data-song-item-idx="${idx}">
-        ${upDown}
-        <div style="flex:1;min-width:0;">
-          <div class="song-title">${escapeHtml(title)}</div>
-          <div class="song-sub">${sub}</div>
+      <div class="song-row setlist-song-card" data-song-item-idx="${idx}" style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--bg-elev);border:1px solid var(--line);border-radius:14px;margin-bottom:8px;touch-action:manipulation;">
+        <span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--bg-elev2);border:1px solid var(--line);font-size:11px;font-weight:800;color:var(--text-dim);flex-shrink:0;">${songCount}</span>
+        <div style="flex:1;min-width:0;cursor:pointer;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            ${vf ? `<span class="song-flag-pill" style="background-color:${vf.color};"></span>` : ''}
+            <span style="font-weight:700;font-size:14.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(title)}</span>
+          </div>
+          ${sub ? `<div style="font-size:12px;color:var(--text-dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${sub}</div>` : ''}
         </div>
-        <button class="icon-btn" data-remove-item="${idx}" style="color:var(--danger);">${iconCross()}</button>
+        <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+          <button class="icon-btn" data-move-up="${idx}" ${isFirst?'disabled':''} title="Move Up" style="width:28px;height:28px;padding:4px;color:var(--text-dim);opacity:${isFirst?0.3:0.9};">${iconArrowUp()}</button>
+          <button class="icon-btn" data-move-down="${idx}" ${isLast?'disabled':''} title="Move Down" style="width:28px;height:28px;padding:4px;color:var(--text-dim);opacity:${isLast?0.3:0.9};">${iconArrowDown()}</button>
+          <button class="icon-btn" data-remove-item="${idx}" title="Remove Song" style="width:28px;height:28px;padding:4px;color:var(--danger);opacity:0.9;">${iconTrash()}</button>
+        </div>
       </div>`;
   }).join('');
 
   app.innerHTML = `
     <div class="topbar">
       <button class="icon-btn" id="btn-back">${iconBack()}</button>
-      <h1>${escapeHtml(sl.name)}</h1>
-      <button class="icon-btn" id="btn-rename-setlist">${iconEdit()}</button>
-      <button class="icon-btn" id="btn-delete-setlist" style="color:var(--danger);">${iconTrash()}</button>
+      <h1 style="font-size:16px;font-weight:800;">${escapeHtml(sl.name)}</h1>
+      <button class="icon-btn" id="btn-rename-setlist" title="Rename Plan">${iconEdit()}</button>
+      <button class="icon-btn" id="btn-delete-setlist" title="Delete Plan" style="color:var(--danger);">${iconTrash()}</button>
     </div>
-    <div class="chart-meta-inline" style="padding:10px 16px 0;">
-      <span>${sl.isTemplate ? '<b>Template</b>' : `Date <b>${escapeHtml(sl.date||'—')}</b>`}</span>
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px 6px;flex-shrink:0;">
+      <span style="background:var(--bg-elev2);border:1px solid var(--line);border-radius:8px;padding:3px 10px;font-size:11px;font-weight:700;color:var(--accent);letter-spacing:0.3px;">${sl.isTemplate ? 'Template' : `Date: ${escapeHtml(sl.date||'No Date')}`}</span>
+      <span style="font-size:12px;color:var(--text-dim);font-weight:600;">${sl.items.filter(i=>i.type!=='section').length} song(s) &middot; ${sl.items.filter(i=>i.type==='section').length} section(s)</span>
     </div>
-    <div class="list-wrap">
-      ${sl.items.length ? itemRows : `<div class="empty-state">Empty so far.<br>Add a section header (like "Entrance", "Kyrie") or a song below.</div>`}
+    <div class="list-wrap" style="padding:6px 14px 100px;flex:1;overflow-y:auto;">
+      <!-- (2026-07-13) improve setlist empty card & mass outline fill; prev: plain text -->
+      ${sl.items.length ? itemRows : `
+        <div class="empty-state-card" style="margin:28px 16px;padding:32px 20px;text-align:center;background:var(--bg-elev);border:1px dashed var(--line);border-radius:18px;">
+          <div style="width:52px;height:52px;border-radius:16px;background:var(--accent-dim);color:var(--accent);display:inline-flex;align-items:center;justify-content:center;margin-bottom:14px;">
+            ${iconMusic()}
+          </div>
+          <div style="font-size:16px;font-weight:800;color:var(--text);margin-bottom:6px;">Plan is Empty</div>
+          <div style="font-size:13px;color:var(--text-dim);line-height:1.5;max-width:280px;margin:0 auto 18px;">Add songs and section headers, or quickly populate the standard Mass parts outline.</div>
+          <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+            <button class="btn btn-primary" id="btn-empty-add-song" style="font-weight:700;">+ Add Songs</button>
+            <button class="btn btn-secondary" id="btn-empty-quick-mass" style="font-weight:700;">+ Fill Mass Outline</button>
+          </div>
+        </div>
+      `}
     </div>
-    <div class="save-bar">
-      <button class="btn btn-secondary" id="btn-add-section">+ Section</button>
-      <button class="btn btn-primary" id="btn-add-song">+ Song</button>
-      ${sl.isTemplate ? '<button class="btn btn-secondary" id="btn-duplicate-dated">Use for a date&hellip;</button>' : ''}
+    <div class="save-bar" style="display:flex;gap:10px;padding:12px 16px;background:var(--bg-elev);border-top:1px solid var(--line);flex-shrink:0;">
+      <button class="btn btn-secondary" id="btn-add-section" style="display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:13.5px;font-weight:700;border-radius:14px;min-height:44px;padding:8px 12px;">+ Section</button>
+      <button class="btn btn-primary" id="btn-add-song" style="display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:13.5px;font-weight:700;border-radius:14px;min-height:44px;padding:8px 14px;">+ Song</button>
+      ${sl.isTemplate ? '<button class="btn btn-secondary" id="btn-duplicate-dated" style="display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:12.5px;font-weight:700;border-radius:14px;min-height:44px;padding:8px 10px;">Use for a date…</button>' : ''}
     </div>
     ${modalHtml()}
   `;
@@ -5646,7 +6303,18 @@ function renderSetlistEditor(){
     });
   };
   document.getElementById('btn-add-section').onclick = ()=>{ state.modal = {type:'add-section', setlistId: sl.id}; renderSetlistEditor(); };
-  document.getElementById('btn-add-song').onclick = ()=>{ state.modal = {type:'add-song-to-setlist', setlistId: sl.id, search:''}; renderSetlistEditor(); };
+  document.getElementById('btn-add-song').onclick = ()=>{ state.modal = {type:'add-song-to-setlist', setlistId: sl.id, search:'', folder:'All'}; renderSetlistEditor(); };
+  const emptyAddSong = document.getElementById('btn-empty-add-song');
+  if(emptyAddSong) emptyAddSong.onclick = ()=>{ state.modal = {type:'add-song-to-setlist', setlistId: sl.id, search:'', folder:'All'}; renderSetlistEditor(); };
+  const emptyQuickMass = document.getElementById('btn-empty-quick-mass');
+  if(emptyQuickMass){
+    emptyQuickMass.onclick = async ()=>{
+      const standardParts = ['Entrance', 'Kyrie', 'Gloria', 'Responsorial Psalm', 'Gospel Acclamation', 'Offertory', 'Sanctus', 'Memorial Acclamation', 'Great Amen', 'Our Father', 'Lamb of God', 'Communion', 'Recessional'];
+      sl.items = standardParts.map(p => ({ type: 'section', id: newSetlistItemId(), label: p }));
+      await Store.saveSetlist(sl);
+      renderSetlistEditor();
+    };
+  }
   const dupBtn = document.getElementById('btn-duplicate-dated');
   if(dupBtn) dupBtn.onclick = ()=>{ state.modal = {type:'duplicate-setlist', id: sl.id}; renderSetlistEditor(); };
 
@@ -5781,7 +6449,9 @@ function sidebarHtml(){
         <!-- (2026-07-13) sidebar flags page link with flagged songs badge; prev: none -->
         <div class="side-item ${state.filterFlag?'selected':''}" data-goto-flags="1" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;"><span class="song-flag-pill" style="background-color:#ef4444;width:13px;height:17px;margin:0 1px 0 0;"></span></span><span style="flex:1;text-align:left;">Flags</span><span class="side-count">${state.songs.filter(s=>getSongFlag(s)).length}</span></div>
         <div class="side-item" data-goto-setlists="1" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;">${iconSetlist()}</span><span style="flex:1;text-align:left;">Setlists / Mass Plans</span><span class="side-count">${state.setlists.length}</span></div>
-        <div class="side-section-label" style="display:flex;align-items:center;justify-content:space-between;"><span>FOLDERS / SEASONS</span><span style="font-size:9.5px;color:var(--accent);font-weight:700;letter-spacing:0.5px;">&#9729; Database</span></div>
+        <!-- (2026-07-13) sidebar link for folders page; prev: none -->
+        <div class="side-item ${state.view==='folders'?'selected':''}" data-goto-folders="1" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;">${iconFolder()}</span><span style="flex:1;text-align:left;">Folders / Seasons</span><span class="side-count">${state.categories.length}</span></div>
+        <div class="side-section-label" data-goto-folders="1" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;" title="Open Folders page"><span>FOLDERS / SEASONS</span><span style="font-size:9.5px;color:var(--accent);font-weight:700;letter-spacing:0.5px;">&#9729; Database &rsaquo;</span></div>
         ${folderItems}
         <div class="side-item side-add" id="side-add-folder"><span>+ New folder</span></div>
         <div class="side-section-label">BROWSE BY MASS PART</div>
@@ -5837,6 +6507,10 @@ function wireSidebar(){
     sideFlagsBtn.onclick = ()=>{ closeSidebar(()=>{ state.filterFlag='all'; state.filterCat=null; state.filterMassPart=null; renderListView(); }); };
   }
   document.querySelector('[data-goto-setlists]').onclick = ()=>{ closeSidebar(()=>{ state.filterFlag=null; state.view='setlists'; render(); }); };
+  // (2026-07-13) wire sidebar navigation to folders page; prev: none
+  document.querySelectorAll('[data-goto-folders]').forEach(btn=>{
+    btn.onclick = ()=>{ closeSidebar(()=>{ state.filterFlag=null; state.view='folders'; render(); }); };
+  });
   // (2026-07-13) wire sidebar folder edit modal; prev: inline swatches
   document.querySelectorAll('[data-goto-folder]').forEach(el=>{
     el.onclick = (e)=>{
@@ -6001,9 +6675,12 @@ function modalHtml(){
           <div style="padding:16px 18px;overflow-y:auto;flex:1;-webkit-overflow-scrolling:touch;">
             <div style="margin-bottom:14px;">
               <label style="display:block;font-size:11px;font-weight:800;color:var(--text-dim);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px;">Mass Part</label>
-              <select id="cue-edit-part-select" style="width:100%;padding:9px 12px;background:var(--bg-elev);border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:13px;font-weight:600;">
-                ${mpOptions.map(o=>`<option value="${o.key}" ${o.key===massPartKey?'selected':''}>${escapeHtml(o.label)}</option>`).join('')}
-              </select>
+              <!-- (2026-07-13) custom dropdown for cue editor mass part; prev: select -->
+              ${renderCustomDropdown({
+                id: 'cue-edit-part-select',
+                value: massPartKey,
+                options: mpOptions.map(o=>({ value: o.key, label: o.label }))
+              })}
             </div>
             <div style="margin-bottom:16px;">
               <label style="display:block;font-size:11px;font-weight:800;color:var(--text-dim);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px;">Cue Card Title</label>
@@ -6299,9 +6976,10 @@ function modalHtml(){
             </h3>
             <button class="icon-btn" id="modal-x" style="width:28px;height:28px;flex-shrink:0;">${iconClose()}</button>
           </div>
+          <!-- (2026-07-13) hide delete action for lit dialogues; prev: always shown -->
           <div style="display:flex;gap:10px;margin-bottom:10px;">
-            <button class="btn btn-secondary" id="ctx-edit">Edit song</button>
-            <button class="btn btn-danger" id="ctx-delete">Delete</button>
+            <button class="btn btn-secondary" id="ctx-edit" style="flex:1;">Edit song</button>
+            ${(song.id && String(song.id).startsWith('lit-')) || ((song.artist||'').includes('Misal Romano')) ? '' : '<button class="btn btn-danger" id="ctx-delete">Delete</button>'}
           </div>
           <div style="margin-bottom:14px;">
             <button class="btn ${isExcluded?'btn-primary':'btn-secondary'}" id="ctx-toggle-exclude" style="width:100%;min-height:42px;padding:10px;">
@@ -6518,20 +7196,119 @@ function modalHtml(){
         </div>
       </div>`;
   }
+  // (2026-07-13) folder chips, check/uncheck & mass part sort; prev: plain list
   if(state.modal.type==='add-song-to-setlist'){
-    const q = (state.modal.search||'').toLowerCase();
-    const matches = state.songs.filter(s=>!q || s.title.toLowerCase().includes(q) || (s.artist||'').toLowerCase().includes(q)).slice(0,40);
-    const rows = matches.map(s=>`
-      <div class="cat-item" data-pick-song="${s.id}" style="cursor:pointer;">
-        <span>${escapeHtml(s.title)}</span>
-        <span class="side-count">${escapeHtml(getEffectiveSongKey(s)||'')}</span>
-      </div>`).join('') || `<div class="hint" style="padding:12px 0;">No songs match.</div>`;
+    const sl = state.setlists.find(s=>s.id===state.modal.setlistId);
+    if(!sl) return '';
+    const inSetlistIds = new Set(sl.items.filter(it=>it.type==='song'&&it.songId).map(it=>it.songId));
+    const activeFolder = state.modal.folder || 'All';
+    const q = (state.modal.search||'').toLowerCase().trim();
+
+    const allCats = ['All', ...(state.categories || [])];
+    const chipsHtml = allCats.map(cat => {
+      const ct = getFolderTheme(cat);
+      const isActive = activeFolder === cat;
+      const styleAttr = isActive
+        ? `style="background:${ct.dim};border-color:${ct.accent};color:${ct.accent};"`
+        : `style="border-color:${ct.dim};"`;
+      return `<div class="chip picker-cat-chip ${isActive?'active':''}" data-picker-cat="${escapeHtml(cat)}" ${styleAttr}>
+        ${cat !== 'All' ? `<span class="chip-dot" style="background:${ct.swatch};"></span>` : ''}
+        ${escapeHtml(cat)}
+      </div>`;
+    }).join('');
+
+    const filteredSongs = state.songs.filter(s => {
+      if(s.id && String(s.id).startsWith('lit-')) return false;
+      if(activeFolder !== 'All' && !(s.categories || []).includes(activeFolder)) return false;
+      if(q){
+        const matchTitle = (s.title || '').toLowerCase().includes(q);
+        const matchArtist = (s.artist || '').toLowerCase().includes(q);
+        const matchKey = (s.key || '').toLowerCase().includes(q);
+        if(!matchTitle && !matchArtist && !matchKey) return false;
+      }
+      return true;
+    });
+
+    const massPartOrder = ['Entrance','Kyrie','Gloria','Responsorial Psalm','Gospel Acclamation',
+      'Offertory','Sanctus','Memorial Acclamation','Great Amen','Our Father','Lamb of God','Communion','Recessional','Other'];
+
+    const groups = [];
+    const placedSongIds = new Set();
+
+    massPartOrder.forEach(mp => {
+      const isOther = mp === 'Other';
+      const songsInPart = filteredSongs.filter(s => {
+        if(placedSongIds.has(s.id)) return false;
+        const parts = s.massParts || [];
+        if(isOther){
+          return parts.length === 0 || parts.includes('Other');
+        }
+        return parts.includes(mp);
+      });
+      if(songsInPart.length > 0){
+        songsInPart.forEach(s => placedSongIds.add(s.id));
+        groups.push({ mp, songs: sortSongsArray(songsInPart, mp) });
+      }
+    });
+
+    const remaining = filteredSongs.filter(s => !placedSongIds.has(s.id));
+    if(remaining.length > 0){
+      groups.push({ mp: 'Other', songs: sortSongsArray(remaining, 'Other') });
+    }
+
+    let groupsHtml = '';
+    if(groups.length === 0){
+      groupsHtml = `<div class="hint" style="padding:28px 0;text-align:center;">No songs match.</div>`;
+    } else {
+      groupsHtml = groups.map(g => {
+        const rows = g.songs.map(s => {
+          const isChecked = inSetlistIds.has(s.id);
+          const vf = getSongFlag(s);
+          const sub = [s.artist, s.key ? `Key ${s.key}` : ''].filter(Boolean).join(' · ');
+          return `
+            <div class="picker-song-row ${isChecked ? 'is-checked' : ''}" data-pick-song="${s.id}">
+              <button type="button" class="song-check-btn ${isChecked ? 'checked' : ''}" style="pointer-events:none;">
+                ${isChecked ? iconCheck() : ''}
+              </button>
+              ${vf ? `<span class="song-flag-pill" style="background-color:${vf.color};"></span>` : ''}
+              <div class="picker-song-info">
+                <div class="picker-song-title">${escapeHtml(cleanSongTitleForDisplay(s.title))}</div>
+                ${sub ? `<div class="picker-song-sub">${escapeHtml(sub)}</div>` : ''}
+              </div>
+              <span class="side-count">${escapeHtml(getEffectiveSongKey(s)||'—')}</span>
+            </div>`;
+        }).join('');
+
+        return `
+          <div class="picker-mp-section">
+            <div class="picker-mp-header">
+              <span class="picker-mp-icon">${iconForMassPart(g.mp)}</span>
+              <span class="picker-mp-name">${escapeHtml(g.mp)}</span>
+              <span class="picker-mp-badge">${g.songs.length}</span>
+            </div>
+            <div class="picker-mp-list">${rows}</div>
+          </div>`;
+      }).join('');
+    }
+
     return `
       <div class="modal-backdrop" id="modal-bg">
-        <div class="modal">
-          <h3>Add Song</h3>
-          <div class="field"><input id="pick-song-search" placeholder="Search title or artist…" value="${escapeHtml(state.modal.search||'')}"/></div>
-          <div class="cat-list" style="max-height:50vh;overflow-y:auto;">${rows}</div>
+        <!-- (2026-07-13) un-squash picker chips & prevent flex shrink; prev: cut off -->
+        <div class="modal card picker-modal" style="max-height:88vh;display:flex;flex-direction:column;padding:18px 16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-shrink:0;">
+            <h3 style="margin:0;font-size:18px;font-weight:800;">Add Song</h3>
+            <button class="icon-btn" id="pick-song-close" style="margin:-6px -6px 0 0;">${iconCross()}</button>
+          </div>
+          <div class="field" style="margin-bottom:10px;flex-shrink:0;">
+            <input id="pick-song-search" placeholder="Search title, artist or key…" value="${escapeHtml(state.modal.search||'')}"/>
+          </div>
+          <div class="picker-folder-scroll" style="margin-bottom:12px;flex-shrink:0;min-height:44px;">
+            <div class="chips-row picker-chips-row">${chipsHtml}</div>
+          </div>
+          <div class="picker-body" id="picker-songs-scroll" style="flex:1;overflow-y:auto;min-height:0;padding-right:2px;">
+            ${groupsHtml}
+          </div>
+          <button class="btn btn-primary" id="pick-song-done" style="margin-top:14px;width:100%;font-weight:700;flex-shrink:0;">Done</button>
         </div>
       </div>`;
   }
@@ -6546,6 +7323,77 @@ function modalHtml(){
             <button class="btn btn-secondary" id="dup-sl-cancel">Cancel</button>
             <button class="btn btn-primary" id="dup-sl-create">Create</button>
           </div>
+        </div>
+      </div>`;
+  }
+  // (2026-07-13) mass part picker modal with song list & quick folder add; prev: none
+  if(state.modal.type === 'masspart-picker'){
+    const targetMp = state.modal.massPart || 'Sanctus';
+    const q = (state.modal.search || '').trim().toLowerCase();
+    const curFolder = (state.filterCat && state.filterCat !== 'All' && state.filterCat !== 'Favorites') ? state.filterCat : null;
+
+    const allMatching = state.songs.filter(s => {
+      if(s.id && String(s.id).startsWith('lit-')) return false;
+      return isSongMatchingMassPart(s, targetMp);
+    });
+
+    const displaySongs = allMatching.filter(s => {
+      if(!q) return true;
+      return (s.title || '').toLowerCase().includes(q) || (s.artist || '').toLowerCase().includes(q) || (s.key || '').toLowerCase().includes(q);
+    });
+
+    let songsListHtml = '';
+    if(displaySongs.length === 0){
+      songsListHtml = `<div class="hint" style="padding:32px 12px;text-align:center;color:var(--text-dim);font-size:12.5px;">No ${escapeHtml(targetMp)} songs found matching your search.</div>`;
+    } else {
+      songsListHtml = displaySongs.map(s => {
+        const isInFolder = curFolder ? (s.categories || []).includes(curFolder) : false;
+        const vf = getSongFlag(s);
+        const sub = [s.artist, s.key ? `Key ${s.key}` : ''].filter(Boolean).join(' · ');
+        const cats = (s.categories || []).filter(Boolean);
+        return `
+          <div class="picker-song-row" data-mp-pick-song="${s.id}" style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;background:rgba(255,255,255,0.03);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background 0.15s ease;">
+            ${vf ? `<span class="song-flag-pill" style="background-color:${vf.color};flex-shrink:0;"></span>` : ''}
+            <div style="flex:1;min-width:0;">
+              <div style="font-weight:600;font-size:13.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                ${escapeHtml(cleanSongTitleForDisplay(s.title))}
+              </div>
+              <div style="font-size:11px;color:var(--text-dim);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                ${escapeHtml(sub || 'No key info')}
+                ${cats.length > 0 ? ` · <span style="opacity:0.7;">[${escapeHtml(cats.join(', '))}]</span>` : ''}
+              </div>
+            </div>
+            ${curFolder ? `
+              <button type="button" data-mp-toggle-folder="${s.id}" style="min-height:28px;height:28px;padding:0 12px;font-size:11px;font-weight:700;border-radius:14px;cursor:pointer;flex-shrink:0;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;background:${isInFolder ? 'var(--accent)' : 'rgba(255,255,255,0.08)'};color:${isInFolder ? '#0f1115' : 'var(--text)'};border:${isInFolder ? 'none' : '1px solid rgba(255,255,255,0.16)'};">
+                ${isInFolder ? '&#10003; In Folder' : '+ Add'}
+              </button>
+            ` : `
+              <span class="side-count" style="flex-shrink:0;font-size:11.5px;color:var(--text-dim);">${escapeHtml(getEffectiveSongKey(s)||'—')}</span>
+            `}
+          </div>`;
+      }).join('');
+    }
+
+    // (2026-07-13) fix picker close button sizing & add pill style; prev: stretched
+    return `
+      <div class="modal-backdrop center" id="modal-bg">
+        <div class="modal card" style="max-width:440px;width:92%;max-height:82vh;display:flex;flex-direction:column;padding:16px;box-sizing:border-box;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-shrink:0;">
+            <div style="min-width:0;flex:1;padding-right:8px;">
+              <h3 style="margin:0;font-size:16px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(targetMp)} Songs</h3>
+              <div style="font-size:11.5px;color:var(--text-dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                ${allMatching.length} available in songbook${curFolder ? ` &bull; Folder: <strong style="color:var(--accent);">${escapeHtml(curFolder)}</strong>` : ''}
+              </div>
+            </div>
+            <button type="button" class="icon-btn modal-close" id="modal-x" style="width:30px;height:30px;flex-shrink:0;">${iconClose()}</button>
+          </div>
+          <div style="margin-bottom:10px;flex-shrink:0;">
+            <input type="text" class="input" id="mp-picker-search" placeholder="Search ${escapeHtml(targetMp)} songs..." value="${escapeHtml(state.modal.search || '')}" style="width:100%;box-sizing:border-box;padding:8px 12px;font-size:12.5px;border-radius:10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);color:var(--text);" />
+          </div>
+          <div id="mp-picker-songs-scroll" style="flex:1;overflow-y:auto;min-height:0;padding-right:2px;display:flex;flex-direction:column;gap:6px;">
+            ${songsListHtml}
+          </div>
+          <button class="btn btn-secondary" id="mp-picker-done" style="margin-top:12px;width:100%;font-weight:600;font-size:12px;min-height:36px;padding:8px;flex-shrink:0;">Close</button>
         </div>
       </div>`;
   }
@@ -6633,12 +7481,15 @@ function wireModal(){
   });
   // (2026-07-13) include standard mass prayers in new folder; prev: empty folder
   const addBtn = document.getElementById('add-cat-btn');
-  if(addBtn) addBtn.onclick = async ()=>{
+  // (2026-07-13) optimistic category create & bg sync; prev: await loop
+  if(addBtn) addBtn.onclick = ()=>{
     const val = document.getElementById('new-cat-input').value.trim();
     if(val && !state.categories.includes(val)){
       state.categories.push(val);
-      await Store.saveCategories(state.categories);
+      LocalAdapter.save('categories', state.categories);
+      Store.saveCategories(state.categories).catch(err=>console.warn(err));
       const litSongs = getLiturgicalDialogueSongs();
+      const changed = [];
       for(const lit of litSongs){
         let s = state.songs.find(x => x.id === lit.id);
         if(!s){
@@ -6648,9 +7499,12 @@ function wireModal(){
         if(!Array.isArray(s.categories)) s.categories = [];
         if(!s.categories.includes(val)){
           s.categories.push(val);
-          await Store.saveSong(s);
+          changed.push(s);
+          LocalAdapter.save('song:'+s.id, s);
         }
       }
+      Promise.all(changed.map(s => Store.saveSong(s))).catch(err=>console.warn(err));
+      state.modal = null;
       showToast(`Created "${val}"`);
       render();
     }
@@ -6692,27 +7546,31 @@ function wireModal(){
       render();
     };
   }
+  // (2026-07-13) optimistic folder rename & bg sync; prev: await loop
   const confirmRenameFolderBtn = document.getElementById('btn-confirm-rename-folder');
   if(confirmRenameFolderBtn){
-    confirmRenameFolderBtn.onclick = async ()=>{
+    confirmRenameFolderBtn.onclick = ()=>{
       const oldName = state.modal.folder;
       const newName = state.modal.newName;
       if(newName && newName !== oldName){
         const idx = state.categories.indexOf(oldName);
         if(idx >= 0){
           state.categories[idx] = newName;
-          await Store.saveCategories(state.categories);
+          LocalAdapter.save('categories', state.categories);
+          Store.saveCategories(state.categories).catch(err=>console.warn(err));
           if(state.folderColors && state.folderColors[oldName]){
             state.folderColors[newName] = state.folderColors[oldName];
             delete state.folderColors[oldName];
-            await Store.saveFolderColors(state.folderColors);
+            LocalAdapter.save('folderColors', state.folderColors);
+            Store.saveFolderColors(state.folderColors).catch(err=>console.warn(err));
           }
           const affected = state.songs.filter(s=>(s.categories||[]).includes(oldName) || (s.excludedFolders||[]).includes(oldName));
           for(const s of affected){
             if(Array.isArray(s.categories)) s.categories = s.categories.map(c=>c===oldName ? newName : c);
             if(Array.isArray(s.excludedFolders)) s.excludedFolders = s.excludedFolders.map(c=>c===oldName ? newName : c);
-            await Store.saveSong(s);
+            LocalAdapter.save('song:'+s.id, s);
           }
+          Promise.all(affected.map(s => Store.saveSong(s))).catch(err=>console.warn(err));
           if(state.filterCat===oldName) state.filterCat = newName;
         }
       }
@@ -6732,10 +7590,10 @@ function wireModal(){
       render();
     };
   });
-  // (2026-07-13) update folder song list in-place on search input; prev: full render
+  // (2026-07-13) instant folder song toggle & bg sync; prev: await saveSong
   const wireFolderSongRows = ()=>{
     document.querySelectorAll('[data-toggle-folder-song]').forEach(row=>{
-      row.onclick = async ()=>{
+      row.onclick = ()=>{
         const folder = state.modal.folder;
         const songId = row.dataset.toggleFolderSong;
         const song = state.songs.find(s=>s.id===songId);
@@ -6746,7 +7604,8 @@ function wireModal(){
         } else {
           song.categories.push(folder);
         }
-        await Store.saveSong(song);
+        LocalAdapter.save('song:'+song.id, song);
+        Store.saveSong(song).catch(()=>{});
         render();
       };
     });
@@ -6925,10 +7784,15 @@ function wireModal(){
     closeActiveModal();
   };
   const ctxDelete = document.getElementById('ctx-delete');
-  // (2026-07-13) modal confirmation for context song delete; prev: confirm()
+  // (2026-07-13) block deleting lit dialogue in context menu; prev: allowed
   if(ctxDelete) ctxDelete.onclick = ()=>{
     const id = state.modal?.id;
     const song = state.songs.find(s=>s.id===id);
+    if(song && ((song.id && String(song.id).startsWith('lit-')) || (song.artist||'').includes('Misal Romano'))){
+      closeActiveModal();
+      showToast('Misal Romano items cannot be deleted');
+      return;
+    }
     const songTitle = song ? cleanSongTitleForDisplay(song.title) : 'this song';
     closeActiveModal();
     showConfirmModal({
@@ -6936,7 +7800,21 @@ function wireModal(){
       message: `Delete "${songTitle}"? This cannot be undone.`,
       confirmText: 'Delete',
       danger: true,
+      // (2026-07-13) fade out animation on song deletion; prev: instant removal
       onConfirm: async ()=>{
+        const row = document.querySelector(`.song-row[data-id="${id}"]`);
+        if(row){
+          row.style.transition = 'opacity 0.28s ease, transform 0.28s ease, max-height 0.28s ease, padding 0.28s ease, margin 0.28s ease';
+          row.style.opacity = '0';
+          row.style.transform = 'translateX(-24px) scale(0.97)';
+          row.style.maxHeight = '0px';
+          row.style.paddingTop = '0';
+          row.style.paddingBottom = '0';
+          row.style.marginTop = '0';
+          row.style.marginBottom = '0';
+          row.style.overflow = 'hidden';
+          await new Promise(r => setTimeout(r, 260));
+        }
         if(song) await markSongAsDeleted(song);
         await Store.deleteSong(id);
         state.songs = state.songs.filter(s=>s.id!==id);
@@ -6979,11 +7857,13 @@ function wireModal(){
     const pillWrap = document.getElementById('ctx-flag-pill-wrap');
     if(pillWrap) pillWrap.innerHTML = '';
     ctxClearFlag.style.display = 'none';
-    await Store.saveSong(song);
+    // (2026-07-13) instant local update & bg store sync; prev: await saveSong
+    LocalAdapter.save('song:'+song.id, song);
+    Store.saveSong(song).catch(()=>{});
   };
   // (2026-07-13) toggle folder chips in-place without re-opening modal; prev: render() on click
   document.querySelectorAll('[data-ctx-folder]').forEach(el=>{
-    el.onclick = async ()=>{
+    el.onclick = ()=>{
       const song = state.songs.find(s=>s.id===state.modal.id);
       if(!song) return;
       const cat = el.dataset.ctxFolder;
@@ -6997,7 +7877,8 @@ function wireModal(){
       el.style.borderColor = nowSel ? ct.accent : ct.dim;
       el.style.color = nowSel ? ct.accent : '';
       if(state.modal) state.modal.dirty = true;
-      await Store.saveSong(song);
+      LocalAdapter.save('song:'+song.id, song);
+      Store.saveSong(song).catch(()=>{});
     };
   });
   // (2026-07-13) toggle new folder input & creation in batch add modal; prev: none
@@ -7016,49 +7897,63 @@ function wireModal(){
   }
   const btnBatchCreateFolder = document.getElementById('btn-batch-create-folder');
   if(btnBatchCreateFolder){
-    btnBatchCreateFolder.onclick = async ()=>{
+    // (2026-07-13) optimistic folder create & bg sync; prev: await loop freeze
+    btnBatchCreateFolder.onclick = ()=>{
       const inp = document.getElementById('batch-new-folder-input');
       const val = inp ? inp.value.trim() : '';
       if(!val) return;
       if(!state.categories.includes(val)){
         state.categories.push(val);
-        await Store.saveCategories(state.categories);
+        Store.saveCategories(state.categories).catch(err=>console.warn(err));
       }
       const songIds = (state.modal && state.modal.songIds) || [];
+      const changed = [];
       for(const sid of songIds){
         const s = state.songs.find(item=>item.id===sid);
         if(s){
           if(!Array.isArray(s.categories)) s.categories = [];
           if(!s.categories.includes(val)){
             s.categories.push(val);
-            await Store.saveSong(s);
+            changed.push(s);
           }
         }
       }
+      for(const s of changed){
+        LocalAdapter.save('song:'+s.id, s);
+      }
+      Promise.all(changed.map(s => Store.saveSong(s))).catch(err=>console.warn(err));
       closeActiveModal();
-      showToast(`Created "${val}"`);
+      state.checkedSongIds = [];
+      state.listEditMode = false;
+      render();
+      showToast(`Songs copied to ${val}`);
     };
   }
-  // (2026-07-13) wire batch add selected songs to folder; prev: none
+  // (2026-07-13) instant batch folder assign & bg sync; prev: await loop freeze
   document.querySelectorAll('[data-batch-folder]').forEach(btn=>{
-    btn.onclick = async ()=>{
+    btn.onclick = ()=>{
       const cat = btn.dataset.batchFolder;
       const songIds = (state.modal && state.modal.songIds) || [];
+      const changed = [];
       for(const sid of songIds){
         const s = state.songs.find(item=>item.id===sid);
         if(s){
           if(!Array.isArray(s.categories)) s.categories = [];
           if(!s.categories.includes(cat)){
             s.categories.push(cat);
-            await Store.saveSong(s);
+            changed.push(s);
           }
         }
       }
-      showToast(`${songIds.length} song(s) added to "${cat}"`);
-      state.modal = null;
+      for(const s of changed){
+        LocalAdapter.save('song:'+s.id, s);
+      }
+      Promise.all(changed.map(s => Store.saveSong(s))).catch(err=>console.warn(err));
+      closeActiveModal();
       state.checkedSongIds = [];
       state.listEditMode = false;
       render();
+      showToast(`Songs copied to ${cat}`);
     };
   });
   // (2026-07-13) wire export gsma modal download handlers; prev: none
@@ -7259,19 +8154,55 @@ function wireModal(){
     state.modal = null; render();
   };
 
-  // ---- add-song-to-setlist ----
+  // (2026-07-13) wire folder chips, check toggling & done button; prev: single tap
   const pickSongSearch = document.getElementById('pick-song-search');
   if(pickSongSearch){
-    pickSongSearch.oninput = (e)=>{ state.modal.search = e.target.value; render(); };
+    pickSongSearch.oninput = (e)=>{
+      state.modal.search = e.target.value;
+      render();
+      const nextInput = document.getElementById('pick-song-search');
+      if(nextInput){
+        nextInput.focus();
+        nextInput.setSelectionRange(nextInput.value.length, nextInput.value.length);
+      }
+    };
   }
+  document.querySelectorAll('[data-picker-cat]').forEach(el=>{
+    el.onclick = ()=>{
+      state.modal.folder = el.dataset.pickerCat;
+      render();
+    };
+  });
   document.querySelectorAll('[data-pick-song]').forEach(el=>{
     el.onclick = async ()=>{
       const sl = state.setlists.find(s=>s.id===state.modal.setlistId);
-      sl.items.push({ type:'song', id: newSetlistItemId(), songId: el.dataset.pickSong });
-      await Store.saveSetlist(sl);
-      state.modal = null; render();
+      if(!sl) return;
+      const songId = el.dataset.pickSong;
+      const idx = sl.items.findIndex(it=>it.type==='song' && it.songId === songId);
+      const checkBtn = el.querySelector('.song-check-btn');
+      if(idx >= 0){
+        sl.items.splice(idx, 1);
+        el.classList.remove('is-checked');
+        if(checkBtn){
+          checkBtn.classList.remove('checked');
+          checkBtn.innerHTML = '';
+        }
+      } else {
+        sl.items.push({ type:'song', id: newSetlistItemId(), songId });
+        el.classList.add('is-checked');
+        if(checkBtn){
+          checkBtn.classList.add('checked');
+          checkBtn.innerHTML = iconCheck();
+        }
+      }
+      try{ LocalAdapter.set('setlist:'+sl.id, JSON.stringify(sl)); }catch(e){}
+      Store.saveSetlist(sl).catch(()=>{});
     };
   });
+  const pickSongDone = document.getElementById('pick-song-done');
+  if(pickSongDone) pickSongDone.onclick = ()=>{ state.modal = null; render(); };
+  const pickSongClose = document.getElementById('pick-song-close');
+  if(pickSongClose) pickSongClose.onclick = ()=>{ state.modal = null; render(); };
 
   // ---- duplicate-setlist (template -> dated plan) ----
   const dupSlCancel = document.getElementById('dup-sl-cancel');
@@ -7294,9 +8225,10 @@ function wireModal(){
     render();
   };
 
-  // (2026-07-13) wire edit-cue modal interactions & Firestore persistence; prev: none
+  // (2026-07-13) wire custom dropdown for cue editor part; prev: select
   if(state.modal && state.modal.type === 'edit-cue'){
     const { massPartKey, cueDraft } = state.modal;
+    wireCustomDropdowns(document.getElementById('modal-bg') || document);
     const partSelect = document.getElementById('cue-edit-part-select');
     if(partSelect){
       partSelect.onchange = (e)=>{
@@ -7344,6 +8276,94 @@ function wireModal(){
       };
     }
   }
+
+  // (2026-07-13) wire mass part picker search & add to folder; prev: none
+  if(state.modal && state.modal.type === 'masspart-picker'){
+    const closeBtn = document.getElementById('modal-x') || document.getElementById('mp-picker-close');
+    if(closeBtn) closeBtn.onclick = ()=>{ closeActiveModal(); };
+    const doneBtn = document.getElementById('mp-picker-done');
+    if(doneBtn) doneBtn.onclick = ()=>{ closeActiveModal(); };
+
+    const searchInput = document.getElementById('mp-picker-search');
+    const wirePickerItems = ()=>{
+      const curFolder = (state.filterCat && state.filterCat !== 'All' && state.filterCat !== 'Favorites') ? state.filterCat : null;
+      document.querySelectorAll('[data-mp-pick-song]').forEach(row => {
+        row.onclick = (e)=>{
+          if(e.target.closest('[data-mp-toggle-folder]')) return;
+          const songId = row.dataset.mpPickSong;
+          state.modal = null;
+          openViewer(songId);
+        };
+      });
+      document.querySelectorAll('[data-mp-toggle-folder]').forEach(btn => {
+        btn.onclick = (e)=>{
+          e.stopPropagation();
+          e.preventDefault();
+          const songId = btn.dataset.mpToggleFolder;
+          const s = state.songs.find(item => item.id === songId);
+          if(!s || !curFolder) return;
+          if(!Array.isArray(s.categories)) s.categories = [];
+          const idx = s.categories.indexOf(curFolder);
+          if(idx >= 0){
+            s.categories.splice(idx, 1);
+            showToast(`Removed from ${curFolder}`);
+          } else {
+            s.categories.push(curFolder);
+            showToast(`Added to ${curFolder}`);
+          }
+          LocalAdapter.save('song:' + s.id, s);
+          Store.saveSong(s).catch(()=>{});
+          render();
+        };
+      });
+    };
+
+    if(searchInput){
+      searchInput.oninput = (e)=>{
+        state.modal.search = e.target.value;
+        const q = (e.target.value || '').trim().toLowerCase();
+        const targetMp = state.modal.massPart || 'Sanctus';
+        const curFolder = (state.filterCat && state.filterCat !== 'All' && state.filterCat !== 'Favorites') ? state.filterCat : null;
+        const allMatching = state.songs.filter(s => !(s.id && String(s.id).startsWith('lit-')) && isSongMatchingMassPart(s, targetMp));
+        const filtered = allMatching.filter(s => !q || (s.title||'').toLowerCase().includes(q) || (s.artist||'').toLowerCase().includes(q) || (s.key||'').toLowerCase().includes(q));
+        const scrollEl = document.getElementById('mp-picker-songs-scroll');
+        if(scrollEl){
+          if(filtered.length === 0){
+            scrollEl.innerHTML = `<div class="hint" style="padding:32px 12px;text-align:center;color:var(--text-dim);font-size:12.5px;">No ${escapeHtml(targetMp)} songs found matching your search.</div>`;
+          } else {
+            scrollEl.innerHTML = filtered.map(s => {
+              const isInFolder = curFolder ? (s.categories || []).includes(curFolder) : false;
+              const vf = getSongFlag(s);
+              const sub = [s.artist, s.key ? `Key ${s.key}` : ''].filter(Boolean).join(' · ');
+              const cats = (s.categories || []).filter(Boolean);
+              return `
+                <div class="picker-song-row" data-mp-pick-song="${s.id}" style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;background:rgba(255,255,255,0.03);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background 0.15s ease;">
+                  ${vf ? `<span class="song-flag-pill" style="background-color:${vf.color};flex-shrink:0;"></span>` : ''}
+                  <div style="flex:1;min-width:0;">
+                    <div style="font-weight:600;font-size:13.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                      ${escapeHtml(cleanSongTitleForDisplay(s.title))}
+                    </div>
+                    <div style="font-size:11px;color:var(--text-dim);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                      ${escapeHtml(sub || 'No key info')}
+                      ${cats.length > 0 ? ` · <span style="opacity:0.7;">[${escapeHtml(cats.join(', '))}]</span>` : ''}
+                    </div>
+                  </div>
+                  ${curFolder ? `
+                    <button type="button" data-mp-toggle-folder="${s.id}" style="min-height:28px;height:28px;padding:0 12px;font-size:11px;font-weight:700;border-radius:14px;cursor:pointer;flex-shrink:0;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;background:${isInFolder ? 'var(--accent)' : 'rgba(255,255,255,0.08)'};color:${isInFolder ? '#0f1115' : 'var(--text)'};border:${isInFolder ? 'none' : '1px solid rgba(255,255,255,0.16)'};">
+                      ${isInFolder ? '&#10003; In Folder' : '+ Add'}
+                    </button>
+                  ` : `
+                    <span class="side-count" style="flex-shrink:0;font-size:11.5px;color:var(--text-dim);">${escapeHtml(getEffectiveSongKey(s)||'—')}</span>
+                  `}
+                </div>`;
+            }).join('');
+            wirePickerItems();
+          }
+        }
+      };
+    }
+    wirePickerItems();
+  }
 }
 
 // (2026-07-13) SVG icon helpers (star, music, import, cross); prev: none
@@ -7366,8 +8386,10 @@ function iconArrowDown(){ return `<svg viewBox="0 0 24 24" width="16" height="16
 function iconCopy(){ return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>`; }
 function iconBack(){ return `<svg viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`; }
 function iconEdit(){ return `<svg viewBox="0 0 24 24" fill="none"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`; }
-function iconFolder(){ return `<svg viewBox="0 0 24 24" fill="none"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" stroke="currentColor" stroke-width="2"/></svg>`; }
-function iconClose(){ return `<svg viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`; }
+// (2026-07-13) add width/height to iconFolder svg; prev: missing sizing
+function iconFolder(){ return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>`; }
+// (2026-07-13) fixed width/height for iconClose svg; prev: unconstrained
+function iconClose(){ return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`; }
 function iconPlay(){ return `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`; }
 function iconMetro(){ return `<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M12 2l6 20H6L12 2z" stroke="currentColor" stroke-width="2"/><path d="M12 10l2 12" stroke="currentColor" stroke-width="2"/></svg>`; }
 function iconMenu(){ return `<svg viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`; }
@@ -7413,15 +8435,20 @@ if('serviceWorker' in navigator){
   });
 }
 
-// (2026-07-13) skip local snapshot echo & compare before update; prev: unchecked
+// (2026-07-13) skip first snapshot & compare data before render; prev: echo sync
 let unsubscribeSnapshot = null;
 function subscribeRealtimeSync(){
   if(!FIREBASE_READY || !firebaseUser) return;
   if(unsubscribeSnapshot){ unsubscribeSnapshot(); unsubscribeSnapshot = null; }
+  let isFirstSnapshot = true;
   try{
     unsubscribeSnapshot = firebase.firestore().collection('users').doc(firebaseUser.uid).collection('data')
       .onSnapshot((snap) => {
         if(snap.metadata && snap.metadata.hasPendingWrites) return;
+        if(isFirstSnapshot){
+          isFirstSnapshot = false;
+          if(state.songs && state.songs.length > 0) return;
+        }
         let changed = false;
         snap.docChanges().forEach((change) => {
           const docId = change.doc.id;
@@ -7604,6 +8631,13 @@ document.addEventListener('pointerdown', (e)=>{
 }, {capture: true, passive: true});
 
 document.addEventListener('click', (e)=>{
+  // (2026-07-13) dismiss open custom dropdowns on outside tap; prev: none
+  if(!e.target.closest('[data-custom-select]')){
+    document.querySelectorAll('[data-custom-select].open').forEach(c => {
+      c.classList.remove('open');
+      c.querySelector('.custom-select-trigger')?.setAttribute('aria-expanded', 'false');
+    });
+  }
   const btn = e.target.closest('.staff-play-btn');
   if(btn){
     e.preventDefault();
@@ -7618,8 +8652,8 @@ document.addEventListener('click', (e)=>{
     semis.forEach(semi => playPianoNote(semi));
     return;
   }
-  // (2026-07-13) accordion toggle for intro melody with persistence; prev: none
-  const toggleEl = e.target.closest('[data-toggle-intro-melody], .intro-melody-header');
+  // (2026-07-13) wire chevron & header for intro melody accordion; prev: header only
+  const toggleEl = e.target.closest('[data-toggle-intro-melody], .intro-melody-header, .intro-chevron-icon, .intro-melody-toggle');
   if(toggleEl){
     const box = toggleEl.closest('.intro-melody-box');
     if(!box) return;

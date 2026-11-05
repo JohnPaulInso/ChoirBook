@@ -6,8 +6,8 @@
     "semantic_hash": "853ba91d52bfb7712609b8b8a83d7b07"
   },
   "android/app/capacitor.build.gradle": {
-    "mtime": 1793707224.532509,
-    "seen": 1793707546.7810073,
+    "mtime": 1793891837.382948,
+    "seen": 1793901718.5453653,
     "ast_hash": "b863e425fbde80251bd3c68ac8ccba02",
     "semantic_hash": "b863e425fbde80251bd3c68ac8ccba02"
   },
@@ -42,8 +42,8 @@
     "semantic_hash": "682315a426653617c6a74fc12bef55b6"
   },
   "android/capacitor.settings.gradle": {
-    "mtime": 1793707224.53151,
-    "seen": 1793707546.781803,
+    "mtime": 1793891837.3819478,
+    "seen": 1793901718.5459883,
     "ast_hash": "455ebb7f9fe84a6974da6bdae43097c2",
     "semantic_hash": "455ebb7f9fe84a6974da6bdae43097c2"
   },
@@ -84,10 +84,10 @@
     "semantic_hash": "2ef3df7caa84875136011501b7cac628"
   },
   "js/app.js": {
-    "mtime": 1793707155.4422526,
-    "seen": 1793707546.7825644,
-    "ast_hash": "e1128e9d4ace59ee4e9968e7f893cdfc",
-    "semantic_hash": "e1128e9d4ace59ee4e9968e7f893cdfc"
+    "mtime": 1793901498.9265082,
+    "seen": 1793901718.5466158,
+    "ast_hash": "ee12338b52c1b588dbdf99c41f8cc381",
+    "semantic_hash": "ee12338b52c1b588dbdf99c41f8cc381"
   },
   "js/firebase-config.js": {
     "mtime": 1793634338.1893795,
@@ -132,22 +132,22 @@
     "semantic_hash": "b74b1b2d557b88f38f549b599a2badf7"
   },
   "index.html": {
-    "mtime": 1793707347.60252,
-    "seen": 1793707546.7830353,
-    "ast_hash": "796b0c894eda709e80466c8497051474",
-    "semantic_hash": "796b0c894eda709e80466c8497051474"
+    "mtime": 1793891966.8245654,
+    "seen": 1793901718.5474982,
+    "ast_hash": "c01c492f99230a169cebadadda39767e",
+    "semantic_hash": "c01c492f99230a169cebadadda39767e"
   },
   "android/app/src/main/java/com/choirbookpro/app/GoogleOneTapPlugin.java": {
-    "mtime": 1793649754.1732826,
-    "seen": 1793652033.5076997,
-    "ast_hash": "eb35670294be4ee84b71f4cc34541578",
-    "semantic_hash": "eb35670294be4ee84b71f4cc34541578"
+    "mtime": 1793875096.7701733,
+    "seen": 1793901718.5456233,
+    "ast_hash": "187aea323e14d1166c149b5384bc4fcb",
+    "semantic_hash": "187aea323e14d1166c149b5384bc4fcb"
   },
   "sw.js": {
-    "mtime": 1793707361.8076606,
-    "seen": 1793707546.7830296,
-    "ast_hash": "088df2b9a09b959d87a5849ccdf23a73",
-    "semantic_hash": "088df2b9a09b959d87a5849ccdf23a73"
+    "mtime": 1793891967.094731,
+    "seen": 1793901718.5470843,
+    "ast_hash": "b9be0aa5ca4ecbdb7bd132d9624afd4b",
+    "semantic_hash": "b9be0aa5ca4ecbdb7bd132d9624afd4b"
   },
   "DESIGN_PLAN.md": {
     "mtime": 1793634903.7199605,
