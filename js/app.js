@@ -4328,6 +4328,8 @@ function renderViewer(){
       <div class="speed-slider-wrap hidden" id="speed-slider-wrap">
         <span class="speed-slider-icon">${iconSpeedArrows()}</span>
         <input type="range" id="speed-range-slider" min="1" max="100" value="${scrollSpeed}">
+        <!-- (2026-07-13) display speed value on speed pill; prev: slider only -->
+        <span class="speed-slider-val" id="speed-slider-val">${scrollSpeed}</span>
       </div>
     </div>
     ${modalHtml()}
@@ -4594,13 +4596,13 @@ function renderViewer(){
 
   const speedSlider = document.getElementById('speed-range-slider');
   if(speedSlider){
-    speedSlider.oninput = async (e)=>{
+    // (2026-07-13) wire debounced per-song speed save to database; prev: un-debounced
+    speedSlider.oninput = (e)=>{
       showSpeedSliderTemporarily(2000);
-      const newSpeed = parseInt(e.target.value)||30;
-      song.viewerScrollSpeed = newSpeed;
-      await Store.saveSong(song);
-      const idx = state.songs.findIndex(s=>s.id===song.id);
-      if(idx>=0) state.songs[idx] = song;
+      setSongScrollSpeed(song, parseInt(e.target.value, 10) || 30);
+    };
+    speedSlider.onchange = (e)=>{
+      setSongScrollSpeed(song, parseInt(e.target.value, 10) || 30, true);
     };
   }
 
@@ -4757,32 +4759,53 @@ function showSpeedSliderTemporarily(ms){
   }
 }
 
+// (2026-07-13) save per-song speed to database with debounce; prev: un-debounced
+let songSpeedDebounceTimer = null;
+function setSongScrollSpeed(song, newSpeed, flush = false){
+  if(!song) return;
+  const clamped = Math.max(1, Math.min(100, Math.round(newSpeed)));
+  song.viewerScrollSpeed = clamped;
+  const idx = state.songs.findIndex(s=>s.id===song.id);
+  if(idx >= 0) state.songs[idx] = song;
+  try{ LocalAdapter.set('song:' + song.id, JSON.stringify(song)); }catch(e){}
+
+  const onScreenSlider = document.getElementById('speed-range-slider');
+  if(onScreenSlider && onScreenSlider.value != clamped) onScreenSlider.value = clamped;
+  const onScreenVal = document.getElementById('speed-slider-val');
+  if(onScreenVal) onScreenVal.textContent = clamped;
+  const adjSlider = document.getElementById('adj-speed-slider');
+  if(adjSlider && adjSlider.value != clamped) adjSlider.value = clamped;
+  const adjVal = document.getElementById('adj-speed-val');
+  if(adjVal) adjVal.textContent = clamped;
+
+  clearTimeout(songSpeedDebounceTimer);
+  if(flush){
+    Store.saveSong(song).catch(()=>{});
+  } else {
+    songSpeedDebounceTimer = setTimeout(()=>{
+      Store.saveSong(song).catch(()=>{});
+    }, 300);
+  }
+}
+
+// (2026-07-13) update per-song speed via setSongScrollSpeed; prev: un-debounced
 function wireSpeedSquare(el, song, direction){
   if(!el) return;
   let intervalId = null;
-  // (2026-07-13) allow slowest scroll speed down to 1; prev: min 5
-  const clamp = v => Math.max(1, Math.min(100, v));
-  const updateSpeed = async (delta)=>{
-    song.viewerScrollSpeed = clamp((song.viewerScrollSpeed||30) + delta);
-    await Store.saveSong(song);
-    const slider = document.getElementById('speed-range-slider');
-    if(slider) slider.value = song.viewerScrollSpeed;
-    const idx = state.songs.findIndex(s=>s.id===song.id);
-    if(idx>=0) state.songs[idx] = song;
-  };
   const startHold = (e)=>{
     if(e.cancelable) e.preventDefault();
     el.classList.add('is-pressed');
     showSpeedSliderTemporarily(0);
-    updateSpeed(direction * 3);
+    setSongScrollSpeed(song, (song.viewerScrollSpeed||30) + direction * 3);
     clearInterval(intervalId);
     intervalId = setInterval(()=>{
-      updateSpeed(direction * 2);
+      setSongScrollSpeed(song, (song.viewerScrollSpeed||30) + direction * 2);
     }, 120);
   };
   const endHold = ()=>{
     if(el.classList.contains('is-pressed')){
       showSpeedSliderTemporarily(2000);
+      setSongScrollSpeed(song, song.viewerScrollSpeed||30, true);
     }
     el.classList.remove('is-pressed');
     clearInterval(intervalId);
@@ -7149,18 +7172,16 @@ function wireModal(){
   };
   const adjSpeedSlider = document.getElementById('adj-speed-slider');
   if(adjSpeedSlider){
-    adjSpeedSlider.oninput = async (e)=>{
-      const newSpeed = parseInt(e.target.value, 10) || 30;
-      const song = getAdjSong();
-      if(!song) return;
-      song.viewerScrollSpeed = newSpeed;
-      const idx = state.songs.findIndex(s=>s.id===song.id);
-      if(idx>=0) state.songs[idx] = song;
-      const valLabel = document.getElementById('adj-speed-val');
-      if(valLabel) valLabel.textContent = newSpeed;
-      const onScreenSlider = document.getElementById('speed-range-slider');
-      if(onScreenSlider) onScreenSlider.value = newSpeed;
-      await Store.saveSong(song);
+    // (2026-07-13) sync per-song speed with setSongScrollSpeed; prev: un-debounced
+    adjSpeedSlider.oninput = (e)=>{
+      const s = getAdjSong();
+      if(!s) return;
+      setSongScrollSpeed(s, parseInt(e.target.value, 10) || 30);
+    };
+    adjSpeedSlider.onchange = (e)=>{
+      const s = getAdjSong();
+      if(!s) return;
+      setSongScrollSpeed(s, parseInt(e.target.value, 10) || 30, true);
     };
   }
 

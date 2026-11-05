@@ -369,6 +369,8 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
 .speed-slider-wrap.hidden{opacity:0;pointer-events:none;}
 .speed-slider-wrap input[type=range]{flex:1;height:4px;accent-color:var(--text);cursor:pointer;}
 .speed-slider-icon{color:var(--text-dim);width:20px;height:20px;display:flex;align-items:center;justify-content:center;}
+/* (2026-07-13) speed value readout in floating pill; prev: none */
+.speed-slider-val{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:800;color:var(--text);min-width:24px;text-align:right;}
 
 /* quick-insert chips in editor */
 .quick-insert-row{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:10px;}
