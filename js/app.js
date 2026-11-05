@@ -4407,13 +4407,12 @@ function renderViewer(){
     }
   };
   document.getElementById('btn-adjust').onclick = ()=>{ state.modal = {type:'adjust', id:song.id}; renderViewer(); };
-  // (2026-07-13) 7s delay at top on restart; prev: 5000ms
-  // (2026-07-13) 8s restart delay at top; prev: 7000ms
+  // (2026-07-13) 1.5s restart delay at top; prev: 8000ms
   document.getElementById('btn-restart').onclick = ()=>{
     chartWrap.scrollTo({top:0, behavior:'smooth'});
     autoscrollFloatPos = 0;
     lastUserScrollAt = 0;
-    autoscrollTopDelayUntil = performance.now() + 8000;
+    autoscrollTopDelayUntil = performance.now() + 1500;
     startAutoscroll(song, false);
     const pb = document.getElementById('btn-playpause');
     if(pb) pb.innerHTML = iconPlay();
@@ -4476,7 +4475,7 @@ function renderViewer(){
   /* Pinch-to-zoom directly on chart-wrap: reflows text incrementally and saves per-song. */
   wirePinchZoom(chartWrap, chartBody, song);
 
-  // (2026-07-13) 8s top autoscroll pause when scrolled back to top; prev: 5000ms
+  // (2026-07-13) 1.5s delay when scrolled to top before autoscroll; prev: 8000ms
   const markUserScroll = ()=>{
     lastUserScrollAt = performance.now();
     const sc = document.getElementById('chart-scroll-content');
@@ -4485,14 +4484,17 @@ function renderViewer(){
   chartWrap.addEventListener('touchmove', markUserScroll, {passive:true});
   chartWrap.addEventListener('wheel', markUserScroll, {passive:true});
   chartWrap.addEventListener('scroll', ()=>{
-    if(!state.autoscroll) return;
-    if(chartWrap.scrollTop <= 5 && autoscrollFloatPos > 25){
-      autoscrollTopDelayUntil = performance.now() + 8000;
-      autoscrollFloatPos = 0;
-      const sc = document.getElementById('chart-scroll-content');
-      if(sc) sc.style.transform = 'none';
-      const pb = document.getElementById('btn-playpause');
-      if(pb) pb.innerHTML = iconPlay();
+    if(chartWrap.scrollTop <= 5){
+      if(autoscrollFloatPos > 15 || !state.autoscroll){
+        autoscrollTopDelayUntil = performance.now() + 1500;
+        autoscrollFloatPos = 0;
+        lastUserScrollAt = 0;
+        const sc = document.getElementById('chart-scroll-content');
+        if(sc) sc.style.transform = 'none';
+        const pb = document.getElementById('btn-playpause');
+        if(pb) pb.innerHTML = iconPlay();
+        startAutoscroll(song, false);
+      }
     }
     if(Math.abs(chartWrap.scrollTop - Math.floor(autoscrollFloatPos)) > 18){
       lastUserScrollAt = performance.now();
@@ -4527,8 +4529,8 @@ function startAutoscroll(song, immediate){
     autoscrollTopDelayUntil = 0;
     lastUserScrollAt = 0;
   } else {
-    // (2026-07-13) 8s initial pause at top before autoscroll starts; prev: 7000ms
-    autoscrollTopDelayUntil = performance.now() + 8000;
+    // (2026-07-13) 1.5s initial pause at top before autoscroll starts; prev: 8000ms
+    autoscrollTopDelayUntil = performance.now() + 1500;
   }
   let iconSynced = !!immediate;
   // (2026-07-13) sub-pixel continuous smooth glide via transform; prev: Math.round scrollTop
