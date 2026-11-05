@@ -162,7 +162,8 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
 .song-drag-handle{display:flex;align-items:center;justify-content:center;width:32px;height:32px;color:var(--text-dim);cursor:grab;flex-shrink:0;touch-action:none;border-radius:8px;}
 .song-drag-handle:active{cursor:grabbing;color:var(--accent);background:var(--bg-elev2);}
 .song-title{font-size:15px;font-weight:600;}
-.song-sub{font-size:11.5px;color:var(--text-dim);margin-top:2px;}
+/* (2026-07-13) truncate song-sub to 1 single line; prev: multi-line wrap */
+.song-sub{font-size:11.5px;color:var(--text-dim);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 /* Section container scoping sticky headers */
 .song-section-group{position:relative;}
 /* (2026-07-13) remove top & right gaps on letter-divider; prev: gaps */
