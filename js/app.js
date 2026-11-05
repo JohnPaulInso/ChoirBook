@@ -3628,12 +3628,15 @@ function wireSongRowInteractions(el, id, sectionMassPart){
     favEl.onmouseup = (e)=>e.stopPropagation();
   }
 
-  // (2026-07-13) suppress ghost touches on long-press release; prev: clicked modal button
+  // (2026-07-13) instant touch/click feedback on song row; prev: delay on active
+  const clearPressed = ()=> el.classList.remove('is-pressed');
   const start = (e)=>{
     if(e.target.closest('.fav, .song-check-btn, .song-drag-handle')) return;
+    el.classList.add('is-pressed');
     moved = false; longFired = false;
     pressTimer = setTimeout(()=>{
       longFired = true;
+      clearPressed();
       if(navigator.vibrate) navigator.vibrate(15);
       const swallowGhost = (ev)=>{
         ev.stopImmediatePropagation();
@@ -3649,7 +3652,7 @@ function wireSongRowInteractions(el, id, sectionMassPart){
       renderListView();
     }, 480);
   };
-  const cancel = ()=> clearTimeout(pressTimer);
+  const cancel = ()=>{ clearTimeout(pressTimer); clearPressed(); };
   el.addEventListener('touchstart', start, {passive:true});
   el.addEventListener('touchmove', ()=>{ moved = true; cancel(); }, {passive:true});
   el.addEventListener('touchend', (e)=>{
@@ -3684,6 +3687,7 @@ function wireSongRowInteractions(el, id, sectionMassPart){
       openViewer(id, null, sectionMassPart);
     }
   });
+  el.addEventListener('touchcancel', cancel);
   el.addEventListener('mouseleave', cancel);
   el.addEventListener('contextmenu', e=>e.preventDefault());
 }
