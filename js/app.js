@@ -597,7 +597,8 @@ function renderMelodyStaffLine(line){
       let semi = (semiMap[letter] !== undefined ? semiMap[letter] : 0) + semiOffset;
       if(acc === '#') semi += 1;
       if(acc === 'b') semi -= 1;
-      const yPx = 40 - step * 4.5;
+      // (2026-07-13) center notehead on staff & ledger lines; prev: offset
+      const yPx = (40 - step * 4.5) - 3.75;
       const accSym = acc === '#' ? '&#9839;' : (acc === 'b' ? '&#9837;' : '');
       parsedNotes.push({ tok: displayTok, rawTok: cleanTok, step, semi, yPx, accSym });
     });
@@ -611,8 +612,8 @@ function renderMelodyStaffLine(line){
     parsedNotes.forEach(n=>{
       if(n.step <= -2) ledgerTops.add(49);
       if(n.step <= -4) ledgerTops.add(58);
-      if(n.step >= 10) ledgerTops.add(-1);
-      if(n.step >= 12) ledgerTops.add(-10);
+      if(n.step >= 10) ledgerTops.add(-5);
+      if(n.step >= 12) ledgerTops.add(-14);
     });
     let ledgerHtml = '';
     ledgerTops.forEach(top=>{
