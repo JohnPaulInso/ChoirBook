@@ -2580,11 +2580,13 @@ function sortSongsArray(arr, massPart){
   });
 }
 
-function getFilteredSongsForCurrentView(){
+// (2026-07-13) support folder swipe peek with category override; prev: current
+function getFilteredSongsForCurrentView(catOverride){
   syncLiturgicalDialogues(false);
   let songs = state.songs.slice();
+  const effectiveCat = catOverride !== undefined ? catOverride : state.filterCat;
   // (2026-07-13) filter by flag in flag view mode; prev: mass/cat only
-  if(state.filterFlag){
+  if(state.filterFlag && catOverride === undefined){
     if(state.filterFlag === 'all'){
       songs = songs.filter(s => getSongFlag(s) !== null);
     } else {
@@ -2593,12 +2595,12 @@ function getFilteredSongsForCurrentView(){
         return f && f.key === state.filterFlag;
       });
     }
-  } else if(state.filterMassPart){
+  } else if(state.filterMassPart && catOverride === undefined){
     songs = songs.filter(s=>(s.massParts||[]).includes(state.filterMassPart));
-  } else if(state.filterCat==='Favorites'){
+  } else if(effectiveCat==='Favorites'){
     songs = songs.filter(s=>s.favorite);
-  } else if(state.filterCat!=='All'){
-    const folderReg = songs.filter(s=>!(s.id && String(s.id).startsWith('lit-')) && (s.categories||[]).includes(state.filterCat));
+  } else if(effectiveCat!=='All'){
+    const folderReg = songs.filter(s=>!(s.id && String(s.id).startsWith('lit-')) && (s.categories||[]).includes(effectiveCat));
     if(folderReg.length > 0){
       const litAll = songs.filter(s=>s.id && String(s.id).startsWith('lit-'));
       songs = folderReg.concat(litAll);
@@ -2607,10 +2609,10 @@ function getFilteredSongsForCurrentView(){
     }
   }
   // (2026-07-13) filter favorited only songs when toggle active; prev: none
-  if(state.favOnly){
+  if(state.favOnly && catOverride === undefined){
     songs = songs.filter(s=>s.favorite);
   }
-  if(state.search.trim()){
+  if(state.search.trim() && catOverride === undefined){
     const q = state.search.toLowerCase();
     // (2026-07-13) search across title, artist, section & full lyrics body; prev: title/artist only
     songs = songs.filter(s => s.title.toLowerCase().includes(q) || (s.artist||'').toLowerCase().includes(q) || (s.sectionTitle||'').toLowerCase().includes(q) || (s.body||'').toLowerCase().includes(q));
@@ -2841,13 +2843,14 @@ function getCurrentViewSectionTitle(){
   return 'All Songs';
 }
 
-// (2026-07-13) always retain letter-divider with fav pill when empty; prev: divider lost
-function buildSongListRowsHtml(){
-  const songs = getFilteredSongsForCurrentView();
+// (2026-07-13) support folder peek rendering with category override; prev: cur
+function buildSongListRowsHtml(catOverride){
+  const songs = getFilteredSongsForCurrentView(catOverride);
   const sections = getOrderedSongSections(songs);
   let rows = '';
 
-  const favToggleBtn = `
+  const isPeek = catOverride !== undefined;
+  const favToggleBtn = isPeek ? '' : `
     <button type="button" class="fav-toggle-pill ${state.favOnly?'is-active':''}" id="btn-toggle-fav-only" title="${state.favOnly?'Show all songs':'Show favorited only'}" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:10.5px;font-weight:700;letter-spacing:0.2px;border-radius:12px;border:1px solid ${state.favOnly?'var(--chord)':'rgba(255,255,255,0.18)'};background:${state.favOnly?'rgba(234,179,8,0.2)':'transparent'};color:${state.favOnly?'var(--chord)':'var(--text-dim)'};cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all 0.15s ease;">
       <span style="display:flex;align-items:center;font-size:12px;color:${state.favOnly?'var(--chord)':'inherit'};">${iconStar(state.favOnly)}</span>
       <span>${state.favOnly?'Favorites':'All'}</span>
@@ -2857,14 +2860,14 @@ function buildSongListRowsHtml(){
     sections.forEach((sec, secIdx)=>{
       let secHtml = '';
       const isFirstSection = secIdx === 0;
-      const toggle = isFirstSection ? favToggleBtn : '';
+      const toggle = (isFirstSection && !isPeek) ? favToggleBtn : '';
 
-      const editCuePill = (isFirstSection && (state.filterMassPart || sec.massPart)) ? `
+      const editCuePill = (isFirstSection && !isPeek && (state.filterMassPart || sec.massPart)) ? `
         <button type="button" class="fav-toggle-pill" id="btn-edit-cue-pill" data-edit-mp-cue="${escapeHtml(state.filterMassPart || sec.massPart)}" title="Edit Liturgical Cue" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:10.5px;font-weight:700;letter-spacing:0.2px;border-radius:12px;border:1px solid rgba(255,255,255,0.18);background:transparent;color:var(--text);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all 0.15s ease;">
           <span style="display:inline-flex;align-items:center;width:11px;height:11px;">${iconEdit()}</span>
           <span>Edit Cue</span>
         </button>` : '';
-      const rightControls = isFirstSection ? `<div style="display:flex;align-items:center;gap:6px;">${editCuePill}${toggle}</div>` : '';
+      const rightControls = (isFirstSection && !isPeek) ? `<div style="display:flex;align-items:center;gap:6px;">${editCuePill}${toggle}</div>` : '';
 
       if(sec.optionalLit){
         const hidden = !!state.hideOptionalCommunionLit;
@@ -2873,7 +2876,7 @@ function buildSongListRowsHtml(){
             <span>&#10022; ${escapeHtml(sec.title)}</span>
             <div style="display:flex;align-items:center;gap:6px;">
               ${rightControls || toggle}
-              <button class="cue-toggle-btn" data-toggle-opt-lit="${escapeHtml(sec.litId)}" style="padding:1px 7px;font-size:10px;">${hidden ? 'Show Page' : 'Hide Page'}</button>
+              ${!isPeek ? `<button class="cue-toggle-btn" data-toggle-opt-lit="${escapeHtml(sec.litId)}" style="padding:1px 7px;font-size:10px;">${hidden ? 'Show Page' : 'Hide Page'}</button>` : ''}
             </div>
           </div>`;
         if(!hidden){
@@ -2890,13 +2893,13 @@ function buildSongListRowsHtml(){
       rows += `<div class="song-section-group" data-group-mp="${escapeHtml(sec.massPart||'')}">${secHtml}</div>`;
     });
   } else {
-    const viewTitle = getCurrentViewSectionTitle();
+    const viewTitle = isPeek ? catOverride : getCurrentViewSectionTitle();
     rows = `
       <div class="song-section-group">
         <div class="letter-divider" style="display:flex;align-items:center;justify-content:space-between;">
           <span>${escapeHtml(viewTitle)}</span>
           <div style="display:flex;align-items:center;gap:6px;">
-            ${state.filterMassPart ? `
+            ${(state.filterMassPart && !isPeek) ? `
               <button type="button" class="fav-toggle-pill" id="btn-edit-cue-pill" data-edit-mp-cue="${escapeHtml(state.filterMassPart)}" title="Edit Liturgical Cue" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:10.5px;font-weight:700;letter-spacing:0.2px;border-radius:12px;border:1px solid rgba(255,255,255,0.18);background:transparent;color:var(--text);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all 0.15s ease;">
                 <span style="display:inline-flex;align-items:center;width:11px;height:11px;">${iconEdit()}</span>
                 <span>Edit Cue</span>
@@ -2905,7 +2908,7 @@ function buildSongListRowsHtml(){
           </div>
         </div>
         <div class="empty-state">
-          ${state.favOnly
+          ${(state.favOnly && !isPeek)
             ? 'No favorited songs found in this view.<br><button type="button" class="btn btn-secondary" id="btn-empty-clear-fav" style="margin-top:12px;font-size:12px;padding:6px 14px;border-radius:16px;">Show All Songs</button>'
             : 'No songs here yet.<br>Tap the + button to add one, or long-press a song to file it in this ' + (state.filterFlag?'flag color':(state.filterMassPart?'Mass Part':'folder')) + '.'}
         </div>
@@ -2950,9 +2953,12 @@ function wireListWrapRows(){
       renderListView();
     };
   });
-  document.querySelectorAll('.song-row').forEach(el=>{
-    wireSongRowInteractions(el, el.dataset.id, el.dataset.sectionMp);
-  });
+  const curWrap = document.getElementById('list-wrap');
+  if(curWrap){
+    curWrap.querySelectorAll('.song-row').forEach(el=>{
+      wireSongRowInteractions(el, el.dataset.id, el.dataset.sectionMp);
+    });
+  }
 }
 
 function renderListView(animateChipScroll){
@@ -3013,6 +3019,10 @@ function renderListView(animateChipScroll){
 
   // (2026-07-13) topbar inline search & solid colored done button; prev: separate searchrow
   const isSearching = state.searchActive || !!(state.search && state.search.trim());
+  const canSwipeCats = !isSearching && !state.listEditMode && !state.filterMassPart && !state.filterFlag;
+  const currentCatIdx = Math.max(0, cats.indexOf(state.filterCat || 'All'));
+  const prevCat = canSwipeCats && currentCatIdx > 0 ? cats[currentCatIdx - 1] : null;
+  const nextCat = canSwipeCats && currentCatIdx < cats.length - 1 ? cats[currentCatIdx + 1] : null;
   app.innerHTML = `
     <div class="topbar">
       <button class="icon-btn" id="btn-open-sidebar">${iconMenu()}</button>
@@ -3053,8 +3063,14 @@ function renderListView(animateChipScroll){
     </div>
     <div class="chiprow">${chips}</div>
     ${colorBarHtml}
-    <!-- (2026-07-13) padding-bottom for edit mode & refined batch action bar; prev: overlap -->
-    <div class="list-wrap ${state.listEditMode?'in-edit-mode':''}" id="list-wrap">${rows}</div>
+    <!-- (2026-07-13) list slider container with folder peek; prev: direct list-wrap -->
+    <div class="list-slider-container" id="list-slider-container">
+      <div class="list-slider-track" id="list-slider-track">
+        ${prevCat ? `<div class="list-peek is-prev" id="list-peek-prev">${buildSongListRowsHtml(prevCat)}</div>` : ''}
+        <div class="list-wrap ${state.listEditMode?'in-edit-mode':''}" id="list-wrap">${rows}</div>
+        ${nextCat ? `<div class="list-peek is-next" id="list-peek-next">${buildSongListRowsHtml(nextCat)}</div>` : ''}
+      </div>
+    </div>
     ${!state.modal && state.listEditMode && state.checkedSongIds.length > 0 ? `
       <div class="batch-action-bar" id="batch-action-bar">
         <span style="font-size:13px;font-weight:700;color:var(--accent);">${state.checkedSongIds.length} selected</span>
@@ -3357,6 +3373,111 @@ function renderListView(animateChipScroll){
   }
   const backChip = document.querySelector('[data-back-to-folders]');
   if(backChip) backChip.onclick = ()=>{ state.filterFlag = null; state.filterMassPart = null; state.filterCat = 'All'; applyFolderTheme('All'); renderListView(); };
+
+  // (2026-07-13) wire horizontal folder category swipe & peek; prev: none
+  const listSliderTrack = document.getElementById('list-slider-track');
+  const listContainer = document.getElementById('list-slider-container');
+  if(listSliderTrack && listContainer && canSwipeCats){
+    let isSwipe = false;
+    let startX = 0, startY = 0;
+    let dx = 0;
+    let startT = 0;
+
+    const resetPeek = ()=>{
+      if(listSliderTrack){
+        listSliderTrack.style.transition = 'transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1)';
+        listSliderTrack.style.transform = 'translate3d(0, 0, 0)';
+        setTimeout(()=>{ if(listSliderTrack) listSliderTrack.style.transition = ''; }, 240);
+      }
+    };
+
+    const onStart = (clientX, clientY, target)=>{
+      if(target.closest('.fav, .song-check-btn, .song-drag-handle, button, input, select, textarea, a, #batch-action-bar, .fab')) return false;
+      isSwipe = true;
+      startX = clientX;
+      startY = clientY;
+      dx = 0;
+      startT = Date.now();
+      if(listSliderTrack) listSliderTrack.style.transition = 'none';
+      return true;
+    };
+
+    const onMove = (clientX, clientY)=>{
+      if(!isSwipe) return;
+      const curDx = clientX - startX;
+      const curDy = clientY - startY;
+      if(Math.abs(curDy) > Math.abs(curDx) * 1.5 && Math.abs(curDy) > 10){
+        isSwipe = false;
+        resetPeek();
+        return;
+      }
+      dx = curDx;
+      if(listSliderTrack){
+        const resist = (dx < 0 && !nextCat) || (dx > 0 && !prevCat) ? 0.2 : 0.85;
+        listSliderTrack.style.transform = `translate3d(${(dx * resist).toFixed(1)}px, 0, 0)`;
+      }
+    };
+
+    const onEnd = ()=>{
+      if(!isSwipe) return;
+      isSwipe = false;
+      const dt = Date.now() - startT;
+      if(dt < 800 && Math.abs(dx) > 40){
+        if(dx < 0 && nextCat){
+          if(listSliderTrack){
+            listSliderTrack.style.transition = 'transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1)';
+            listSliderTrack.style.transform = 'translate3d(-100%, 0, 0)';
+          }
+          setTimeout(()=>{
+            state.filterFlag = null;
+            state.filterMassPart = null;
+            state.filterCat = nextCat;
+            localStorage.setItem('ui:filterCat', nextCat);
+            applyFolderTheme(nextCat);
+            renderListView(true);
+          }, 180);
+          return;
+        } else if(dx > 0 && prevCat){
+          if(listSliderTrack){
+            listSliderTrack.style.transition = 'transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1)';
+            listSliderTrack.style.transform = 'translate3d(100%, 0, 0)';
+          }
+          setTimeout(()=>{
+            state.filterFlag = null;
+            state.filterMassPart = null;
+            state.filterCat = prevCat;
+            localStorage.setItem('ui:filterCat', prevCat);
+            applyFolderTheme(prevCat);
+            renderListView(true);
+          }, 180);
+          return;
+        }
+      }
+      resetPeek();
+    };
+
+    listContainer.addEventListener('touchstart', (e)=>{
+      if(e.touches && e.touches.length === 1) onStart(e.touches[0].clientX, e.touches[0].clientY, e.target);
+    }, {passive:true});
+    listContainer.addEventListener('touchmove', (e)=>{
+      if(e.touches && e.touches.length === 1) onMove(e.touches[0].clientX, e.touches[0].clientY);
+    }, {passive:true});
+    listContainer.addEventListener('touchend', onEnd, {passive:true});
+
+    listContainer.addEventListener('mousedown', (e)=>{
+      if(e.button !== 0) return;
+      if(onStart(e.clientX, e.clientY, e.target)){
+        const onMouseMove = (me)=> onMove(me.clientX, me.clientY);
+        const onMouseUp = ()=>{
+          window.removeEventListener('mousemove', onMouseMove);
+          window.removeEventListener('mouseup', onMouseUp);
+          onEnd();
+        };
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+      }
+    });
+  }
 
   wireListWrapRows();
   wireSidebar();
