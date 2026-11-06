@@ -1,5 +1,6 @@
 package com.choirbookpro.app;
 
+import android.accounts.AccountManager;
 import android.app.Activity;
 import android.content.Intent;
 import android.view.WindowManager;
@@ -16,70 +17,73 @@ import com.google.android.gms.auth.api.signin.GoogleSignInClient;
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions;
 import com.google.android.gms.common.api.ApiException;
 
-// (2026-07-13) Google sign-in without server client ID; prev: SERVER_CLIENT_ID
+// (2026-07-13) native AccountManager Google picker bridge; prev: GoogleSignIn only
 @CapacitorPlugin(name = "GoogleOneTap")
 public class GoogleOneTapPlugin extends Plugin {
-    private GoogleSignInClient googleSignInClient;
 
     @PluginMethod
     public void signIn(PluginCall call) {
         try {
-            GoogleSignInOptions gso = new GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-                .requestEmail()
-                .build();
             Activity activity = getActivity();
             if (activity == null) {
                 call.reject("Activity is null");
                 return;
             }
-            googleSignInClient = GoogleSignIn.getClient(activity, gso);
-            googleSignInClient.signOut().addOnCompleteListener(activity, task -> {
-                try {
-                    Intent signInIntent = googleSignInClient.getSignInIntent();
-                    startActivityForResult(call, signInIntent, "handleSignInResult");
-                } catch (Exception ex) {
-                    call.reject("Launch sign-in intent failed: " + ex.getMessage(), ex);
-                }
-            });
+            Intent chooseIntent = AccountManager.newChooseAccountIntent(
+                null,
+                null,
+                new String[]{"com.google"},
+                null,
+                null,
+                null,
+                null
+            );
+            startActivityForResult(call, chooseIntent, "handleAccountPickerResult");
         } catch (Exception e) {
-            call.reject("Google One Tap error: " + e.getMessage(), e);
+            try {
+                GoogleSignInOptions gso = new GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                    .requestEmail()
+                    .build();
+                GoogleSignInClient client = GoogleSignIn.getClient(getContext(), gso);
+                Intent signInIntent = client.getSignInIntent();
+                startActivityForResult(call, signInIntent, "handleAccountPickerResult");
+            } catch (Exception ex) {
+                call.reject("Google One Tap error: " + ex.getMessage(), ex);
+            }
         }
     }
 
-    // (2026-07-13) extract Google account from intent result data; prev: strict RESULT_OK
+    // (2026-07-13) resolve chosen Google account from intent result; prev: strict GSO
     @ActivityCallback
-    private void handleSignInResult(PluginCall call, ActivityResult result) {
+    private void handleAccountPickerResult(PluginCall call, ActivityResult result) {
         if (call == null) return;
-        Intent data = result.getData();
-        if (data != null) {
-            try {
-                GoogleSignInAccount account = null;
+        if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
+            Intent data = result.getData();
+            String email = data.getStringExtra(AccountManager.KEY_ACCOUNT_NAME);
+            if (email == null || email.trim().isEmpty()) {
                 try {
-                    account = GoogleSignIn.getSignedInAccountFromIntent(data).getResult(ApiException.class);
+                    GoogleSignInAccount acct = GoogleSignIn.getSignedInAccountFromIntent(data).getResult(ApiException.class);
+                    if (acct != null && acct.getEmail() != null) {
+                        email = acct.getEmail();
+                    }
                 } catch (Exception ignored) {
                     try {
-                        account = GoogleSignIn.getLastSignedInAccount(getContext());
+                        GoogleSignInAccount last = GoogleSignIn.getLastSignedInAccount(getContext());
+                        if (last != null && last.getEmail() != null) {
+                            email = last.getEmail();
+                        }
                     } catch (Exception ignored2) {}
                 }
-                if (account != null) {
-                    JSObject ret = new JSObject();
-                    if (account.getIdToken() != null) {
-                        ret.put("idToken", account.getIdToken());
-                    }
-                    ret.put("email", account.getEmail() != null ? account.getEmail() : "");
-                    ret.put("displayName", account.getDisplayName() != null ? account.getDisplayName() : "Choir Member");
-                    if (account.getId() != null) {
-                        ret.put("id", account.getId());
-                    }
-                    call.resolve(ret);
-                    return;
-                }
-            } catch (Exception e) {
-                call.reject("Google sign-in failed: " + e.getMessage(), e);
+            }
+            if (email != null && !email.trim().isEmpty()) {
+                String cleanEmail = email.trim().toLowerCase();
+                String displayName = cleanEmail.split("@")[0];
+                JSObject ret = new JSObject();
+                ret.put("email", cleanEmail);
+                ret.put("displayName", displayName);
+                call.resolve(ret);
                 return;
             }
-        }
-        if (result.getResultCode() == Activity.RESULT_OK) {
             call.reject("Google account info is unavailable");
         } else {
             call.reject("Google sign-in was cancelled or dismissed");
