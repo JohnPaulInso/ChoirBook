@@ -2396,6 +2396,45 @@ function renderAuthView(){
     errBox.style.display = 'block';
   };
 
+  // (2026-07-13) initialize official GIS One Tap for web; prev: none
+  if(typeof window !== 'undefined' && !(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform())){
+    const clientId = '303741150656-5ptj9tt99ff0lroco66brhmrt51a2eeh.apps.googleusercontent.com';
+    const setupGIS = ()=>{
+      if(typeof google === 'undefined' || !google?.accounts?.id) return;
+      try {
+        google.accounts.id.initialize({
+          client_id: clientId,
+          callback: async (resp) => {
+            if(resp?.credential && FIREBASE_READY && firebase.auth){
+              try {
+                const cred = firebase.auth.GoogleAuthProvider.credential(resp.credential);
+                const fbRes = await firebase.auth().signInWithCredential(cred);
+                if(fbRes && fbRes.user) transitionToApp(fbRes.user);
+              } catch(e) {}
+            }
+          },
+          auto_select: false,
+          cancel_on_tap_outside: false
+        });
+        google.accounts.id.prompt();
+      } catch(e) {}
+    };
+    if(typeof google !== 'undefined' && google?.accounts?.id){
+      setupGIS();
+    } else {
+      let count = 0;
+      const t = setInterval(()=>{
+        count++;
+        if(typeof google !== 'undefined' && google?.accounts?.id){
+          clearInterval(t);
+          setupGIS();
+        } else if(count > 20){
+          clearInterval(t);
+        }
+      }, 250);
+    }
+  }
+
   // (2026-07-13) enforce real auth & per-user data isolation; prev: auto-login bypass
   const isMasterAlias = (email)=>{
     const e = (email || '').toLowerCase().trim();
@@ -2435,6 +2474,7 @@ function renderAuthView(){
     bundledGsmaSynced = false;
     selectAdapter();
     subscribeRealtimeSync();
+    if(typeof google !== 'undefined' && google?.accounts?.id?.cancel) google.accounts.id.cancel();
     state.view = 'list';
     state.loading = false;
     render();
@@ -2453,10 +2493,11 @@ function renderAuthView(){
 
       const isNative = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 
-      // (2026-07-13) NativeAuth Google signin matching HydroGreen; prev: GSO only
+      // (2026-07-13) NativeAuth Google One Tap & GIS Web integration; prev: GSO only
       if(isNative){
         googleBtn.innerHTML = '<span>Connecting to Google...</span>';
         let authUser = null;
+        let authErr = null;
         const NativeAuth = (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.FirebaseAuthentication) || (window.Capacitor && typeof window.Capacitor.registerPlugin === 'function' ? window.Capacitor.registerPlugin('FirebaseAuthentication') : null);
         if(NativeAuth && typeof NativeAuth.signInWithGoogle === 'function'){
           try{
@@ -2481,33 +2522,7 @@ function renderAuthView(){
               authUser = res.user;
             }
           }catch(err){
-            const msg = (err && (err.message || err.toString())) || '';
-            if(msg.toLowerCase().includes('cancel') || msg.toLowerCase().includes('dismiss')){
-              googleBtn.disabled = false;
-              googleBtn.style.opacity = '1';
-              googleBtn.innerHTML = origText;
-              return;
-            }
-          }
-        }
-        if(!authUser && NativeGoogleOneTap && typeof NativeGoogleOneTap.signIn === 'function'){
-          try{
-            const res = await NativeGoogleOneTap.signIn();
-            if(res && (res.idToken || res.email)){
-              authUser = {
-                uid: res.id || (res.email ? 'user_' + res.email.replace(/[^a-zA-Z0-9_-]/g, '_') : 'default_user'),
-                email: res.email,
-                displayName: res.displayName || (res.email ? res.email.split('@')[0] : 'Choir Member')
-              };
-              if(res.idToken && FIREBASE_READY && firebase.auth){
-                try{
-                  const cred = firebase.auth.GoogleAuthProvider.credential(res.idToken);
-                  const fbRes = await firebase.auth().signInWithCredential(cred);
-                  if(fbRes && fbRes.user) authUser = fbRes.user;
-                }catch(e){}
-              }
-            }
-          }catch(err){
+            authErr = err;
             const msg = (err && (err.message || err.toString())) || '';
             if(msg.toLowerCase().includes('cancel') || msg.toLowerCase().includes('dismiss')){
               googleBtn.disabled = false;
@@ -2521,7 +2536,7 @@ function renderAuthView(){
           transitionToApp(authUser);
           return;
         }
-        showAuthError('Google sign-in could not complete. Please try again.');
+        showAuthError(authErr?.message || 'Google sign-in could not complete. Please try again.');
         googleBtn.disabled = false;
         googleBtn.style.opacity = '1';
         googleBtn.innerHTML = origText;
@@ -10150,14 +10165,7 @@ function subscribeRealtimeSync(){
             LocalAdapter.set(docId, val);
             if(docId.startsWith('song:')){
               try{
-                const s = normalizeSong(JSON.parse(val));
-                const idx = state.songs.findIndex(item=>item.id===s.id);
-                if(idx >= 0) state.songs[idx] = s;
-                else state.songs.push(s);
-                changed = true;
-              }catch(e){}
-            } else if(docId.startsWith('setlist:')){
-              try{
+                c
                 const sl = normalizeSetlist(JSON.parse(val));
                 const idx = state.setlists.findIndex(item=>item.id===sl.id);
                 if(idx >= 0) state.setlists[idx] = sl;

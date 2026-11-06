@@ -8,6 +8,8 @@ import com.getcapacitor.BridgeActivity;
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // (2026-07-13) register native FirebaseAuthentication; prev: custom only
+        registerPlugin(io.capawesome.capacitorjs.plugins.firebase.authentication.FirebaseAuthenticationPlugin.class);
         registerPlugin(GoogleOneTapPlugin.class);
         registerPlugin(AppPlugin.class);
         super.onCreate(savedInstanceState);
