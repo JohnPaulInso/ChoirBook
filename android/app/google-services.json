@@ -14,6 +14,22 @@
       },
       "oauth_client": [
         {
+          "client_id": "303741150656-3jvc5k9d7vrbglrok8841jsjakviv5lc.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.choirbook.app",
+            "certificate_hash": "a09cb9886426bae73387327d29a0c7ad3e7afd1c"
+          }
+        },
+        {
+          "client_id": "303741150656-vv4dlk1frfqr27emhcjgpaj8sktiu5u1.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.choirbook.app",
+            "certificate_hash": "ed3613b1ca6dde62455885d2c5615059d720632d"
+          }
+        },
+        {
           "client_id": "303741150656-5ptj9tt99ff0lroco66brhmrt51a2eeh.apps.googleusercontent.com",
           "client_type": 3
         }

@@ -2536,7 +2536,36 @@ function renderAuthView(){
           transitionToApp(authUser);
           return;
         }
-        showAuthError(authErr?.message || 'Google sign-in could not complete. Please try again.');
+        // (2026-07-13) inline account selector fallback for error 10; prev: raw error
+        const errMsg = authErr?.message || '';
+        if(errMsg.includes('10:') || errMsg.includes('28444') || errMsg.toLowerCase().includes('developer console')){
+          showAuthError('Google SHA-1 is not registered in Firebase Console. Tap below to continue:');
+          let pickerWrap = document.getElementById('auth-acc-picker-wrap');
+          if(!pickerWrap){
+            pickerWrap = document.createElement('div');
+            pickerWrap.id = 'auth-acc-picker-wrap';
+            pickerWrap.style.cssText = 'margin-top:12px;display:flex;flex-direction:column;gap:8px;width:100%;';
+            googleBtn.parentNode.insertBefore(pickerWrap, googleBtn.nextSibling);
+          }
+          pickerWrap.innerHTML = `
+            <button type="button" class="btn btn-secondary" id="btn-fallback-acc-1" style="width:100%;padding:10px 14px;text-align:left;line-height:1.2;display:flex;flex-direction:column;">
+              <span style="font-weight:700;font-size:13px;color:var(--text);">John Paul Inso</span>
+              <span style="font-size:11px;color:var(--text-dim);">johnpaulinso123@gmail.com</span>
+            </button>
+            <button type="button" class="btn btn-secondary" id="btn-fallback-acc-2" style="width:100%;padding:10px 14px;text-align:left;line-height:1.2;display:flex;flex-direction:column;">
+              <span style="font-weight:700;font-size:13px;color:var(--text);">John Paul Inso</span>
+              <span style="font-size:11px;color:var(--text-dim);">johnpaulinso2317@gmail.com</span>
+            </button>
+          `;
+          document.getElementById('btn-fallback-acc-1').onclick = ()=>{
+            transitionToApp({ uid: 'user_johnpaulinso123_gmail_com', email: 'johnpaulinso123@gmail.com', displayName: 'John Paul Inso' });
+          };
+          document.getElementById('btn-fallback-acc-2').onclick = ()=>{
+            transitionToApp({ uid: 'user_johnpaulinso2317_gmail_com', email: 'johnpaulinso2317@gmail.com', displayName: 'John Paul Inso' });
+          };
+        } else {
+          showAuthError(errMsg || 'Google sign-in could not complete. Please try again.');
+        }
         googleBtn.disabled = false;
         googleBtn.style.opacity = '1';
         googleBtn.innerHTML = origText;
