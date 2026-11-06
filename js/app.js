@@ -2476,7 +2476,8 @@ function renderAuthView(){
     subscribeRealtimeSync();
     if(typeof google !== 'undefined' && google?.accounts?.id?.cancel) google.accounts.id.cancel();
     state.view = 'list';
-    state.loading = false;
+    // (2026-07-13) activate skeleton preloader on login transition; prev: false
+    state.loading = (!state.songs || state.songs.length === 0);
     render();
     loadAll().catch(()=>{});
   };
@@ -3537,9 +3538,49 @@ function getExpandedSetlistItemsWithLit(sl){
   return out;
 }
 
+// (2026-07-13) render skeleton preloader matching real song rows; prev: none
+function renderSkeletonSongListHtml(){
+  const titleWidths = [56, 75, 48, 68, 82, 52, 70, 44, 64];
+  const subWidths = [42, 58, 36, 48, 62, 40, 54, 32, 46];
+  let rowsHtml = '';
+  titleWidths.forEach((tw, idx) => {
+    const sw = subWidths[idx];
+    rowsHtml += `
+      <div class="song-row song-row-skeleton">
+        <span class="fav" style="display:flex;align-items:center;">
+          <span class="skeleton-shimmer" style="width:16px;height:16px;border-radius:3px;"></span>
+        </span>
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;">
+          <div class="song-title" style="display:flex;align-items:center;min-width:0;">
+            <span class="song-flag-pill skeleton-shimmer" style="opacity:0.35;"></span>
+            <span class="skeleton-shimmer" style="width:${tw}%;height:15px;border-radius:4px;"></span>
+          </div>
+          <div class="song-sub" style="display:flex;align-items:center;">
+            <span class="skeleton-shimmer" style="width:${sw}%;height:11px;border-radius:3px;opacity:0.65;"></span>
+          </div>
+        </div>
+      </div>`;
+  });
+  return `
+    <div class="song-section-group song-skeleton-group">
+      <div class="letter-divider" style="display:flex;align-items:center;justify-content:space-between;">
+        <span class="skeleton-shimmer" style="width:120px;height:14px;border-radius:4px;"></span>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span class="skeleton-shimmer" style="width:64px;height:22px;border-radius:12px;"></span>
+          <span class="skeleton-shimmer" style="width:36px;height:22px;border-radius:12px;"></span>
+        </div>
+      </div>
+      ${rowsHtml}
+    </div>`;
+}
+
 // (2026-07-13) support folder peek rendering with category override; prev: cur
 function buildSongListRowsHtml(catOverride){
   const isPeek = catOverride !== undefined;
+  // (2026-07-13) render skeleton preloader on cloud sync; prev: empty state
+  if(state.loading && !isPeek && (!state.songs || state.songs.length === 0)){
+    return renderSkeletonSongListHtml();
+  }
   const favToggleBtn = isPeek ? '' : `
     <button type="button" class="fav-toggle-pill ${state.favOnly?'is-active':''}" id="btn-toggle-fav-only" title="${state.favOnly?'Show all songs':'Show favorited only'}" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:10.5px;font-weight:700;letter-spacing:0.2px;border-radius:12px;border:1px solid ${state.favOnly?'var(--chord)':'rgba(255,255,255,0.18)'};background:${state.favOnly?'rgba(234,179,8,0.2)':'transparent'};color:${state.favOnly?'var(--chord)':'var(--text-dim)'};cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all 0.15s ease;">
       <span style="display:flex;align-items:center;font-size:12px;color:${state.favOnly?'var(--chord)':'inherit'};">${iconStar(state.favOnly)}</span>
@@ -7494,8 +7535,10 @@ function iconForMassPart(name){
 
 // (2026-07-13) left-align sidebar top labels & keep folder rows clean; prev: space-between
 function sidebarHtml(){
+  const isSyncLoading = state.loading && (!state.songs || !state.songs.length);
+  const countShimmer = '<span class="skeleton-shimmer" style="width:18px;height:12px;border-radius:4px;display:inline-block;"></span>';
   const folderItems = state.categories.map(c=>{
-    const count = state.songs.filter(s=>(s.categories||[]).includes(c)).length;
+    const count = isSyncLoading ? countShimmer : state.songs.filter(s=>(s.categories||[]).includes(c)).length;
     const ct = getFolderTheme(c);
     return `
       <div class="side-item folder-item-row" data-goto-folder="${escapeHtml(c)}" style="display:flex;align-items:center;justify-content:space-between;padding:10px 8px;">
@@ -7519,7 +7562,7 @@ function sidebarHtml(){
     return 0;
   });
   const massPartItems = orderedParts.map(mp=>{
-    const count = state.songs.filter(s=>(s.massParts||[]).includes(mp)).length;
+    const count = isSyncLoading ? countShimmer : state.songs.filter(s=>(s.massParts||[]).includes(mp)).length;
     const isSelected = state.filterMassPart === mp;
     // (2026-07-13) add liturgical icons to mass part items; prev: text only
     return `
@@ -7539,10 +7582,10 @@ function sidebarHtml(){
         <div class="side-item ${!state.filterFlag && !state.filterMassPart && state.filterCat==='All'?'selected':''}" data-goto-all="1" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;">${iconMusic()}</span><span style="flex:1;text-align:left;">All Songs</span></div>
         <div class="side-item ${!state.filterFlag && !state.filterMassPart && state.filterCat==='Favorites'?'selected':''}" data-goto-fav="1" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;color:var(--chord);">${iconStar(true)}</span><span style="flex:1;text-align:left;">Favorites</span></div>
         <!-- (2026-07-13) sidebar flags page link with flagged songs badge; prev: none -->
-        <div class="side-item ${state.filterFlag?'selected':''}" data-goto-flags="1" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;"><span class="song-flag-pill" style="background-color:#ef4444;width:13px;height:17px;margin:0 1px 0 0;"></span></span><span style="flex:1;text-align:left;">Flags</span><span class="side-count">${state.songs.filter(s=>getSongFlag(s)).length}</span></div>
-        <div class="side-item" data-goto-setlists="1" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;">${iconSetlist()}</span><span style="flex:1;text-align:left;">Setlists / Mass Plans</span><span class="side-count">${state.setlists.length}</span></div>
+        <div class="side-item ${state.filterFlag?'selected':''}" data-goto-flags="1" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;"><span class="song-flag-pill" style="background-color:#ef4444;width:13px;height:17px;margin:0 1px 0 0;"></span></span><span style="flex:1;text-align:left;">Flags</span><span class="side-count">${isSyncLoading ? countShimmer : state.songs.filter(s=>getSongFlag(s)).length}</span></div>
+        <div class="side-item" data-goto-setlists="1" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;">${iconSetlist()}</span><span style="flex:1;text-align:left;">Setlists / Mass Plans</span><span class="side-count">${isSyncLoading ? countShimmer : state.setlists.length}</span></div>
         <!-- (2026-07-13) sidebar link for folders page; prev: none -->
-        <div class="side-item ${state.view==='folders'?'selected':''}" data-goto-folders="1" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;">${iconFolder()}</span><span style="flex:1;text-align:left;">Folders / Seasons</span><span class="side-count">${state.categories.length}</span></div>
+        <div class="side-item ${state.view==='folders'?'selected':''}" data-goto-folders="1" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;">${iconFolder()}</span><span style="flex:1;text-align:left;">Folders / Seasons</span><span class="side-count">${isSyncLoading ? countShimmer : state.categories.length}</span></div>
         <div class="side-section-label" data-goto-folders="1" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;" title="Open Folders page"><span>FOLDERS / SEASONS</span><span style="font-size:9.5px;color:var(--accent);font-weight:700;letter-spacing:0.5px;">&#9729; Database &rsaquo;</span></div>
         ${folderItems}
         <div class="side-item side-add" id="side-add-folder"><span>+ New folder</span></div>
@@ -10192,9 +10235,17 @@ function subscribeRealtimeSync(){
               return;
             }
             LocalAdapter.set(docId, val);
+            // (2026-07-13) sync song and setlist realtime updates; prev: broken syntax error
             if(docId.startsWith('song:')){
               try{
-                c
+                const s = normalizeSong(JSON.parse(val));
+                const idx = state.songs.findIndex(item=>item.id===s.id);
+                if(idx >= 0) state.songs[idx] = s;
+                else state.songs.push(s);
+                changed = true;
+              }catch(e){}
+            } else if(docId.startsWith('setlist:')){
+              try{
                 const sl = normalizeSetlist(JSON.parse(val));
                 const idx = state.setlists.findIndex(item=>item.id===sl.id);
                 if(idx >= 0) state.setlists[idx] = sl;
@@ -10215,8 +10266,11 @@ function subscribeRealtimeSync(){
             }
           }
         });
-        // (2026-07-13) skip render on local snapshot echo or active modal; prev: render()
-        if(changed && !state.loading && !state.modal){ render(); }
+        // (2026-07-13) dismiss skeleton preloader on snapshot reception; prev: render
+        if(state.loading && state.songs && state.songs.length > 0){
+          state.loading = false;
+        }
+        if(changed && !state.modal){ render(); }
       }, (err) => { console.warn('Realtime snapshot notice:', err); });
   }catch(e){ console.error('Snapshot error', e); }
 }
@@ -10266,7 +10320,8 @@ function subscribeRealtimeSync(){
         selectAdapter();
         subscribeRealtimeSync();
         state.view = 'list';
-        state.loading = false;
+        // (2026-07-13) activate skeleton preloader on login transition; prev: false
+        state.loading = (!state.songs || state.songs.length === 0);
         render();
         seedIfEmpty().catch(()=>{});
         loadAll().catch(()=>{});
@@ -10281,7 +10336,8 @@ function subscribeRealtimeSync(){
           selectAdapter();
           subscribeRealtimeSync();
           state.view = 'list';
-          state.loading = false;
+          // (2026-07-13) activate skeleton preloader if songs pending; prev: false
+          state.loading = (!state.songs || state.songs.length === 0);
           render();
           seedIfEmpty().catch(()=>{});
           loadAll().catch(()=>{});
