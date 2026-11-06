@@ -48,23 +48,31 @@ public class GoogleOneTapPlugin extends Plugin {
         }
     }
 
+    // (2026-07-13) handle sign-in result with safe exception catch; prev: unused catch
     @ActivityCallback
     private void handleSignInResult(PluginCall call, ActivityResult result) {
         if (call == null) return;
         if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
             try {
-                GoogleSignInAccount account = GoogleSignIn.getSignedInAccountFromIntent(result.getData()).getResult(ApiException.class);
-                if (account != null && account.getIdToken() != null) {
-                    JSObject ret = new JSObject();
-                    ret.put("idToken", account.getIdToken());
-                    ret.put("email", account.getEmail());
-                    ret.put("displayName", account.getDisplayName());
-                    call.resolve(ret);
-                } else {
-                    call.reject("Google account ID token is missing");
+                GoogleSignInAccount account = null;
+                try {
+                    account = GoogleSignIn.getSignedInAccountFromIntent(result.getData()).getResult(ApiException.class);
+                } catch (Exception ignored) {
+                    try {
+                        account = GoogleSignIn.getLastSignedInAccount(getContext());
+                    } catch (Exception ignored2) {}
                 }
-            } catch (ApiException e) {
-                call.reject("Google sign-in error " + e.getStatusCode() + ": " + e.getMessage(), e);
+                if (account != null) {
+                    JSObject ret = new JSObject();
+                    if (account.getIdToken() != null) {
+                        ret.put("idToken", account.getIdToken());
+                    }
+                    ret.put("email", account.getEmail() != null ? account.getEmail() : "");
+                    ret.put("displayName", account.getDisplayName() != null ? account.getDisplayName() : "Choir Director");
+                    call.resolve(ret);
+                    return;
+                }
+                call.reject("Google account info is unavailable");
             } catch (Exception e) {
                 call.reject("Google sign-in failed: " + e.getMessage(), e);
             }

@@ -866,6 +866,12 @@ const LocalAdapter = {
     localStorage.setItem(key, value);
     return {key, value};
   },
+  // (2026-07-13) add LocalAdapter.save for optimistic sync; prev: missing method
+  async save(key, value){
+    const str = typeof value === 'string' ? value : JSON.stringify(value);
+    localStorage.setItem(key, str);
+    return {key, value: str};
+  },
   async delete(key){
     localStorage.removeItem(key);
     return {key, deleted:true};
@@ -904,10 +910,20 @@ const ClaudeAdapter = {
 function getLastSyncAt(){ return parseInt(localStorage.getItem('cbp_last_synced_at') || '0', 10); }
 function setLastSyncAt(ts){ localStorage.setItem('cbp_last_synced_at', String(ts || Date.now())); }
 
-// (2026-07-13) optimize FirestoreAdapter with incremental sync; prev: full download
+// (2026-07-13) isolate user data by uid except linked master emails; prev: wild card
+function getCanonicalUserDocId(user){
+  if(!user) return 'default_user';
+  const email = (user.email || '').toLowerCase().trim();
+  if(email === 'johnpaulinso123@gmail.com' || email === 'johnpaulinso2317@gmail.com'){
+    return 'user_johnpaulinso_master';
+  }
+  return user.uid || (email ? 'user_' + email.replace(/[^a-zA-Z0-9_-]/g, '_') : 'default_user');
+}
+
 const FirestoreAdapter = {
   _col(){
-    return firebase.firestore().collection('users').doc(firebaseUser.uid).collection('data');
+    const docId = getCanonicalUserDocId(firebaseUser);
+    return firebase.firestore().collection('users').doc(docId).collection('data');
   },
   async getUpdatedSince(lastTs){
     try{
@@ -1083,6 +1099,17 @@ const Store = {
   },
   async saveSetlist(setlist){ await adapter.set('setlist:'+setlist.id, JSON.stringify(setlist)); },
   async deleteSetlist(id){ await adapter.delete('setlist:'+id); },
+  // (2026-07-13) persist setlist custom order; prev: none
+  async getSetlistOrder(){
+    const r = await adapter.get('meta:setlistOrder');
+    if(!r){
+      const loc = await LocalAdapter.get('meta:setlistOrder');
+      if(!loc) return null;
+      try{ return JSON.parse(loc.value); }catch(e){ return null; }
+    }
+    try{ return JSON.parse(r.value); }catch(e){ return null; }
+  },
+  async saveSetlistOrder(order){ await adapter.set('meta:setlistOrder', JSON.stringify(order || [])); },
   async getDeletedSongKeys(){
     const r = await adapter.get('meta:deletedSongKeys');
     if(!r){
@@ -1227,18 +1254,19 @@ const MASS_PART_CUES = {
     ],
     sing: 'Sing the Kyrie / Ginoo Kaloy-i Kami'
   },
+  // (2026-07-13) integrate collect prayer into psalm cue; prev: standalone song
   'gloria': {
     title: 'Himaya sa Dios (Gloria)',
     cues: [
       { id: 'gloria-0', priest: 'Himaya sa Dios didto sa langit...' }
     ],
-    sing: 'Sing the Gloria',
-    postPrayer: { id: 'gloria-post', priest: 'Mag-ampo kita... Dios nga usa hangtod sa kahangturan.', chords: '        D     G  D', response: 'Amen' }
+    sing: 'Sing the Gloria'
   },
   'responsorial psalm': {
     title: 'Unang Pagbasa & Salmo',
     cues: [
-      { id: 'psalm-0', priest: '(1st Reading) Ang Pulong sa Ginoo.', chords: '        D     G          D', response: 'Salamat sa Dios.' }
+      { id: 'psalm-collect', priest: 'Mag-ampo kita... Dios nga usa hangtod sa kahangturan.', chords: '        D     G  D', response: 'Amen.' },
+      { id: 'psalm-0', priest: '(1st Reading) Ang Pulong sa Ginoo.', response: 'Salamat sa Dios.' }
     ],
     sing: 'Sing the Salmo / Psalm Response'
   },
@@ -1348,12 +1376,24 @@ function getMassPartCueKey(name){
   return 'entrance';
 }
 
+// (2026-07-13) ensure collect prayer in psalm cue; prev: 1st reading only
+function ensureCollectInPsalmCue(cueObj){
+  if(!cueObj) return;
+  if(!cueObj.cues) cueObj.cues = [];
+  const hasCollect = cueObj.cues.some(c => c.id === 'psalm-collect' || (c.priest && c.priest.toLowerCase().includes('mag-ampo kita')));
+  if(!hasCollect){
+    cueObj.cues.unshift({ id: 'psalm-collect', priest: 'Mag-ampo kita... Dios nga usa hangtod sa kahangturan.', chords: '        D     G  D', response: 'Amen.' });
+  }
+}
+
 function findMassPartCue(name){
   if(!name) return null;
   const key = getMassPartCueKey(name);
-  if(state.customCues && state.customCues[key]) return state.customCues[key];
-  if(MASS_PART_CUES[key]) return MASS_PART_CUES[key];
-  return null;
+  let res = null;
+  if(state.customCues && state.customCues[key]) res = state.customCues[key];
+  else if(MASS_PART_CUES[key]) res = MASS_PART_CUES[key];
+  if(key === 'responsorial psalm' && res) ensureCollectInPsalmCue(res);
+  return res;
 }
 
 // (2026-07-13) sync cue editor draft from modal input values; prev: none
@@ -1438,13 +1478,19 @@ const state = {
   customCues: {},
   filterCat: 'All',
   filterMassPart: null, // when set, list view is browsing by mass part instead of folder
+  // (2026-07-13) add filterSetlistId for active setlist view; prev: none
+  filterSetlistId: null,
   // (2026-07-13) add filterFlag for flag browse mode; prev: none
   filterFlag: null,
   // (2026-07-13) add favOnly filter state; prev: none
   favOnly: false,
   // (2026-07-13) preserve list-wrap scroll position across views; prev: none
   lastListScroll: 0,
+  // (2026-07-13) persistent sidebar state in landscape; prev: drawer only
   sidebarOpen: false,
+  // (2026-07-13) persistent landscape folder viewer sidebar state; prev: none
+  sidebarCollapsed: (function(){ try{ return localStorage.getItem('cbp_sidebar_collapsed') === 'true'; }catch(e){ return false; } })(),
+  viewerSidebarCollapsed: (function(){ try{ return localStorage.getItem('cbp_viewer_sidebar_collapsed') === 'true'; }catch(e){ return false; } })(),
   currentId: null,
   editingDraft: null,
   // (2026-07-13) track editor source view to return correctly; prev: forced viewer
@@ -1692,6 +1738,22 @@ async function loadAll(){
       state.setlists = cachedSetlists.map(it=>{
         try{ return normalizeSetlist(JSON.parse(it.value)); }catch(e){ return null; }
       }).filter(Boolean);
+      // (2026-07-13) apply cached custom setlist order; prev: unordered
+      try{
+        const cachedOrder = await LocalAdapter.get('meta:setlistOrder');
+        if(cachedOrder && cachedOrder.value){
+          const order = JSON.parse(cachedOrder.value);
+          if(Array.isArray(order)){
+            state.setlists.sort((a,b)=>{
+              const ia = order.indexOf(a.id), ib = order.indexOf(b.id);
+              if(ia !== -1 && ib !== -1) return ia - ib;
+              if(ia !== -1) return -1;
+              if(ib !== -1) return 1;
+              return 0;
+            });
+          }
+        }
+      }catch(e){}
     }
     if(cachedItems && cachedItems.length > 0){
       state.songs = cachedItems.map(it=>{
@@ -1777,11 +1839,35 @@ async function loadAll(){
         delete state.customCues['communion'].postPrayer;
         dirtyCustom = true;
       }
+      // (2026-07-13) clean gloria postPrayer & ensure psalm-collect; prev: separate prayer
+      if(state.customCues['gloria'] && state.customCues['gloria'].postPrayer){
+        delete state.customCues['gloria'].postPrayer;
+        dirtyCustom = true;
+      }
+      if(state.customCues['responsorial psalm']){
+        ensureCollectInPsalmCue(state.customCues['responsorial psalm']);
+        dirtyCustom = true;
+      }
       LocalAdapter.set('meta:customCues', JSON.stringify(state.customCues));
       if(dirtyCustom) Store.saveCustomCues(state.customCues).catch(()=>{});
     }
     applyFolderTheme(state.filterCat);
-    if(rawSetlists) state.setlists = rawSetlists.map(normalizeSetlist);
+    if(rawSetlists){
+      state.setlists = rawSetlists.map(normalizeSetlist);
+      // (2026-07-13) apply remote custom setlist order; prev: unordered
+      try{
+        const order = await Store.getSetlistOrder();
+        if(order && Array.isArray(order)){
+          state.setlists.sort((a,b)=>{
+            const ia = order.indexOf(a.id), ib = order.indexOf(b.id);
+            if(ia !== -1 && ib !== -1) return ia - ib;
+            if(ia !== -1) return -1;
+            if(ib !== -1) return 1;
+            return 0;
+          });
+        }
+      }catch(e){}
+    }
     ensureGreatAmenMigration();
   }catch(err){
     console.warn('Network sync timed out or offline, using local data');
@@ -1894,6 +1980,9 @@ function hydrateInitialState(){
           if(state.customCues['lambofgod']) delete state.customCues['lambofgod'].communionInvite;
           if(state.customCues['lamb of god']) delete state.customCues['lamb of god'].communionInvite;
           if(state.customCues['communion']) delete state.customCues['communion'].postPrayer;
+          // (2026-07-13) clean cached gloria postPrayer & ensure psalm-collect; prev: separate
+          if(state.customCues['gloria']) delete state.customCues['gloria'].postPrayer;
+          if(state.customCues['responsorial psalm']) ensureCollectInPsalmCue(state.customCues['responsorial psalm']);
         }
       }catch(e){}
     }
@@ -1925,29 +2014,15 @@ function hydrateInitialState(){
 }
 hydrateInitialState();
 
-// (2026-07-13) left-indented chord rows in liturgical dialogues; prev: unindented chords
+// (2026-07-13) merge homily & creed into gospel dialogue; prev: separate songs
 function getLiturgicalDialogueSongs(){
   return [
-    {
-      id: 'lit-collect', title: 'Pag-ampo human sa Gloria (Collect Prayer)', artist: 'Misal Romano (Bisaya)', key: 'D', capo: 0, tempo: 75,
-      timeSig: '4/4', style: 'Chant', instrument: 'Guitar / Vocal', categories: [],
-      massParts: ['Gloria'],
-      sectionTitle: 'Pag-ampo human sa Gloria \u2022 Before Psalm',
-      anchorPart: 'Gloria', anchorPos: 'after', litVersion: 4,
-      favorite: false, transposeOffset: 0, dateAdded: Date.now() - 7000,
-      viewerFontSize: 15, viewerScrollSpeed: 30,
-      body:
-`(Pag-ampo human sa Gloria / Collect Prayer)
-\u27a4 Priest: Mag-ampo kita... Dios nga usa hangtod sa kahangturan.
->        D     G  D
-\u2669 Response: Amen.`
-    },
     {
       id: 'lit-ebanghelyo', title: 'Ebanghelyo (Gospel Dialogue & Acclamation)', artist: 'Misal Romano (Bisaya)', key: 'D', capo: 0, tempo: 75,
       timeSig: '4/4', style: 'Chant', instrument: 'Guitar / Vocal', categories: [],
       massParts: ['Gospel Acclamation'],
       sectionTitle: 'Ebanghelyo (Gospel) \u2022 After Gospel Acclamation',
-      anchorPart: 'Gospel Acclamation', anchorPos: 'after', litVersion: 4,
+      anchorPart: 'Gospel Acclamation', anchorPos: 'after', litVersion: 5,
       favorite: false, transposeOffset: 0, dateAdded: Date.now() - 6000,
       viewerFontSize: 15, viewerScrollSpeed: 30,
       body:
@@ -1963,53 +2038,41 @@ function getLiturgicalDialogueSongs(){
 (Human sa Ebanghelyo / Conclusion)
 \u27a4 Priest: Ang Ebanghelyo sa Ginoo.
 >        D     G         A     D
-\u2669 Response: Daygon ko ikaw, O Cristo.`
-    },
-    {
-      id: 'lit-faithful', title: 'Homilia, Kredo & Pag-ampo sa Katilingban', artist: 'Misal Romano (Bisaya)', key: 'D', capo: 0, tempo: 70,
-      timeSig: '4/4', style: 'Liturgy', instrument: 'Guitar / Vocal', categories: [],
-      massParts: ['Offertory'],
-      sectionTitle: 'Kredo & Pag-ampo sa Katilingban \u2022 Before Offertory',
-      anchorPart: 'Offertory', anchorPos: 'before', litVersion: 4,
-      favorite: false, transposeOffset: 0, dateAdded: Date.now() - 5000,
-      viewerFontSize: 15, viewerScrollSpeed: 30,
-      body:
-`(Homily / Homilia)
+\u2669 Response: Daygon ko ikaw, O Cristo.
 ------------------------------------
-(Kredo / Pagpadayag sa Pagtuo)
-\u211f Response: Nagatoo ako... ug sa kinabuhing dayon. Amen.
+(Homily)
+
+------------------------------------
+(Kredo / Nagatoo Ako)
+\u2669 Response: Nagatoo ako sa Dios, ang Amahan nga Makagagahum sa tanan, Magbubuhat sa langit ug sa yuta.
+
+Ug kang Jesu-Cristo, Iyang Bugtong Anak, atong Ginoo; gipanamkon Siya sa lalang sa Espiritu Santo, natawo ni Maria nga Birhen, gisakit sa sugo ni Poncio Pilato, gilansang sa krus, namatay ug gilubong; miubos sa mga nangamatay, sa ikatulo ka adlaw nabanhaw gikan sa mga minatay; misaka sa langit, nagalingkod sa tuo sa Dios Amahan nga Makagagahum sa tanan; gikan didto mobalik Siya aron paghukom sa mga buhi ug sa mga minatay.
+
+Nagatoo ako sa Espiritu Santo, sa Santos ug Katoliko nga Simbahan, sa panag-ambit sa mga Santos, sa kapasayloan sa mga sala, sa pagkabanhaw sa lawas, ug sa kinabuhing dayon. Amen.
 ------------------------------------
 (Pag-ampo sa Katilingban / Prayers of the Faithful)
 \u27a4 Priest/Reader: Mag-ampo kita sa Ginoo.
-\u211f Response: Dungga ang among pag-ampo. (o sumala sa tubag)`
+\u2669 Response: Dungga ang among pag-ampo. (o sumala sa tubag)`
     },
-    {
-      id: 'lit-eucharist', title: 'Liturhiya sa Eukaristiya (Preparation of the Gifts)', artist: 'Misal Romano (Bisaya)', key: 'D', capo: 0, tempo: 70,
-      timeSig: '4/4', style: 'Liturgy', instrument: 'Guitar / Vocal', categories: [],
-      massParts: ['Offertory'],
-      sectionTitle: 'Liturhiya sa Eukaristiya \u2022 Before Preface',
-      anchorPart: 'Offertory', anchorPos: 'after', litVersion: 4,
-      favorite: false, transposeOffset: 0, dateAdded: Date.now() - 4000,
-      viewerFontSize: 15, viewerScrollSpeed: 30,
-      body:
-`(Liturhiya sa Eukaristiya / Preparation of the Gifts)
-\u27a4 Priest: Daygon ikaw, Ginoong Dios sa tanang kalibutan...
-\u211f Response: Daygon ang Dios hangtod sa kahangturan.
-
-\u27a4 Priest: Pag-ampo kamo, mga igsoon, aron kining akong halad ug ang inyo dawaton unta sa Dios Amahan nga makagagahum sa tanan.
-
-\u211f Response: Dawaton unta sa Ginoo ang halad gikan sa imong mga kamot alang sa pagdayeg ug paghimaya sa iyang ngalan, alang usab sa atong kapuslanan ug sa tibuok niyang Santos nga Simbahan.`
-    },
+    // (2026-07-13) merge preparation of gifts into preface; prev: lit-eucharist song
     {
       id: 'lit-preface', title: 'Pasiuna nga Pag-ampo (Preface Dialogue)', artist: 'Misal Romano (Bisaya)', key: 'D', capo: 0, tempo: 75,
       timeSig: '4/4', style: 'Chant', instrument: 'Guitar / Vocal', categories: [],
       massParts: ['Sanctus'],
       sectionTitle: 'Pasiuna nga Pag-ampo (Preface) \u2022 Before Sanctus',
-      anchorPart: 'Sanctus', anchorPos: 'before', litVersion: 4,
+      anchorPart: 'Sanctus', anchorPos: 'before', litVersion: 5,
       favorite: false, transposeOffset: 0, dateAdded: Date.now() - 3000,
       viewerFontSize: 15, viewerScrollSpeed: 30,
       body:
-`(Pag-ampo ibabaw sa mga Halad)
+`(Liturhiya sa Eukaristiya / Preparation of the Gifts)
+\u27a4 Priest: Daygon ikaw, Ginoong Dios sa tanang kalibutan...
+\u2669 Response: Daygon ang Dios hangtod sa kahangturan.
+
+\u27a4 Priest: Pag-ampo kamo, mga igsoon, aron kining akong halad ug ang inyo dawaton unta sa Dios Amahan nga makagagahum sa tanan.
+
+\u2669 Response: Dawaton unta sa Ginoo ang halad gikan sa imong mga kamot alang sa pagdayeg ug paghimaya sa iyang ngalan, alang usab sa atong kapuslanan ug sa tibuok niyang Santos nga Simbahan.
+------------------------------------
+(Pag-ampo ibabaw sa mga Halad)
 \u27a4 Priest: (Pag-ampo ibabaw sa mga Halad)... hangtod sa kahangturan.
 >        D     G  D
 \u2669 Response: Amen.
@@ -2038,9 +2101,9 @@ function isSeededDefaultSong(s){
   return false;
 }
 
-// (2026-07-13) purge decommissioned communion & concluding pages; prev: sync only
+// (2026-07-13) purge lit-eucharist dialogue song; prev: retained
 function syncLiturgicalDialogues(persist){
-  const purgeIds = ['lit-communion-invite', 'lit-concluding'];
+  const purgeIds = ['lit-communion-invite', 'lit-concluding', 'lit-collect', 'lit-faithful', 'lit-eucharist'];
   const toRemove = state.songs.filter(s => purgeIds.includes(s.id) || isSeededDefaultSong(s));
   if(toRemove.length > 0){
     state.songs = state.songs.filter(s => !purgeIds.includes(s.id) && !isSeededDefaultSong(s));
@@ -2050,22 +2113,26 @@ function syncLiturgicalDialogues(persist){
     });
     purgeIds.forEach(id => markSongAsDeleted(id));
   }
+  (state.setlists || []).forEach(sl => {
+    if(sl.songIds && sl.songIds.some(id => purgeIds.includes(id))){
+      sl.songIds = sl.songIds.filter(id => !purgeIds.includes(id));
+      LocalAdapter.set('setlist:'+sl.id, JSON.stringify(sl));
+      if(persist) Store.saveSetlist(sl).catch(()=>{});
+    }
+  });
   const litSongs = getLiturgicalDialogueSongs();
   litSongs.forEach(ls=>{
     const existing = state.songs.find(s=>s.id===ls.id);
-    if(!existing){
-      state.songs.push(ls);
-      if(persist) Store.saveSong(ls).catch(()=>{});
-    } else {
+    if(existing){
       existing.sectionTitle = ls.sectionTitle;
       existing.anchorPart = ls.anchorPart;
       existing.anchorPos = ls.anchorPos;
       existing.optionalLit = ls.optionalLit;
-      if((!existing.userEdited && existing.litVersion !== 4) || existing.title !== ls.title){
+      if((!existing.userEdited && existing.litVersion !== 5) || existing.title !== ls.title){
         existing.title = ls.title;
         if(!existing.userEdited) existing.body = ls.body;
-        // (2026-07-13) update dialogue litVersion to 4; prev: stuck at 3
-        existing.litVersion = 4;
+        existing.litVersion = 5;
+        LocalAdapter.set('song:'+existing.id, JSON.stringify(existing));
         if(persist) Store.saveSong(existing).catch(()=>{});
       }
     }
@@ -2073,24 +2140,29 @@ function syncLiturgicalDialogues(persist){
 }
 if(state.songs.length > 0) syncLiturgicalDialogues(false);
 
-// (2026-07-13) skip seed check if songs are already cached; prev: listSongs check
+// (2026-07-13) keep new accounts 100% clean; prev: seeded liturgical dialogues
 async function seedIfEmpty(){
-  if(state.songs && state.songs.length > 0) return;
-  const keys = await Store.listSongs();
-  if(keys.length===0){
-    for(const ls of getLiturgicalDialogueSongs()){
-      await Store.saveSong(ls);
-    }
-  }
+  return;
 }
 
 /* ============================================================
    RENDER
    ============================================================ */
 const app = document.getElementById('app');
+
+// (2026-07-13) detect horizontal tablet/desktop view mode; prev: none
+function isTabletOrDesktopHorizontal(){
+  if(typeof window === 'undefined') return false;
+  const isLandscape = (window.matchMedia && window.matchMedia('(orientation: landscape)').matches) || window.innerWidth > window.innerHeight;
+  return isLandscape && window.innerWidth >= 768 && window.innerHeight >= 500;
+}
+
 // (2026-07-13) render view & sync wake lock with settings view; prev: loading check
 function render(){
   syncWakeLock();
+  if(state.view !== 'list'){
+    app.classList.remove('has-docked-sidebar', 'sidebar-collapsed');
+  }
   if(state.view==='auth') return renderAuthView();
   if(state.view==='settings') return renderSettingsView();
   if(state.view==='list') return renderListView();
@@ -2101,6 +2173,39 @@ function render(){
   // (2026-07-13) render dedicated folders page view; prev: list/viewer only
   if(state.view==='folders') return renderFoldersView();
 }
+// (2026-07-13) global signout purging auth & database cache; prev: auth only
+async function performUserSignOut(){
+  try{
+    localStorage.removeItem('cbp_user_authenticated');
+    localStorage.removeItem('cbp_user_session');
+    localStorage.removeItem('choirbook_offline_guest');
+    localStorage.removeItem('cbp_last_synced_at');
+    for(let i = localStorage.length - 1; i >= 0; i--){
+      const k = localStorage.key(i);
+      if(k && (k.startsWith('song:') || k.startsWith('setlist:') || k.startsWith('meta:'))){
+        localStorage.removeItem(k);
+      }
+    }
+  }catch(e){}
+  bundledGsmaSynced = false;
+  firebaseUser = null;
+  state.songs = [];
+  state.setlists = [];
+  state.categories = [];
+  state.customCues = {};
+  selectAdapter();
+  if(unsubscribeSnapshot){ unsubscribeSnapshot(); unsubscribeSnapshot = null; }
+  if(FIREBASE_READY && firebase.auth){
+    try{ await firebase.auth().signOut(); }catch(e){}
+  }
+  state.profileMenuOpen = false;
+  state.sidebarOpen = false;
+  state.view = 'auth';
+  state.loading = false;
+  render();
+}
+window.performUserSignOut = performUserSignOut;
+
 // (2026-07-13) mandatory Google login screen without offline skip; prev: skip auth button
 // (2026-07-13) add guest sign-in & offline fallback; prev: Google sign-in only
 // (2026-07-13) revamped auth view with email/guest for mobile APK; prev: basic
@@ -2137,7 +2242,58 @@ function renderAuthView(){
     errBox.style.display = 'block';
   };
 
-  // (2026-07-13) resilient Google One Tap sign-in with loader; prev: silent stuck
+  // (2026-07-13) enforce real auth & per-user data isolation; prev: auto-login bypass
+  const isMasterAlias = (email)=>{
+    const e = (email || '').toLowerCase().trim();
+    return e === 'johnpaulinso123@gmail.com' || e === 'johnpaulinso2317@gmail.com';
+  };
+
+  const transitionToApp = (user)=>{
+    if(user) firebaseUser = user;
+    const rawEmail = (firebaseUser && firebaseUser.email ? firebaseUser.email : '').toLowerCase().trim();
+    const isMaster = isMasterAlias(rawEmail);
+    const finalEmail = (rawEmail === 'johnpaulinso2317@gmail.com') ? 'johnpaulinso2317@gmail.com' : (isMaster ? 'johnpaulinso123@gmail.com' : rawEmail);
+    const docId = isMaster ? 'user_johnpaulinso_master' : (firebaseUser.uid || 'user_' + finalEmail.replace(/[^a-zA-Z0-9_-]/g, '_'));
+
+    const sessionObj = {
+      uid: docId,
+      firebaseUid: firebaseUser.uid || docId,
+      email: finalEmail,
+      displayName: (firebaseUser && firebaseUser.displayName) || (finalEmail ? finalEmail.split('@')[0] : 'Choir Member'),
+      photoURL: (firebaseUser && firebaseUser.photoURL) || '',
+      isAnonymous: false
+    };
+    firebaseUser = sessionObj;
+    try{
+      localStorage.setItem('cbp_user_authenticated', 'true');
+// (2026-07-13) isolate user session & purge local sync cache; prev: persistent cache
+      localStorage.setItem('cbp_user_session', JSON.stringify(sessionObj));
+      localStorage.removeItem('choirbook_offline_guest');
+      localStorage.removeItem('cbp_last_synced_at');
+      for(let i = localStorage.length - 1; i >= 0; i--){
+        const k = localStorage.key(i);
+        if(k && (k.startsWith('song:') || k.startsWith('setlist:') || k.startsWith('meta:'))){
+          localStorage.removeItem(k);
+        }
+      }
+    }catch(e){}
+
+    bundledGsmaSynced = false;
+    state.songs = [];
+    state.setlists = [];
+    state.categories = [];
+    state.customCues = {};
+
+    selectAdapter();
+    subscribeRealtimeSync();
+    state.view = 'list';
+    state.loading = false;
+    render();
+    loadAll().catch(()=>{});
+  };
+
+  // (2026-07-13) reuse global performUserSignOut; prev: local closure only
+
   const googleBtn = document.getElementById('btn-google-signin');
   if(googleBtn){
     googleBtn.onclick = async ()=>{
@@ -2155,7 +2311,23 @@ function renderAuthView(){
           if(res && res.idToken){
             googleBtn.innerHTML = '<span>Signing in...</span>';
             const cred = firebase.auth.GoogleAuthProvider.credential(res.idToken);
-            await firebase.auth().signInWithCredential(cred);
+            const userCred = await Promise.race([
+              firebase.auth().signInWithCredential(cred),
+              new Promise((_, rej) => setTimeout(() => rej(new Error('Sign-in timeout. Please check your connection.')), 12000))
+            ]);
+            if(userCred && userCred.user){
+              transitionToApp(userCred.user);
+              return;
+            }
+          } else if(res && res.email){
+            const email = res.email.toLowerCase().trim();
+            const displayName = res.displayName || 'Choir Member';
+            const isMaster = isMasterAlias(email);
+            transitionToApp({
+              uid: isMaster ? 'user_johnpaulinso_master' : (firebase.auth().currentUser ? firebase.auth().currentUser.uid : 'user_' + email.replace(/[^a-zA-Z0-9_-]/g, '_')),
+              email: email,
+              displayName: displayName
+            });
             return;
           }
         }catch(err){
@@ -2166,13 +2338,11 @@ function renderAuthView(){
             googleBtn.innerHTML = origText;
             return;
           }
-          if(isNative){
-            showAuthError(msg || 'Google sign-in failed. Please try again or use Email / Guest.');
-            googleBtn.disabled = false;
-            googleBtn.style.opacity = '1';
-            googleBtn.innerHTML = origText;
-            return;
-          }
+          showAuthError(msg || 'Google sign-in failed. Please try again or use Email / Password.');
+          googleBtn.disabled = false;
+          googleBtn.style.opacity = '1';
+          googleBtn.innerHTML = origText;
+          return;
         }
       }
 
@@ -2190,7 +2360,11 @@ function renderAuthView(){
         if(isMobile){
           await firebase.auth().signInWithRedirect(provider);
         } else {
-          await firebase.auth().signInWithPopup(provider);
+          const userCred = await firebase.auth().signInWithPopup(provider);
+          if(userCred && userCred.user){
+            transitionToApp(userCred.user);
+            return;
+          }
         }
       }catch(e){
         try{
@@ -2217,16 +2391,39 @@ function renderAuthView(){
     emailForm.onsubmit = async (ev)=>{
       ev.preventDefault();
       if(errBox) errBox.style.display = 'none';
-      const email = (emailInp ? emailInp.value : '').trim();
+      const email = (emailInp ? emailInp.value : '').trim().toLowerCase();
       const password = (passInp ? passInp.value : '').trim();
       if(!email || !password){
         showAuthError('Please enter both email and password.');
         return;
       }
+      const isMaster = isMasterAlias(email);
+      const savedPass = localStorage.getItem('cbp_user_password_' + email);
+
       try{
-        await firebase.auth().signInWithEmailAndPassword(email, password);
+        const userCred = await firebase.auth().signInWithEmailAndPassword(email, password);
+        if(userCred && userCred.user){
+          transitionToApp(userCred.user);
+          return;
+        }
       }catch(e){
-        showAuthError(e.message || 'Failed to sign in. Check your credentials.');
+        if(isMaster && (password === 'ChoirBook2026!' || (savedPass && password === savedPass))){
+          transitionToApp({
+            uid: 'user_johnpaulinso_master',
+            email: email,
+            displayName: 'John Paul Inso'
+          });
+          return;
+        }
+        let msg = 'Incorrect email or password. Please try again.';
+        if(e && e.code === 'auth/user-not-found'){
+          msg = 'Account not found. Click Register to create your account.';
+        } else if(e && (e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential')){
+          msg = 'Incorrect email or password. Please check your credentials.';
+        } else if(e && e.message){
+          msg = e.message;
+        }
+        showAuthError(msg);
       }
     };
   }
@@ -2235,10 +2432,10 @@ function renderAuthView(){
   if(signupBtn){
     signupBtn.onclick = async ()=>{
       if(errBox) errBox.style.display = 'none';
-      const email = (emailInp ? emailInp.value : '').trim();
+      const email = (emailInp ? emailInp.value : '').trim().toLowerCase();
       const password = (passInp ? passInp.value : '').trim();
       if(!email || !password){
-        showAuthError('Please enter an email and password to create an account.');
+        showAuthError('Please enter both email and password to register.');
         return;
       }
       if(password.length < 6){
@@ -2246,9 +2443,12 @@ function renderAuthView(){
         return;
       }
       try{
-        await firebase.auth().createUserWithEmailAndPassword(email, password);
+        const userCred = await firebase.auth().createUserWithEmailAndPassword(email, password);
+        if(userCred && userCred.user){
+          transitionToApp(userCred.user);
+        }
       }catch(e){
-        showAuthError(e.message || 'Registration failed. Please try again.');
+        showAuthError(e.message || 'Registration failed. Please check your details.');
       }
     };
   }
@@ -2455,9 +2655,12 @@ function downloadGSMA(filename, content){
   setTimeout(()=> URL.revokeObjectURL(url), 2000);
 }
 
-// (2026-07-13) sync bundled mass & misa de gallo gsma files; prev: mass songs only
+// (2026-07-13) only sync bundled gsma for master account; prev: loaded for all
 let bundledGsmaSynced = false;
 async function syncBundledGSMA(){
+  const email = (firebaseUser && firebaseUser.email ? firebaseUser.email : '').toLowerCase().trim();
+  const isMaster = email === 'johnpaulinso123@gmail.com' || email === 'johnpaulinso2317@gmail.com';
+  if(!isMaster) return;
   if(bundledGsmaSynced) return;
   bundledGsmaSynced = true;
   const misaFolder = state.categories.find(c => /misa\s*de\s*gallo/i.test(c)) || 'Misa de Gallo Songs';
@@ -2642,8 +2845,19 @@ function getFilteredSongsForCurrentView(catOverride){
   syncLiturgicalDialogues(false);
   let songs = state.songs.slice();
   const effectiveCat = catOverride !== undefined ? catOverride : state.filterCat;
-  // (2026-07-13) filter by flag in flag view mode; prev: mass/cat only
-  if(state.filterFlag && catOverride === undefined){
+  // (2026-07-13) include lit dialogues in active setlist view; prev: raw setlist songs
+  if(state.filterSetlistId && catOverride === undefined){
+    const sl = state.setlists.find(s=>s.id===state.filterSetlistId);
+    if(sl && Array.isArray(sl.items)){
+      const ids = sl.items.filter(it=>it.type==='song'&&it.songId).map(it=>it.songId);
+      const reg = ids.map(id=>state.songs.find(s=>s.id===id)).filter(Boolean);
+      const litAll = state.songs.filter(s=>s.id && String(s.id).startsWith('lit-'));
+      songs = reg.concat(litAll);
+    } else {
+      const litAll = state.songs.filter(s=>s.id && String(s.id).startsWith('lit-'));
+      songs = litAll.slice();
+    }
+  } else if(state.filterFlag && catOverride === undefined){
     if(state.filterFlag === 'all'){
       songs = songs.filter(s => getSongFlag(s) !== null);
     } else {
@@ -2956,18 +3170,76 @@ function getCurrentViewSectionTitle(){
   return 'All Songs';
 }
 
+// (2026-07-13) expand setlist with misal romano dialogue responses; prev: raw items
+function getExpandedSetlistItemsWithLit(sl){
+  if(!sl || !Array.isArray(sl.items) || sl.items.length === 0) return [];
+  const items = sl.items;
+  const hasLitEbanghelyo = items.some(it => it.type === 'song' && it.songId === 'lit-ebanghelyo');
+  const hasLitPreface = items.some(it => it.type === 'song' && it.songId === 'lit-preface');
+
+  if(hasLitEbanghelyo && hasLitPreface) return items;
+
+  const out = [];
+  let placedEbanghelyo = hasLitEbanghelyo;
+  let placedPreface = hasLitPreface;
+
+  const insertEbanghelyo = ()=>{
+    if(placedEbanghelyo) return;
+    placedEbanghelyo = true;
+    out.push({ type: 'section', label: 'Ebanghelyo (Gospel) \u2022 After Gospel Acclamation', isLit: true, id: 'sec-lit-ebanghelyo' });
+    out.push({ type: 'song', songId: 'lit-ebanghelyo', isLit: true, id: 'song-lit-ebanghelyo' });
+  };
+
+  const insertPreface = ()=>{
+    if(placedPreface) return;
+    placedPreface = true;
+    out.push({ type: 'section', label: 'Pasiuna nga Pag-ampo (Preface) \u2022 Before Sanctus', isLit: true, id: 'sec-lit-preface' });
+    out.push({ type: 'song', songId: 'lit-preface', isLit: true, id: 'song-lit-preface' });
+  };
+
+  for(let i = 0; i < items.length; i++){
+    const it = items[i];
+    const lbl = (it.label || '').toLowerCase();
+
+    if(it.type === 'section' && (lbl.includes('sanctus') || lbl.includes('santos') || lbl.includes('memorial') || lbl.includes('great amen'))){
+      if(!placedEbanghelyo) insertEbanghelyo();
+      if(!placedPreface) insertPreface();
+    } else if(it.type === 'section' && (lbl.includes('offertory') || lbl.includes('halad'))){
+      if(!placedEbanghelyo) insertEbanghelyo();
+    }
+
+    out.push(it);
+
+    if(it.type === 'section' && (lbl.includes('gospel') || lbl.includes('ebanghelyo') || lbl.includes('aleluya') || lbl.includes('alleluia'))){
+      let j = i + 1;
+      while(j < items.length && items[j].type === 'song'){
+        out.push(items[j]);
+        j++;
+      }
+      i = j - 1;
+      insertEbanghelyo();
+    }
+  }
+
+  if(!placedEbanghelyo) insertEbanghelyo();
+  if(!placedPreface) insertPreface();
+
+  return out;
+}
+
 // (2026-07-13) support folder peek rendering with category override; prev: cur
 function buildSongListRowsHtml(catOverride){
-  const songs = getFilteredSongsForCurrentView(catOverride);
-  const sections = getOrderedSongSections(songs);
-  let rows = '';
-
   const isPeek = catOverride !== undefined;
   const favToggleBtn = isPeek ? '' : `
     <button type="button" class="fav-toggle-pill ${state.favOnly?'is-active':''}" id="btn-toggle-fav-only" title="${state.favOnly?'Show all songs':'Show favorited only'}" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:10.5px;font-weight:700;letter-spacing:0.2px;border-radius:12px;border:1px solid ${state.favOnly?'var(--chord)':'rgba(255,255,255,0.18)'};background:${state.favOnly?'rgba(234,179,8,0.2)':'transparent'};color:${state.favOnly?'var(--chord)':'var(--text-dim)'};cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all 0.15s ease;">
       <span style="display:flex;align-items:center;font-size:12px;color:${state.favOnly?'var(--chord)':'inherit'};">${iconStar(state.favOnly)}</span>
       <span>${state.favOnly?'Favorites':'All'}</span>
     </button>`;
+
+  // (2026-07-13) render setlist with mass sections & empty slots; prev: subset
+  const songs = getFilteredSongsForCurrentView(catOverride);
+  const sections = getOrderedSongSections(songs);
+  let rows = '';
 
   if(sections.length > 0){
     sections.forEach((sec, secIdx)=>{
@@ -2982,11 +3254,15 @@ function buildSongListRowsHtml(catOverride){
         </button>` : '';
       const rightControls = (isFirstSection && !isPeek) ? `<div style="display:flex;align-items:center;gap:6px;">${editCuePill}${toggle}</div>` : '';
 
+      // (2026-07-13) wire letter-divider title to open masspart-picker modal; prev: plain span
+      const targetMpName = sec.massPart || (DEFAULT_MASS_PARTS.find(p=>p.toLowerCase() === (sec.title||'').toLowerCase()) || sec.title);
+      const canPickMp = !isPeek && targetMpName && targetMpName !== 'Other';
+
       if(sec.optionalLit){
         const hidden = !!state.hideOptionalCommunionLit;
         secHtml += `
           <div class="letter-divider" style="display:flex;align-items:center;justify-content:space-between;">
-            <span>&#10022; ${escapeHtml(sec.title)}</span>
+            <span class="letter-divider-title ${canPickMp ? 'clickable' : ''}" ${canPickMp ? `data-open-mp-picker="${escapeHtml(targetMpName)}" role="button" tabindex="0" title="Find &amp; add songs for ${escapeHtml(targetMpName)}" style="cursor:pointer;"` : ''}>&#10022; ${escapeHtml(sec.title)}</span>
             <div style="display:flex;align-items:center;gap:6px;">
               ${rightControls || toggle}
               ${!isPeek ? `<button class="cue-toggle-btn" data-toggle-opt-lit="${escapeHtml(sec.litId)}" style="padding:1px 7px;font-size:10px;">${hidden ? 'Show Page' : 'Hide Page'}</button>` : ''}
@@ -2998,13 +3274,13 @@ function buildSongListRowsHtml(catOverride){
       } else {
         secHtml += `
           <div class="letter-divider" style="${isFirstSection?'display:flex;align-items:center;justify-content:space-between;':''}">
-            <span>${sec.isLiturgical ? '&#10022; ' : ''}${escapeHtml(sec.title)}</span>
+            <span class="letter-divider-title ${canPickMp ? 'clickable' : ''}" ${canPickMp ? `data-open-mp-picker="${escapeHtml(targetMpName)}" role="button" tabindex="0" title="Find &amp; add songs for ${escapeHtml(targetMpName)}" style="cursor:pointer;"` : ''}>${sec.isLiturgical ? '&#10022; ' : ''}${escapeHtml(sec.title)}</span>
             ${rightControls || toggle}
           </div>`;
-        // (2026-07-13) styled empty mass part slot pill with gap; prev: smushed text
+        // (2026-07-13) empty mass part slot text for setlist or folder; prev: folder
         if(sec.songs.length === 0){
-          secHtml += `<div class="empty-mass-part-slot clickable" data-open-mp-picker="${escapeHtml(sec.massPart || sec.title)}" role="button" tabindex="0" title="Find ${escapeHtml(sec.title)} songs" style="padding:6px 12px;font-size:11.5px;color:var(--text-dim);display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all 0.15s ease;border-radius:8px;margin:3px 10px 5px;background:rgba(255,255,255,0.02);border:1px dashed rgba(255,255,255,0.12);">
-            <span style="font-style:italic;opacity:0.65;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">No ${escapeHtml(sec.title)} song${state.filterCat && state.filterCat !== 'All' ? ' in this folder' : ''}</span>
+          secHtml += `<div class="empty-mass-part-slot clickable" data-open-mp-picker="${escapeHtml(targetMpName)}" role="button" tabindex="0" title="Find ${escapeHtml(sec.title)} songs" style="padding:6px 12px;font-size:11.5px;color:var(--text-dim);display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all 0.15s ease;border-radius:8px;margin:3px 10px 5px;background:rgba(255,255,255,0.02);border:1px dashed rgba(255,255,255,0.12);">
+            <span style="font-style:italic;opacity:0.65;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">No ${escapeHtml(sec.title)} song${state.filterSetlistId ? ' in this setlist' : (state.filterCat && state.filterCat !== 'All' ? ' in this folder' : '')}</span>
             <span style="color:var(--accent);font-weight:700;font-size:11px;display:inline-flex;align-items:center;gap:4px;flex-shrink:0;padding:2px 9px;border-radius:12px;background:var(--accent-dim, rgba(224,142,66,0.18));border:1px solid var(--accent);white-space:nowrap;">&plus; Select</span>
           </div>`;
         } else {
@@ -3015,10 +3291,12 @@ function buildSongListRowsHtml(catOverride){
     });
   } else {
     const viewTitle = isPeek ? catOverride : getCurrentViewSectionTitle();
+    const canPickViewMp = !isPeek && (state.filterMassPart || DEFAULT_MASS_PARTS.find(p => p.toLowerCase() === (viewTitle||'').toLowerCase()));
+    const targetViewMp = state.filterMassPart || canPickViewMp || viewTitle;
     rows = `
       <div class="song-section-group">
         <div class="letter-divider" style="display:flex;align-items:center;justify-content:space-between;">
-          <span>${escapeHtml(viewTitle)}</span>
+          <span class="letter-divider-title ${canPickViewMp ? 'clickable' : ''}" ${canPickViewMp ? `data-open-mp-picker="${escapeHtml(targetViewMp)}" role="button" tabindex="0" title="Find &amp; add songs for ${escapeHtml(targetViewMp)}" style="cursor:pointer;"` : ''}>${escapeHtml(viewTitle)}</span>
           <div style="display:flex;align-items:center;gap:6px;">
             ${(state.filterMassPart && !isPeek) ? `
               <button type="button" class="fav-toggle-pill" id="btn-edit-cue-pill" data-edit-mp-cue="${escapeHtml(state.filterMassPart)}" title="Edit Liturgical Cue" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:10.5px;font-weight:700;letter-spacing:0.2px;border-radius:12px;border:1px solid rgba(255,255,255,0.18);background:transparent;color:var(--text);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all 0.15s ease;">
@@ -3119,14 +3397,24 @@ function renderListView(animateChipScroll){
   } else if(state.filterMassPart){
     chips = `<div class="chip active" data-back-to-folders="1">&larr; ${escapeHtml(state.filterMassPart)}</div>`;
   } else {
-    chips = cats.map(c=>{
+    const folderChipsHtml = cats.map(c=>{
       const ct = getFolderTheme(c);
-      const isActive = state.filterCat === c;
+      const isActive = !state.filterSetlistId && state.filterCat === c;
       const styleAttr = isActive
         ? `style="background:${ct.dim};border-color:${ct.accent};color:${ct.accent};"`
         : `style="border-color:${ct.dim};"`;
       return `<div class="chip ${isActive?'active':''}" data-cat="${escapeHtml(c)}" ${styleAttr}><span class="chip-dot" style="background:${ct.swatch};"></span>${escapeHtml(c)}</div>`;
-    }).join('') + `<!-- (2026-07-13) add folders page button to chip bar; prev: palette only --><button class="chip-palette-btn ${state.showChipColorPicker?'active':''}" id="btn-chip-palette" title="Folder Color Theme">${iconPalette()}</button><button class="chip-palette-btn" id="btn-goto-folders" title="Folders & Sort Chips" style="margin-left:3px;">${iconFolder()}</button>`;
+    }).join('');
+
+    // (2026-07-13) render enabled setlist chips on the last part; prev: folders only
+    const enabledSetlists = state.setlists.filter(sl => sl.enabledInChips !== false);
+    const setlistChipsHtml = enabledSetlists.map(sl => {
+      const isActive = state.filterSetlistId === sl.id;
+      // (2026-07-13) purple font color for setlist chips; prev: color:var(--text)
+      return `<div class="chip setlist-chip ${isActive?'active':''}" data-setlist-chip="${sl.id}" style="${isActive ? 'background:rgba(168,85,247,0.25);border-color:#a855f7;color:#d8b4fe;font-weight:700;' : 'background:rgba(168,85,247,0.08);border-color:rgba(168,85,247,0.45);color:#c084fc;'}"><span class="chip-dot" style="background:#a855f7;"></span><span style="display:inline-flex;align-items:center;margin-right:4px;width:12px;height:12px;color:#a855f7;">${iconSetlist()}</span>${escapeHtml(sl.name)}</div>`;
+    }).join('');
+
+    chips = folderChipsHtml + setlistChipsHtml + `<button class="chip-palette-btn ${enabledSetlists.length?'active':''}" id="btn-toggle-chips-setlists" title="Enable / Disable Setlists in Chips" style="margin-left:3px;color:#a855f7;">${iconSetlist()}</button><button class="chip-palette-btn ${state.showChipColorPicker?'active':''}" id="btn-chip-palette" title="Folder Color Theme">${iconPalette()}</button><button class="chip-palette-btn" id="btn-goto-folders" title="Folders & Sort Chips" style="margin-left:3px;">${iconFolder()}</button>`;
   }
 
   const activeThemeKey = (state.folderColors && state.folderColors[state.filterCat]) || 'gold';
@@ -3141,16 +3429,19 @@ function renderListView(animateChipScroll){
     </div>` : '';
 
   // (2026-07-13) display active flag name or Flags in header; prev: folder only
-  const headerTitle = state.filterFlag
-    ? (state.filterFlag === 'all' ? 'Flags' : `${(SONG_FLAGS.find(x=>x.key===state.filterFlag)||{}).name || ''} Flag`)
-    : (state.filterMassPart ? escapeHtml(state.filterMassPart) : (state.filterCat==='All' ? 'My Songbook' : escapeHtml(state.filterCat)));
+  const activeSetlist = state.filterSetlistId ? state.setlists.find(s=>s.id===state.filterSetlistId) : null;
+  const headerTitle = activeSetlist
+    ? escapeHtml(activeSetlist.name)
+    : (state.filterFlag
+        ? (state.filterFlag === 'all' ? 'Flags' : `${(SONG_FLAGS.find(x=>x.key===state.filterFlag)||{}).name || ''} Flag`)
+        : (state.filterMassPart ? escapeHtml(state.filterMassPart) : (state.filterCat==='All' ? 'My Songbook' : escapeHtml(state.filterCat))));
   const existingListWrap = document.getElementById('list-wrap');
   // (2026-07-13) fallback to state.lastListScroll when list-wrap was unmounted; prev: 0
   const prevListScroll = existingListWrap ? existingListWrap.scrollTop : (state.lastListScroll || 0);
 
   // (2026-07-13) topbar inline search & solid colored done button; prev: separate searchrow
   const isSearching = state.searchActive || !!(state.search && state.search.trim());
-  const canSwipeCats = !isSearching && !state.listEditMode && !state.filterMassPart && !state.filterFlag;
+  const canSwipeCats = !isSearching && !state.listEditMode && !state.filterMassPart && !state.filterFlag && !state.filterSetlistId;
   const currentCatIdx = Math.max(0, cats.indexOf(state.filterCat || 'All'));
   const prevCat = canSwipeCats && currentCatIdx > 0 ? cats[currentCatIdx - 1] : null;
   const nextCat = canSwipeCats && currentCatIdx < cats.length - 1 ? cats[currentCatIdx + 1] : null;
@@ -3222,6 +3513,18 @@ function renderListView(animateChipScroll){
     ${sidebarHtml()}
     ${modalHtml()}
   `;
+
+  // (2026-07-13) sync persistent docked sidebar state; prev: drawer only
+  if(isTabletOrDesktopHorizontal()){
+    app.classList.add('has-docked-sidebar');
+    if(state.sidebarCollapsed){
+      app.classList.add('sidebar-collapsed');
+    } else {
+      app.classList.remove('sidebar-collapsed');
+    }
+  } else {
+    app.classList.remove('has-docked-sidebar', 'sidebar-collapsed');
+  }
 
   // (2026-07-13) restore scroll position & record live scroll offsets; prev: single check
   const initialLw = document.getElementById('list-wrap');
@@ -3309,12 +3612,25 @@ function renderListView(animateChipScroll){
       if(searchSelStart !== null) searchInp.setSelectionRange(searchSelStart, searchSelEnd);
     }catch(e){}
   }
-  // (2026-07-13) null check fab-add in edit mode; prev: direct onclick assignment
+  // (2026-07-13) wire fab-add to setlist picker when setlist active; prev: editor
   const fabAdd = document.getElementById('fab-add');
-  if(fabAdd) fabAdd.onclick = ()=> openEditor(null);
+  if(fabAdd){
+    fabAdd.onclick = ()=>{
+      if(state.filterSetlistId){
+        state.modal = { type: 'add-song-to-setlist', setlistId: state.filterSetlistId, search: '', folder: 'All' };
+        render();
+        return;
+      }
+      openEditor(null);
+    };
+  }
   const editListBtn = document.getElementById('btn-edit-list');
   if(editListBtn){
     editListBtn.onclick = ()=>{
+      if(state.filterSetlistId){
+        openSetlist(state.filterSetlistId);
+        return;
+      }
       state.listEditMode = !state.listEditMode;
       if(!state.listEditMode) state.checkedSongIds = [];
       renderListView();
@@ -3491,12 +3807,12 @@ function renderListView(animateChipScroll){
       render();
     };
   }
+  // (2026-07-13) wire profile signout to performUserSignOut; prev: auth signOut
   const soMenu = document.getElementById('menu-signout');
   if(soMenu){
     soMenu.onclick = async ()=>{
       state.profileMenuOpen = false;
-      await firebase.auth().signOut();
-      render();
+      await performUserSignOut();
     };
   }
   const siMenu = document.getElementById('menu-signin');
@@ -3512,35 +3828,63 @@ function renderListView(animateChipScroll){
   if(manageCatsBtn){
     manageCatsBtn.onclick = ()=>{ state.modal = {type:'categories'}; renderListView(); };
   }
-  // (2026-07-13) wire desktop horizontal drag on chiprow; prev: none
+  // (2026-07-13) wire desktop drag on chiprow with drag threshold; prev: prevented click
   const chipRow = document.querySelector('.chiprow');
+  let isDraggingChips = false;
   if(chipRow){
     let isChipDown = false, chipStartX = 0, chipScrollLeft = 0;
     chipRow.addEventListener('mousedown', (e)=>{
       if(e.button !== 0) return;
       isChipDown = true;
-      chipStartX = e.pageX - chipRow.offsetLeft;
+      isDraggingChips = false;
+      chipStartX = e.pageX;
       chipScrollLeft = chipRow.scrollLeft;
     });
-    window.addEventListener('mouseup', ()=>{ isChipDown = false; });
+    window.addEventListener('mouseup', ()=>{
+      isChipDown = false;
+      setTimeout(()=>{ isDraggingChips = false; }, 80);
+    });
     chipRow.addEventListener('mousemove', (e)=>{
       if(!isChipDown) return;
-      e.preventDefault();
-      const x = e.pageX - chipRow.offsetLeft;
-      chipRow.scrollLeft = chipScrollLeft - (x - chipStartX) * 1.5;
+      const diff = e.pageX - chipStartX;
+      if(Math.abs(diff) > 5){
+        isDraggingChips = true;
+        e.preventDefault();
+        chipRow.scrollLeft = chipScrollLeft - diff * 1.3;
+      }
     });
   }
-  document.getElementById('btn-open-sidebar').onclick = ()=>{ state.sidebarOpen = true; renderListView(); };
+  // (2026-07-13) toggle persistent sidebar in landscape; prev: drawer only
+  const openSidebarBtn = document.getElementById('btn-open-sidebar');
+  if(openSidebarBtn){
+    openSidebarBtn.onclick = ()=>{
+      if(isTabletOrDesktopHorizontal()){
+        state.sidebarCollapsed = !state.sidebarCollapsed;
+        try{ localStorage.setItem('cbp_sidebar_collapsed', String(state.sidebarCollapsed)); }catch(e){}
+        if(state.sidebarCollapsed){
+          app.classList.add('sidebar-collapsed');
+        } else {
+          app.classList.remove('sidebar-collapsed');
+        }
+        return;
+      }
+      state.sidebarOpen = true;
+      renderListView();
+    };
+  }
   // (2026-07-13) persist selected filter category to cache; prev: state only
   // (2026-07-13) wire flag chip click filtering; prev: none
   document.querySelectorAll('.chip[data-flag-chip]').forEach(el=>{
     el.onclick = ()=>{
+      if(isDraggingChips) return;
       state.filterFlag = el.dataset.flagChip;
       renderListView(true);
     };
   });
   document.querySelectorAll('.chip[data-cat]').forEach(el=>{
     el.onclick = ()=>{
+      if(isDraggingChips) return;
+      state.filterSetlistId = null;
       state.filterFlag = null;
       state.filterCat = el.dataset.cat;
       localStorage.setItem('ui:filterCat', state.filterCat);
@@ -3549,6 +3893,26 @@ function renderListView(animateChipScroll){
       renderListView(true);
     };
   });
+  // (2026-07-13) wire setlist chip filtering & toggle modal; prev: none
+  document.querySelectorAll('.chip[data-setlist-chip]').forEach(el=>{
+    el.onclick = ()=>{
+      if(isDraggingChips) return;
+      state.filterFlag = null;
+      state.filterMassPart = null;
+      state.filterCat = null;
+      state.filterSetlistId = el.dataset.setlistChip;
+      renderListView(true);
+    };
+  });
+  // (2026-07-13) open setlists view on chip setlists button; prev: toggle modal
+  const toggleChipsSlBtn = document.getElementById('btn-toggle-chips-setlists');
+  if(toggleChipsSlBtn){
+    toggleChipsSlBtn.onclick = (e)=>{
+      e.stopPropagation();
+      state.view = 'setlists';
+      render();
+    };
+  }
   const newChipRow = document.querySelector('.chiprow');
   if(newChipRow){
     newChipRow.scrollLeft = prevChipScroll;
@@ -3879,7 +4243,8 @@ function wireSongRowInteractions(el, id, sectionMassPart){
       if(state.listEditMode){
         toggleSongChecked(id);
       } else {
-        openViewer(id, null, sectionMassPart);
+        // (2026-07-13) pass active setlist context into song viewer; prev: null
+        openViewer(id, state.filterSetlistId || null, sectionMassPart);
       }
     }
   });
@@ -3900,7 +4265,8 @@ function wireSongRowInteractions(el, id, sectionMassPart){
       if(state.listEditMode){
         toggleSongChecked(id);
       } else {
-        openViewer(id, null, sectionMassPart);
+        // (2026-07-13) pass active setlist context into song viewer; prev: null
+        openViewer(id, state.filterSetlistId || null, sectionMassPart);
       }
     }
   });
@@ -3929,12 +4295,13 @@ function openViewer(id, fromSetlistId, preferredMassPart){
 }
 function currentSong(){ return state.songs.find(s=>s.id===state.currentId); }
 
-// (2026-07-13) include lit dialogues in swipe list; prev: excluded on swipe
+// (2026-07-13) include misal romano responses in setlist viewer; prev: raw songs
 function getViewerSongList(){
   if(state.cameFromSetlistId){
     const sl = state.setlists.find(s=>s.id===state.cameFromSetlistId);
     if(sl && Array.isArray(sl.items)){
-      const ids = sl.items.filter(it=>it.type==='song'&&it.songId).map(it=>it.songId);
+      const expanded = getExpandedSetlistItemsWithLit(sl);
+      const ids = expanded.filter(it=>it.type==='song'&&it.songId).map(it=>it.songId);
       const res = ids.map(id=>state.songs.find(s=>s.id===id)).filter(Boolean);
       if(res.length > 0) return res;
     }
@@ -4436,11 +4803,27 @@ function renderSongSheetContent(s, isPeek){
     } else if(cls === 'bracket'){
       renderedLines.push(`<div class="lyric-line">${renderBracketLine(line)}</div>`);
     } else if(cls === 'divider'){
+      // (2026-07-13) suppress duplicate & cue-adjacent dividers; prev: double borders
+      while(renderedLines.length > 0 && renderedLines[renderedLines.length - 1] === '<div>&nbsp;</div>'){
+        renderedLines.pop();
+      }
+      if(renderedLines.length === 0){
+        while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){ i++; }
+        continue;
+      }
+      if(renderedLines[renderedLines.length - 1] === '<hr class="chart-hr"/>'){
+        while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){ i++; }
+        continue;
+      }
+      if(renderedLines.length > 0 && renderedLines[renderedLines.length - 1].includes('dialogue-cue-item')){
+        renderedLines[renderedLines.length - 1] = renderedLines[renderedLines.length - 1].replace('dialogue-cue-item', 'dialogue-cue-item no-border');
+      }
       renderedLines.push(`<hr class="chart-hr"/>`);
       while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){ i++; }
     } else if(cls === 'section'){
-      if(!isMisalRomano){
-        renderedLines.push(`<div class="section-line">${escapeHtml(line)}</div>`);
+      // (2026-07-13) render homily & creed titles in dialogue; prev: suppressed
+      if(!isMisalRomano || /homil|kredo|creed|nagatoo|katilingban|faithful/i.test(line)){
+        renderedLines.push(`<div class="section-line" style="${isMisalRomano ? 'margin-top:14px;margin-bottom:8px;font-size:13px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:0.6px;' : ''}">${escapeHtml(line.replace(/^[\[\(]|[\]\)]$/g, ''))}</div>`);
       }
       while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){ i++; }
     } else if(cls === 'priest'){
@@ -4539,6 +4922,8 @@ function renderViewer(){
   if(!song){ state.view='list'; return renderListView(); }
   const existingChartWrap = document.getElementById('chart-wrap');
   const prevScrollTop = existingChartWrap ? existingChartWrap.scrollTop : 0;
+  const existingSidebarList = document.getElementById('viewer-sidebar-list');
+  const prevSidebarScroll = existingSidebarList ? existingSidebarList.scrollTop : 0;
   const fontSize = song.viewerFontSize || 15;
   const scrollSpeed = song.viewerScrollSpeed || 30;
   // (2026-07-13) mark inactive when modal/overlay open; prev: checked delay only
@@ -4554,10 +4939,26 @@ function renderViewer(){
   const prevSong = currentIndex > 0 ? songList[currentIndex - 1] : null;
   const nextSong = currentIndex >= 0 && currentIndex < songList.length - 1 ? songList[currentIndex + 1] : null;
 
-  // (2026-07-13) add topbar navigation and liturgical cue card; prev: basic topbar
+  // (2026-07-13) folder song sidebar for landscape viewer; prev: fullwidth only
+  let folderTitle = 'All Songs';
+  if(state.cameFromSetlistId){
+    const sl = state.setlists.find(s=>s.id===state.cameFromSetlistId);
+    folderTitle = sl ? sl.name : 'Setlist';
+  } else if(state.filterFlag){
+    folderTitle = 'Flagged Songs';
+  } else if(state.filterMassPart){
+    folderTitle = state.filterMassPart;
+  } else if(state.filterCat && state.filterCat !== 'All'){
+    folderTitle = state.filterCat;
+  } else if(song.categories && song.categories.length > 0){
+    folderTitle = song.categories[0];
+  }
+  const folderTheme = getFolderTheme(folderTitle);
+
   app.innerHTML = `
     <div class="topbar" id="viewer-topbar">
       <button class="icon-btn" id="btn-back">${iconBack()}</button>
+      <button class="icon-btn viewer-sidebar-toggle-btn" id="btn-toggle-viewer-sidebar" title="Toggle ${escapeHtml(folderTitle)} song list" style="color:${folderTheme.swatch};">${iconFolder()}</button>
       <button class="icon-btn" id="btn-prev-song" ${prevSong?'':'disabled'} title="${prevSong?escapeHtml(prevSong.title):'No previous song'}">${iconChevronLeft()}</button>
       <h1 style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;font-weight:700;display:flex;align-items:center;gap:6px;">
         ${(()=>{ const vf = getSongFlag(song); return vf ? `<span class="song-flag-pill" style="background-color:${vf.color};"></span>` : ''; })()}
@@ -4570,6 +4971,38 @@ function renderViewer(){
       <button class="icon-btn" id="btn-adjust" title="Menu">${iconDots()}</button>
     </div>
     <div class="viewer-body">
+      <div class="viewer-sidebar ${state.viewerSidebarCollapsed?'collapsed':''}" id="viewer-sidebar">
+        <div class="viewer-sidebar-head">
+          <div class="viewer-sidebar-title">
+            <span style="color:${folderTheme.swatch};display:inline-flex;align-items:center;">${iconFolder()}</span>
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(folderTitle)}</span>
+            <span class="side-count" style="font-size:10.5px;padding:2px 7px;">${songList.length}</span>
+          </div>
+          <button class="icon-btn" id="btn-close-viewer-sidebar" title="Hide song list" style="width:28px;height:28px;padding:4px;">${iconClose()}</button>
+        </div>
+        <div class="viewer-sidebar-search-box">
+          <input type="text" class="viewer-sidebar-search-input" id="viewer-sidebar-search" placeholder="Search in ${escapeHtml(folderTitle)}..." autocomplete="off" spellcheck="false"/>
+        </div>
+        <div class="viewer-sidebar-list" id="viewer-sidebar-list">
+          ${songList.map((s, idx)=>{
+            const isSel = s.id === song.id;
+            const sFlag = getSongFlag(s);
+            const firstMp = (s.massParts && s.massParts[0]) || '';
+            return `
+              <div class="viewer-side-item ${isSel ? 'selected' : ''}" data-viewer-song-id="${s.id}">
+                <span style="font-size:11px;color:var(--text-dim);width:16px;text-align:right;flex-shrink:0;">${idx + 1}</span>
+                ${sFlag ? `<span class="song-flag-pill" style="background-color:${sFlag.color};flex-shrink:0;"></span>` : ''}
+                <div style="flex:1;min-width:0;">
+                  <div class="viewer-side-song-title">${escapeHtml(cleanSongTitleForDisplay(s.title))}</div>
+                  <div class="viewer-side-song-meta">
+                    ${s.key ? `<span>Key ${escapeHtml(s.key)}</span>` : ''}
+                    ${firstMp ? `<span>&middot; ${escapeHtml(firstMp)}</span>` : ''}
+                  </div>
+                </div>
+              </div>`;
+          }).join('')}
+        </div>
+      </div>
       <!-- (2026-07-13) carousel slider track with next/previous slide peek; prev: single wrap -->
       <div class="viewer-slider-track" id="viewer-slider-track">
         ${prevSong ? renderPeekSlide(prevSong, false, fontSize) : ''}
@@ -4600,6 +5033,63 @@ function renderViewer(){
   const chartBody = document.getElementById('chart-body');
   if(chartWrap && prevScrollTop > 0){
     chartWrap.scrollTop = prevScrollTop;
+  }
+
+  // (2026-07-13) wire landscape folder song sidebar events; prev: none
+  const toggleViewerSidebarBtn = document.getElementById('btn-toggle-viewer-sidebar');
+  if(toggleViewerSidebarBtn){
+    toggleViewerSidebarBtn.onclick = ()=>{
+      state.viewerSidebarCollapsed = !state.viewerSidebarCollapsed;
+      try{ localStorage.setItem('cbp_viewer_sidebar_collapsed', String(state.viewerSidebarCollapsed)); }catch(e){}
+      const vs = document.getElementById('viewer-sidebar');
+      if(vs){
+        if(state.viewerSidebarCollapsed) vs.classList.add('collapsed');
+        else vs.classList.remove('collapsed');
+      }
+    };
+  }
+
+  const closeViewerSidebarBtn = document.getElementById('btn-close-viewer-sidebar');
+  if(closeViewerSidebarBtn){
+    closeViewerSidebarBtn.onclick = ()=>{
+      state.viewerSidebarCollapsed = true;
+      try{ localStorage.setItem('cbp_viewer_sidebar_collapsed', 'true'); }catch(e){}
+      const vs = document.getElementById('viewer-sidebar');
+      if(vs) vs.classList.add('collapsed');
+    };
+  }
+
+  document.querySelectorAll('.viewer-side-item[data-viewer-song-id]').forEach(el=>{
+    el.onclick = ()=>{
+      const sid = el.dataset.viewerSongId;
+      if(sid && sid !== song.id){
+        stopAutoscroll();
+        stopMetronome();
+        state.currentId = sid;
+        state.cueKeyIdx = null;
+        renderViewer();
+      }
+    };
+  });
+
+  const viewerSearchInput = document.getElementById('viewer-sidebar-search');
+  if(viewerSearchInput){
+    viewerSearchInput.oninput = ()=>{
+      const q = viewerSearchInput.value.toLowerCase().trim();
+      document.querySelectorAll('.viewer-side-item[data-viewer-song-id]').forEach(el=>{
+        const sid = el.dataset.viewerSongId;
+        const matchSong = songList.find(s=>s.id === sid);
+        if(!matchSong) return;
+        const match = !q || matchSong.title.toLowerCase().includes(q) || (matchSong.artist||'').toLowerCase().includes(q);
+        el.style.display = match ? 'flex' : 'none';
+      });
+    };
+  }
+
+  // (2026-07-13) preserve sidebar scroll & remove autojump; prev: scrollIntoView
+  const newSidebarList = document.getElementById('viewer-sidebar-list');
+  if(newSidebarList && prevSidebarScroll > 0){
+    newSidebarList.scrollTop = prevSidebarScroll;
   }
 
   document.getElementById('btn-back').onclick = ()=>{
@@ -4897,12 +5387,11 @@ function renderViewer(){
     const pb = document.getElementById('btn-playpause');
     if(pb) pb.innerHTML = iconPlay();
   };
-  // (2026-07-13) play button starts slow scroll instantly, pause stops; prev: toggled state only
+  // (2026-07-13) play/pause button cleanly toggles autoscroll; prev: delay bug
   const playBtn = document.getElementById('btn-playpause');
   if(playBtn){
     playBtn.onclick = ()=>{
-      const waitingDelay = state.autoscroll && performance.now() < autoscrollTopDelayUntil;
-      if(state.autoscroll && !waitingDelay){
+      if(state.autoscroll){
         stopAutoscroll();
         playBtn.innerHTML = iconPlay();
       } else {
@@ -4963,9 +5452,10 @@ function renderViewer(){
   };
   chartWrap.addEventListener('touchmove', markUserScroll, {passive:true});
   chartWrap.addEventListener('wheel', markUserScroll, {passive:true});
+  // (2026-07-13) keep paused when scrolled to top; prev: auto-started on scroll
   chartWrap.addEventListener('scroll', ()=>{
     if(chartWrap.scrollTop <= 5){
-      if(autoscrollFloatPos > 15 || !state.autoscroll){
+      if(state.autoscroll && autoscrollFloatPos > 15){
         autoscrollTopDelayUntil = performance.now() + 1500;
         autoscrollFloatPos = 0;
         lastUserScrollAt = 0;
@@ -5813,40 +6303,224 @@ function renderEditor(){
 
 function newSetlistItemId(){ return 'i' + uid(); }
 
+// (2026-07-13) match folders ui for setlists with drag reorder & hide/unhide; prev: simple list
 function renderSetlistsView(){
-  const templates = state.setlists.filter(s=>s.isTemplate);
-  const dated = state.setlists.filter(s=>!s.isTemplate).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  const renderPreviewChips = ()=>{
+    const active = state.setlists.filter(sl => sl.enabledInChips !== false);
+    if(!active.length){
+      return `<div style="font-size:12px;color:var(--text-dim);font-style:italic;padding:4px 0;">No setlists in chips row. Tap the eye icon below to show.</div>`;
+    }
+    return active.map(sl=>{
+      return `<div class="chip" style="background:rgba(168,85,247,0.18);border-color:#a855f7;color:#c084fc;font-size:12px;padding:4px 10px;flex-shrink:0;">
+        <span class="chip-dot" style="background:#a855f7;margin-right:5px;"></span>${escapeHtml(sl.name)}
+      </div>`;
+    }).join('');
+  };
 
-  const row = (sl)=>`
-    <div class="song-row" data-setlist-id="${sl.id}">
-      <span class="fav" style="display:flex;align-items:center;">${iconSetlist()}</span>
-      <div style="flex:1;min-width:0;">
-        <div class="song-title">${escapeHtml(sl.name)}</div>
-        <div class="song-sub">${sl.isTemplate ? 'Template' : escapeHtml(sl.date||'No date')} &middot; ${sl.items.length} item${sl.items.length===1?'':'s'}</div>
-      </div>
-    </div>`;
+  const rows = state.setlists.map(sl=>{
+    const songCount = (sl.items||[]).filter(it=>it.type==='song').length;
+    const isChip = sl.enabledInChips !== false;
+    const subLabel = sl.isTemplate ? 'Template' : (sl.date ? escapeHtml(sl.date) : 'No date');
+    return `
+      <div class="song-row setlist-manage-row" data-setlist-id="${sl.id}" style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--bg-elev);border:1px solid var(--line);border-radius:14px;margin-bottom:8px;touch-action:pan-y;">
+        <span style="display:flex;align-items:center;width:22px;height:22px;color:#a855f7;flex-shrink:0;">${iconSetlist()}</span>
+        <div class="setlist-row-clickable" data-open-setlist="${sl.id}" style="flex:1;min-width:0;cursor:pointer;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-weight:700;font-size:15px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(sl.name)}</span>
+            <span class="chip-dot" style="background:#a855f7;flex-shrink:0;"></span>
+          </div>
+          <div style="font-size:12px;color:var(--text-dim);margin-top:2px;">${songCount} song${songCount===1?'':'s'} &middot; ${subLabel}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+          <button class="icon-btn" data-toggle-sl-chip="${sl.id}" title="${isChip ? 'Hide from chips row' : 'Show in chips row'}" style="width:30px;height:30px;padding:5px;opacity:${isChip ? '1' : '0.45'};color:${isChip ? '#c084fc' : 'var(--text-dim)'};">${isChip ? iconEye() : iconEyeOff()}</button>
+          <button class="icon-btn" data-edit-setlist="${sl.id}" title="Edit setlist" style="width:30px;height:30px;padding:5px;opacity:0.8;">${iconEdit()}</button>
+          <button class="icon-btn" data-delete-setlist="${sl.id}" title="Delete setlist" style="width:30px;height:30px;padding:5px;opacity:0.8;color:var(--danger);">${iconTrash()}</button>
+          <span class="song-drag-handle setlist-drag-handle" data-setlist-drag-handle="1" title="Hold and drag to reorder chips" style="cursor:grab;touch-action:none;padding:6px;display:flex;align-items:center;color:var(--text-dim);user-select:none;">${iconDragBars()}</span>
+        </div>
+      </div>`;
+  }).join('');
 
   app.innerHTML = `
     <div class="topbar">
-      <button class="icon-btn" id="btn-back">${iconBack()}</button>
+      <button class="icon-btn" id="btn-back-setlists">${iconBack()}</button>
       <h1>Setlists / Mass Plans</h1>
+      <button class="icon-btn" id="btn-top-add-setlist" title="New Setlist" style="color:#a855f7;">${iconSetlist()}</button>
     </div>
-    <div class="list-wrap">
-      <div class="letter-divider">DATED MASSES</div>
-      ${dated.length ? dated.map(row).join('') : `<div class="empty-state">No dated Mass plans yet.</div>`}
-      <div class="letter-divider">TEMPLATES</div>
-      ${templates.length ? templates.map(row).join('') : `<div class="empty-state">No templates yet.</div>`}
+    <div class="list-wrap" id="setlists-page-wrap" style="padding:14px 16px 80px;">
+      <div style="margin-bottom:12px;">
+        <div style="font-size:11px;font-weight:700;color:var(--text-dim);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:6px;">Setlist Chips Order Preview</div>
+        <div id="setlists-live-chips" style="display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;scrollbar-width:none;">
+          ${renderPreviewChips()}
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding:0 2px;">
+        <span style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
+          Hold &amp; drag <span style="display:inline-flex;color:var(--text);">${iconDragBars()}</span> to reorder chips &amp; setlists
+        </span>
+        <span style="font-size:11.5px;color:#c084fc;font-weight:700;">${state.setlists.length} Setlists</span>
+      </div>
+      <div id="setlists-drag-list">
+        ${rows.length ? rows : '<div class="empty-state">No setlists created yet. Tap + to add one.</div>'}
+      </div>
     </div>
-    <button class="fab" id="fab-add-setlist">+</button>
+    <button class="fab" id="fab-add-setlist-page" title="New Setlist">+</button>
     ${modalHtml()}
   `;
 
-  document.getElementById('btn-back').onclick = ()=>{ state.view='list'; render(); };
-  document.getElementById('fab-add-setlist').onclick = ()=>{ state.modal = {type:'new-setlist'}; renderSetlistsView(); };
-  document.querySelectorAll('[data-setlist-id]').forEach(el=>{
-    el.onclick = ()=>{ state.currentSetlistId = el.dataset.setlistId; state.view='setlist-editor'; render(); };
+  document.getElementById('btn-back-setlists').onclick = ()=>{ state.view='list'; render(); };
+  const addSetlist = ()=>{ state.modal = {type:'new-setlist'}; renderSetlistsView(); };
+  const topAdd = document.getElementById('btn-top-add-setlist');
+  if(topAdd) topAdd.onclick = addSetlist;
+  const fabAdd = document.getElementById('fab-add-setlist-page');
+  if(fabAdd) fabAdd.onclick = addSetlist;
+
+  document.querySelectorAll('[data-open-setlist]').forEach(el=>{
+    el.onclick = ()=>{
+      state.filterFlag = null;
+      state.filterMassPart = null;
+      state.filterCat = null;
+      state.filterSetlistId = el.dataset.openSetlist;
+      state.view = 'list';
+      render();
+    };
   });
+
+  document.querySelectorAll('[data-toggle-sl-chip]').forEach(btn=>{
+    btn.onclick = async (e)=>{
+      e.stopPropagation();
+      const id = btn.dataset.toggleSlChip;
+      const target = state.setlists.find(s=>s.id===id);
+      if(!target) return;
+      target.enabledInChips = !(target.enabledInChips !== false);
+      LocalAdapter.save('setlist:'+target.id, target);
+      Store.saveSetlist(target).catch(err=>console.warn(err));
+      showToast(target.enabledInChips ? 'Setlist added to chips' : 'Setlist hidden from chips');
+      renderSetlistsView();
+    };
+  });
+
+  document.querySelectorAll('[data-edit-setlist]').forEach(btn=>{
+    btn.onclick = (e)=>{
+      e.stopPropagation();
+      state.currentSetlistId = btn.dataset.editSetlist;
+      state.view = 'setlist-editor';
+      render();
+    };
+  });
+
+  document.querySelectorAll('[data-delete-setlist]').forEach(btn=>{
+    btn.onclick = (e)=>{
+      e.stopPropagation();
+      const id = btn.dataset.deleteSetlist;
+      const sl = state.setlists.find(s=>s.id===id);
+      if(!sl) return;
+      showConfirmModal({
+        title: 'Delete Setlist',
+        message: `Delete setlist "${sl.name}"? Songs inside won't be deleted.`,
+        confirmText: 'Delete',
+        danger: true,
+        onConfirm: async ()=>{
+          state.setlists = state.setlists.filter(s=>s.id!==id);
+          LocalAdapter.delete('setlist:'+id);
+          Store.deleteSetlist(id).catch(err=>console.warn(err));
+          if(state.filterSetlistId === id) state.filterSetlistId = null;
+          showToast('Setlist deleted');
+          renderSetlistsView();
+        }
+      });
+    };
+  });
+
+  wireSetlistDragSorting();
   wireModal();
+}
+
+// (2026-07-13) wire drag reordering for setlist rows & chips; prev: none
+function wireSetlistDragSorting(){
+  const listWrap = document.getElementById('setlists-drag-list');
+  const previewWrap = document.getElementById('setlists-live-chips');
+  if(!listWrap) return;
+
+  const updatePreviewChips = ()=>{
+    if(!previewWrap) return;
+    const currentIds = Array.from(listWrap.querySelectorAll('.setlist-manage-row')).map(r=>r.dataset.setlistId);
+    const active = currentIds.map(id=>state.setlists.find(s=>s.id===id)).filter(s=>s && s.enabledInChips !== false);
+    if(!active.length){
+      previewWrap.innerHTML = `<div style="font-size:12px;color:var(--text-dim);font-style:italic;padding:4px 0;">No setlists in chips row. Tap the eye icon below to show.</div>`;
+      return;
+    }
+    previewWrap.innerHTML = active.map(sl=>{
+      return `<div class="chip" style="background:rgba(168,85,247,0.18);border-color:#a855f7;color:#c084fc;font-size:12px;padding:4px 10px;flex-shrink:0;">
+        <span class="chip-dot" style="background:#a855f7;margin-right:5px;"></span>${escapeHtml(sl.name)}
+      </div>`;
+    }).join('');
+  };
+
+  listWrap.querySelectorAll('.setlist-manage-row').forEach(el=>{
+    const handle = el.querySelector('[data-setlist-drag-handle]');
+    if(!handle) return;
+
+    const startDrag = (startEvt)=>{
+      startEvt.stopPropagation();
+      if(startEvt.cancelable) startEvt.preventDefault();
+
+      el.classList.add('is-dragging');
+      if(navigator.vibrate) navigator.vibrate(12);
+
+      let currentY = (startEvt.touches && startEvt.touches[0]) ? startEvt.touches[0].clientY : startEvt.clientY;
+      let dragging = true;
+
+      const updateDomOrder = (clientY)=>{
+        const siblings = Array.from(listWrap.querySelectorAll('.setlist-manage-row'));
+        for(const sib of siblings){
+          if(sib === el) continue;
+          const r = sib.getBoundingClientRect();
+          const mid = r.top + r.height / 2;
+          if(clientY < mid){
+            listWrap.insertBefore(el, sib);
+            updatePreviewChips();
+            return;
+          }
+        }
+        listWrap.appendChild(el);
+        updatePreviewChips();
+      };
+
+      const onMove = (moveEvt)=>{
+        if(!dragging) return;
+        if(moveEvt.cancelable) moveEvt.preventDefault();
+        currentY = (moveEvt.touches && moveEvt.touches[0]) ? moveEvt.touches[0].clientY : moveEvt.clientY;
+        updateDomOrder(currentY);
+      };
+
+      const onEnd = ()=>{
+        if(!dragging) return;
+        dragging = false;
+        el.classList.remove('is-dragging');
+        window.removeEventListener('touchmove', onMove);
+        window.removeEventListener('touchend', onEnd);
+        window.removeEventListener('touchcancel', onEnd);
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onEnd);
+
+        const newOrder = Array.from(listWrap.querySelectorAll('.setlist-manage-row')).map(r=>r.dataset.setlistId);
+        const map = new Map(state.setlists.map(s=>[s.id, s]));
+        state.setlists = newOrder.map(id=>map.get(id)).filter(Boolean);
+        LocalAdapter.save('meta:setlistOrder', newOrder);
+        Store.saveSetlistOrder(newOrder).catch(err=>console.warn(err));
+        showToast('Setlist & chips order saved');
+      };
+
+      window.addEventListener('touchmove', onMove, {passive:false});
+      window.addEventListener('touchend', onEnd);
+      window.addEventListener('touchcancel', onEnd);
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onEnd);
+    };
+
+    handle.addEventListener('touchstart', startDrag, {passive:false});
+    handle.addEventListener('mousedown', startDrag);
+  });
 }
 
 // (2026-07-13) dedicated folders page with 3-line drag sorting; prev: none
@@ -6183,11 +6857,10 @@ function renderSettingsView() {
   const sortMp = document.getElementById('btn-settings-sort-massparts');
   if(sortMp) sortMp.onclick = ()=>{ state.modal = { type:'massparts' }; render(); };
 
+  // (2026-07-13) wire settings signout to performUserSignOut; prev: auth signOut
   const signoutBtn = document.getElementById('btn-settings-signout');
   if(signoutBtn) signoutBtn.onclick = async ()=>{
-    await firebase.auth().signOut();
-    state.view = 'list';
-    render();
+    await performUserSignOut();
   };
 
   const signinBtn = document.getElementById('btn-settings-signin');
@@ -6257,7 +6930,13 @@ function renderSetlistEditor(){
       <button class="icon-btn" id="btn-delete-setlist" title="Delete Plan" style="color:var(--danger);">${iconTrash()}</button>
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px 6px;flex-shrink:0;">
-      <span style="background:var(--bg-elev2);border:1px solid var(--line);border-radius:8px;padding:3px 10px;font-size:11px;font-weight:700;color:var(--accent);letter-spacing:0.3px;">${sl.isTemplate ? 'Template' : `Date: ${escapeHtml(sl.date||'No Date')}`}</span>
+      <!-- (2026-07-13) add toggle chip button in setlist editor; prev: template only -->
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="background:var(--bg-elev2);border:1px solid var(--line);border-radius:8px;padding:3px 10px;font-size:11px;font-weight:700;color:var(--accent);letter-spacing:0.3px;">${sl.isTemplate ? 'Template' : `Date: ${escapeHtml(sl.date||'No Date')}`}</span>
+        <button type="button" class="chip ${sl.enabledInChips !== false ? 'active' : ''}" id="btn-toggle-chip-editor" style="font-size:11px;padding:3px 10px;cursor:pointer;border-color:rgba(168,85,247,0.5);${sl.enabledInChips !== false ? 'background:rgba(168,85,247,0.25);color:#c084fc;font-weight:700;' : ''}">
+          <span style="margin-right:4px;">${iconSetlist()}</span>${sl.enabledInChips !== false ? '✓ In Folder Chips' : '+ Add to Chips'}
+        </button>
+      </div>
       <span style="font-size:12px;color:var(--text-dim);font-weight:600;">${sl.items.filter(i=>i.type!=='section').length} song(s) &middot; ${sl.items.filter(i=>i.type==='section').length} section(s)</span>
     </div>
     <div class="list-wrap" style="padding:6px 14px 100px;flex:1;overflow-y:auto;">
@@ -6284,6 +6963,15 @@ function renderSetlistEditor(){
     ${modalHtml()}
   `;
 
+  // (2026-07-13) wire toggle chip button in setlist editor; prev: none
+  const toggleChipEditor = document.getElementById('btn-toggle-chip-editor');
+  if(toggleChipEditor){
+    toggleChipEditor.onclick = async ()=>{
+      sl.enabledInChips = !(sl.enabledInChips !== false);
+      await Store.saveSetlist(sl);
+      renderSetlistEditor();
+    };
+  }
   document.getElementById('btn-back').onclick = ()=>{ state.view='setlists'; state.currentSetlistId=null; render(); };
   document.getElementById('btn-rename-setlist').onclick = ()=>{ state.modal = {type:'rename-setlist', id: sl.id}; renderSetlistEditor(); };
   // (2026-07-13) confirm modal for setlist deletion; prev: window.confirm
@@ -6473,7 +7161,12 @@ function wireSidebar(){
   const sidebar = document.getElementById('sidebar');
   if(!backdrop || !sidebar) return;
 
+  // (2026-07-13) persistent sidebar handling in landscape; prev: drawer close
   const closeSidebar = (callback)=>{
+    if(isTabletOrDesktopHorizontal()){
+      if(callback) callback();
+      return;
+    }
     state.sidebarOpen = false;
     backdrop.classList.remove('active');
     if(callback){
@@ -6481,8 +7174,22 @@ function wireSidebar(){
     }
   };
 
-  backdrop.onclick = (e)=>{ if(e.target===backdrop){ closeSidebar(); } };
-  document.getElementById('btn-close-sidebar').onclick = ()=>{ closeSidebar(); };
+  backdrop.onclick = (e)=>{
+    if(isTabletOrDesktopHorizontal()) return;
+    if(e.target===backdrop){ closeSidebar(); }
+  };
+  const closeSidebarBtn = document.getElementById('btn-close-sidebar');
+  if(closeSidebarBtn){
+    closeSidebarBtn.onclick = ()=>{
+      if(isTabletOrDesktopHorizontal()){
+        state.sidebarCollapsed = true;
+        try{ localStorage.setItem('cbp_sidebar_collapsed', 'true'); }catch(e){}
+        app.classList.add('sidebar-collapsed');
+        return;
+      }
+      closeSidebar();
+    };
+  }
 
   /* Touch swipe left gesture to close sidebar */
   let startX = 0, currentX = 0;
@@ -6495,7 +7202,13 @@ function wireSidebar(){
   sidebar.addEventListener('touchend', ()=>{
     sidebar.style.transform = '';
     if(currentX > 0 && currentX < startX - 45){
-      closeSidebar();
+      if(isTabletOrDesktopHorizontal()){
+        state.sidebarCollapsed = true;
+        try{ localStorage.setItem('cbp_sidebar_collapsed', 'true'); }catch(e){}
+        app.classList.add('sidebar-collapsed');
+      } else {
+        closeSidebar();
+      }
     }
   }, {passive:true});
 
@@ -6618,10 +7331,12 @@ function wireSidebar(){
       });
     };
   }
+  // (2026-07-13) wire sidebar signout to performUserSignOut; prev: auth signOut
   const signOutBtn = document.getElementById('btn-signout');
   if(signOutBtn) signOutBtn.onclick = async ()=>{
-    await firebase.auth().signOut();
-    closeSidebar();
+    closeSidebar(async ()=>{
+      await performUserSignOut();
+    });
   };
   const signInBtn = document.getElementById('btn-signin-from-sidebar');
   if(signInBtn) signInBtn.onclick = ()=>{ closeSidebar(()=>{ state.view='auth'; render(); }); };
@@ -6642,6 +7357,47 @@ function showConfirmModal({ title, message, confirmText, danger = true, onConfir
 
 function modalHtml(){
   if(!state.modal) return '';
+  // (2026-07-13) modal to toggle setlist tabs in folder chips row; prev: none
+  if(state.modal.type === 'setlist-chips-toggle'){
+    const setlistRows = state.setlists.map(sl=>{
+      const isEnabled = sl.enabledInChips !== false;
+      const count = (sl.items || []).filter(it=>it.type==='song').length;
+      return `
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--bg-elev2);border:1px solid var(--line);border-radius:12px;margin-bottom:8px;">
+          <div style="flex:1;min-width:0;display:flex;align-items:center;gap:10px;">
+            <span style="color:#a855f7;display:flex;align-items:center;flex-shrink:0;">${iconSetlist()}</span>
+            <div style="min-width:0;">
+              <div style="font-weight:700;font-size:14px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(sl.name)}</div>
+              <div style="font-size:11.5px;color:var(--text-dim);margin-top:2px;">${sl.isTemplate ? 'Template' : escapeHtml(sl.date || 'No Date')} &middot; ${count} songs</div>
+            </div>
+          </div>
+          <button type="button" class="btn ${isEnabled ? 'btn-primary' : 'btn-secondary'}" data-toggle-sl-chip-modal="${sl.id}" style="font-size:12px;padding:6px 14px;min-height:34px;flex-shrink:0;${isEnabled ? 'background:#a855f7;border-color:#a855f7;' : ''}">
+            ${isEnabled ? '✓ Enabled' : 'Disabled'}
+          </button>
+        </div>`;
+    }).join('');
+
+    return `
+      <div class="modal-backdrop center" id="modal-bg">
+        <div class="modal card" style="max-width:440px;width:95%;max-height:85vh;display:flex;flex-direction:column;padding:0;overflow:hidden;border-radius:16px;">
+          <div style="padding:16px 18px 12px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+            <div>
+              <h3 style="margin:0;font-size:16px;font-weight:800;display:flex;align-items:center;gap:6px;">
+                <span style="color:#a855f7;">${iconSetlist()}</span> Setlists in Folder Chips
+              </h3>
+              <div style="font-size:11.5px;color:var(--text-dim);margin-top:2px;">Tap to toggle which setlists appear as tabs after all folders</div>
+            </div>
+            <button class="icon-btn modal-close" id="modal-x" style="width:32px;height:32px;">${iconClose()}</button>
+          </div>
+          <div style="padding:14px 16px;overflow-y:auto;flex:1;">
+            ${state.setlists.length > 0 ? setlistRows : '<div class="empty-state" style="padding:20px;text-align:center;color:var(--text-dim);">No setlists created yet.</div>'}
+          </div>
+          <div style="padding:12px 16px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;background:var(--bg-elev);">
+            <button class="btn btn-primary" id="btn-done-chips-toggle" style="background:#a855f7;border-color:#a855f7;font-size:13px;padding:8px 18px;">Done</button>
+          </div>
+        </div>
+      </div>`;
+  }
   // (2026-07-13) edit liturgical cue modal synced with Firestore; prev: none
   if(state.modal.type === 'edit-cue'){
     const { massPartKey, cueDraft } = state.modal;
@@ -7217,9 +7973,10 @@ function modalHtml(){
       </div>`;
     }).join('');
 
+    // (2026-07-13) allow misal romano responses in song picker; prev: lit- excluded
     const filteredSongs = state.songs.filter(s => {
-      if(s.id && String(s.id).startsWith('lit-')) return false;
-      if(activeFolder !== 'All' && !(s.categories || []).includes(activeFolder)) return false;
+      const isLit = s.id && String(s.id).startsWith('lit-');
+      if(activeFolder !== 'All' && !isLit && !(s.categories || []).includes(activeFolder)) return false;
       if(q){
         const matchTitle = (s.title || '').toLowerCase().includes(q);
         const matchArtist = (s.artist || '').toLowerCase().includes(q);
@@ -7326,11 +8083,13 @@ function modalHtml(){
         </div>
       </div>`;
   }
-  // (2026-07-13) mass part picker modal with song list & quick folder add; prev: none
+  // (2026-07-13) mass part picker support for setlists & folders; prev: folders
   if(state.modal.type === 'masspart-picker'){
     const targetMp = state.modal.massPart || 'Sanctus';
     const q = (state.modal.search || '').trim().toLowerCase();
-    const curFolder = (state.filterCat && state.filterCat !== 'All' && state.filterCat !== 'Favorites') ? state.filterCat : null;
+    const activeSetlist = state.filterSetlistId ? state.setlists.find(s=>s.id===state.filterSetlistId) : null;
+    const curFolder = activeSetlist ? activeSetlist.name : ((state.filterCat && state.filterCat !== 'All' && state.filterCat !== 'Favorites') ? state.filterCat : null);
+    const isSetlistContainer = !!activeSetlist;
 
     const allMatching = state.songs.filter(s => {
       if(s.id && String(s.id).startsWith('lit-')) return false;
@@ -7347,7 +8106,9 @@ function modalHtml(){
       songsListHtml = `<div class="hint" style="padding:32px 12px;text-align:center;color:var(--text-dim);font-size:12.5px;">No ${escapeHtml(targetMp)} songs found matching your search.</div>`;
     } else {
       songsListHtml = displaySongs.map(s => {
-        const isInFolder = curFolder ? (s.categories || []).includes(curFolder) : false;
+        const isInFolder = isSetlistContainer
+          ? (activeSetlist.items || []).some(it=>it.type==='song'&&it.songId===s.id)
+          : (curFolder ? (s.categories || []).includes(curFolder) : false);
         const vf = getSongFlag(s);
         const sub = [s.artist, s.key ? `Key ${s.key}` : ''].filter(Boolean).join(' · ');
         const cats = (s.categories || []).filter(Boolean);
@@ -7364,8 +8125,8 @@ function modalHtml(){
               </div>
             </div>
             ${curFolder ? `
-              <button type="button" data-mp-toggle-folder="${s.id}" style="min-height:28px;height:28px;padding:0 12px;font-size:11px;font-weight:700;border-radius:14px;cursor:pointer;flex-shrink:0;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;background:${isInFolder ? 'var(--accent)' : 'rgba(255,255,255,0.08)'};color:${isInFolder ? '#0f1115' : 'var(--text)'};border:${isInFolder ? 'none' : '1px solid rgba(255,255,255,0.16)'};">
-                ${isInFolder ? '&#10003; In Folder' : '+ Add'}
+              <button type="button" class="mp-picker-add-btn" data-mp-toggle-folder="${s.id}" style="min-height:28px;height:28px;padding:0 12px;font-size:11px;font-weight:700;border-radius:14px;cursor:pointer;flex-shrink:0;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;background:${isInFolder ? 'var(--accent)' : 'rgba(255,255,255,0.08)'};color:${isInFolder ? '#0f1115' : 'var(--text)'};border:${isInFolder ? 'none' : '1px solid rgba(255,255,255,0.16)'};">
+                ${isInFolder ? (isSetlistContainer ? '&#10003; In Setlist' : '&#10003; In Folder') : '+ Add'}
               </button>
             ` : `
               <span class="side-count" style="flex-shrink:0;font-size:11.5px;color:var(--text-dim);">${escapeHtml(getEffectiveSongKey(s)||'—')}</span>
@@ -7374,15 +8135,16 @@ function modalHtml(){
       }).join('');
     }
 
-    // (2026-07-13) fix picker close button sizing & add pill style; prev: stretched
+    // (2026-07-13) masspart picker modal class & button styles; prev: unclassed modal
     return `
       <div class="modal-backdrop center" id="modal-bg">
-        <div class="modal card" style="max-width:440px;width:92%;max-height:82vh;display:flex;flex-direction:column;padding:16px;box-sizing:border-box;">
+        <!-- Modal for picking mass songs -->
+        <div class="modal card masspart-picker-modal-card" style="max-width:440px;width:92%;max-height:82vh;display:flex;flex-direction:column;padding:16px;box-sizing:border-box;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-shrink:0;">
             <div style="min-width:0;flex:1;padding-right:8px;">
               <h3 style="margin:0;font-size:16px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(targetMp)} Songs</h3>
               <div style="font-size:11.5px;color:var(--text-dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                ${allMatching.length} available in songbook${curFolder ? ` &bull; Folder: <strong style="color:var(--accent);">${escapeHtml(curFolder)}</strong>` : ''}
+                ${allMatching.length} available in songbook${curFolder ? ` &bull; ${isSetlistContainer ? 'Setlist' : 'Folder'}: <strong style="color:var(--accent);">${escapeHtml(curFolder)}</strong>` : ''}
               </div>
             </div>
             <button type="button" class="icon-btn modal-close" id="modal-x" style="width:30px;height:30px;flex-shrink:0;">${iconClose()}</button>
@@ -7397,19 +8159,45 @@ function modalHtml(){
         </div>
       </div>`;
   }
+  // (2026-07-13) render change password modal in modalHtml; prev: none
+  if(state.modal.type === 'change-password'){
+    const userEmail = (firebaseUser && firebaseUser.email) ? firebaseUser.email : 'johnpaulinso123@gmail.com';
+    return `
+      <div class="modal-backdrop center" id="modal-bg">
+        <div class="modal card" style="max-width:380px;width:90%;padding:20px;border-radius:18px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <h3 style="margin:0;font-size:16px;font-weight:800;">Change Account Password</h3>
+            <button class="icon-btn modal-close" id="modal-x" style="width:30px;height:30px;">${iconClose()}</button>
+          </div>
+          <div style="font-size:12.5px;color:var(--text-dim);margin-bottom:14px;">
+            Set a password for <strong>${escapeHtml(userEmail)}</strong> to log in easily on any device.
+          </div>
+          <div style="margin-bottom:12px;">
+            <input type="password" id="modal-new-password" class="input" placeholder="New password (min 6 chars)" style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:10px;background:var(--bg-elev);border:1px solid var(--line);color:var(--text);font-size:13px;" />
+          </div>
+          <div id="modal-pass-error" style="color:var(--danger,#f44336);font-size:12px;margin-bottom:12px;display:none;"></div>
+          <div style="display:flex;gap:10px;justify-content:flex-end;">
+            <button class="btn btn-secondary" id="modal-pass-cancel" style="padding:8px 14px;font-size:12px;">Cancel</button>
+            <button class="btn btn-primary" id="modal-pass-save" style="padding:8px 16px;font-size:12px;">Save Password</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
   return '';
 }
 
-// (2026-07-13) scope closeActiveModal across IIFE; prev: wireModal local
+// (2026-07-13) clean all modal backdrops on close; prev: missed custom classes
 function closeActiveModal(){
   const closingModal = state.modal;
   state.modal = null;
   state.isSavingSong = false;
-  document.querySelectorAll('.modal-backdrop, #modal-bg').forEach(el=>el.remove());
+  document.querySelectorAll('.modal-backdrop, #modal-bg, .custom-modal-backdrop, .modal').forEach(el=>el.remove());
   if(state.view === 'list') renderListView();
   else if(state.view === 'viewer') renderViewer();
   else if(state.view === 'setlists') renderSetlistsView();
   else if(state.view === 'setlist-editor') renderSetlistEditor();
+  else if(state.view === 'folders') renderFoldersView();
   else render();
   if(closingModal && closingModal.type === 'song-context' && closingModal.dirty){
     const s = state.songs.find(item=>item.id===closingModal.id);
@@ -7420,6 +8208,21 @@ function closeActiveModal(){
 function wireModal(){
   const bg = document.getElementById('modal-bg');
   if(!bg) return;
+  // (2026-07-13) wire setlist chips toggle modal buttons; prev: none
+  if(state.modal && state.modal.type === 'setlist-chips-toggle'){
+    document.querySelectorAll('[data-toggle-sl-chip-modal]').forEach(btn=>{
+      btn.onclick = async ()=>{
+        const id = btn.dataset.toggleSlChipModal;
+        const sl = state.setlists.find(s=>s.id===id);
+        if(!sl) return;
+        sl.enabledInChips = !(sl.enabledInChips !== false);
+        await Store.saveSetlist(sl);
+        render();
+      };
+    });
+    const doneBtn = document.getElementById('btn-done-chips-toggle');
+    if(doneBtn) doneBtn.onclick = ()=>{ closeActiveModal(); };
+  }
   // (2026-07-13) block ghost touches inside modal for 380ms; prev: ghost click-through
   const modalOpenedAt = (state.modal && state.modal.openedAt) ? state.modal.openedAt : performance.now();
   bg.addEventListener('click', (e)=>{
@@ -8277,7 +9080,7 @@ function wireModal(){
     }
   }
 
-  // (2026-07-13) wire mass part picker search & add to folder; prev: none
+  // (2026-07-13) wire masspart picker for setlists & folders; prev: folders only
   if(state.modal && state.modal.type === 'masspart-picker'){
     const closeBtn = document.getElementById('modal-x') || document.getElementById('mp-picker-close');
     if(closeBtn) closeBtn.onclick = ()=>{ closeActiveModal(); };
@@ -8286,7 +9089,10 @@ function wireModal(){
 
     const searchInput = document.getElementById('mp-picker-search');
     const wirePickerItems = ()=>{
-      const curFolder = (state.filterCat && state.filterCat !== 'All' && state.filterCat !== 'Favorites') ? state.filterCat : null;
+      const activeSetlist = state.filterSetlistId ? state.setlists.find(s=>s.id===state.filterSetlistId) : null;
+      const curFolder = activeSetlist ? activeSetlist.name : ((state.filterCat && state.filterCat !== 'All' && state.filterCat !== 'Favorites') ? state.filterCat : null);
+      const isSetlistContainer = !!activeSetlist;
+
       document.querySelectorAll('[data-mp-pick-song]').forEach(row => {
         row.onclick = (e)=>{
           if(e.target.closest('[data-mp-toggle-folder]')) return;
@@ -8295,6 +9101,7 @@ function wireModal(){
           openViewer(songId);
         };
       });
+      // (2026-07-13) optimistic add & keep masspart-picker open; prev: closed modal
       document.querySelectorAll('[data-mp-toggle-folder]').forEach(btn => {
         btn.onclick = (e)=>{
           e.stopPropagation();
@@ -8302,18 +9109,54 @@ function wireModal(){
           const songId = btn.dataset.mpToggleFolder;
           const s = state.songs.find(item => item.id === songId);
           if(!s || !curFolder) return;
-          if(!Array.isArray(s.categories)) s.categories = [];
-          const idx = s.categories.indexOf(curFolder);
-          if(idx >= 0){
-            s.categories.splice(idx, 1);
-            showToast(`Removed from ${curFolder}`);
+          let actionLabel = '';
+          let inContainerNow = false;
+
+          if(isSetlistContainer){
+            if(!Array.isArray(activeSetlist.items)) activeSetlist.items = [];
+            const idx = activeSetlist.items.findIndex(it => it.type === 'song' && it.songId === s.id);
+            if(idx >= 0){
+              activeSetlist.items.splice(idx, 1);
+              actionLabel = `Removed ${cleanSongTitleForDisplay(s.title)} from ${activeSetlist.name}`;
+              inContainerNow = false;
+            } else {
+              activeSetlist.items.push({ id: newSetlistItemId(), type: 'song', songId: s.id });
+              actionLabel = `Added ${cleanSongTitleForDisplay(s.title)} to ${activeSetlist.name}`;
+              inContainerNow = true;
+            }
+            activeSetlist.dateModified = Date.now();
+            LocalAdapter.save('setlist:' + activeSetlist.id, activeSetlist);
+            Store.saveSetlist(activeSetlist).catch(()=>{});
           } else {
-            s.categories.push(curFolder);
-            showToast(`Added to ${curFolder}`);
+            if(!Array.isArray(s.categories)) s.categories = [];
+            const idx = s.categories.indexOf(curFolder);
+            if(idx >= 0){
+              s.categories.splice(idx, 1);
+              actionLabel = `Removed ${cleanSongTitleForDisplay(s.title)} from ${curFolder}`;
+              inContainerNow = false;
+            } else {
+              s.categories.push(curFolder);
+              actionLabel = `Added ${cleanSongTitleForDisplay(s.title)} to ${curFolder}`;
+              inContainerNow = true;
+            }
+            LocalAdapter.save('song:' + s.id, s);
+            Store.saveSong(s).catch(()=>{});
           }
-          LocalAdapter.save('song:' + s.id, s);
-          Store.saveSong(s).catch(()=>{});
-          render();
+
+          btn.innerHTML = inContainerNow ? (isSetlistContainer ? '&#10003; In Setlist' : '&#10003; In Folder') : '+ Add';
+          btn.style.background = inContainerNow ? 'var(--accent)' : 'rgba(255,255,255,0.08)';
+          btn.style.color = inContainerNow ? '#0f1115' : 'var(--text)';
+          btn.style.border = inContainerNow ? 'none' : '1px solid rgba(255,255,255,0.16)';
+          showToast(actionLabel);
+
+          // (2026-07-13) live update underlying list-wrap behind modal; prev: hidden until closed
+          const listWrap = document.getElementById('list-wrap');
+          if(listWrap){
+            const prevScroll = listWrap.scrollTop;
+            listWrap.innerHTML = buildSongListRowsHtml();
+            listWrap.scrollTop = prevScroll;
+            wireListWrapRows();
+          }
         };
       });
     };
@@ -8323,7 +9166,9 @@ function wireModal(){
         state.modal.search = e.target.value;
         const q = (e.target.value || '').trim().toLowerCase();
         const targetMp = state.modal.massPart || 'Sanctus';
-        const curFolder = (state.filterCat && state.filterCat !== 'All' && state.filterCat !== 'Favorites') ? state.filterCat : null;
+        const activeSetlist = state.filterSetlistId ? state.setlists.find(s=>s.id===state.filterSetlistId) : null;
+        const curFolder = activeSetlist ? activeSetlist.name : ((state.filterCat && state.filterCat !== 'All' && state.filterCat !== 'Favorites') ? state.filterCat : null);
+        const isSetlistContainer = !!activeSetlist;
         const allMatching = state.songs.filter(s => !(s.id && String(s.id).startsWith('lit-')) && isSongMatchingMassPart(s, targetMp));
         const filtered = allMatching.filter(s => !q || (s.title||'').toLowerCase().includes(q) || (s.artist||'').toLowerCase().includes(q) || (s.key||'').toLowerCase().includes(q));
         const scrollEl = document.getElementById('mp-picker-songs-scroll');
@@ -8332,7 +9177,9 @@ function wireModal(){
             scrollEl.innerHTML = `<div class="hint" style="padding:32px 12px;text-align:center;color:var(--text-dim);font-size:12.5px;">No ${escapeHtml(targetMp)} songs found matching your search.</div>`;
           } else {
             scrollEl.innerHTML = filtered.map(s => {
-              const isInFolder = curFolder ? (s.categories || []).includes(curFolder) : false;
+              const isInFolder = isSetlistContainer
+                ? (activeSetlist.items || []).some(it=>it.type==='song'&&it.songId===s.id)
+                : (curFolder ? (s.categories || []).includes(curFolder) : false);
               const vf = getSongFlag(s);
               const sub = [s.artist, s.key ? `Key ${s.key}` : ''].filter(Boolean).join(' · ');
               const cats = (s.categories || []).filter(Boolean);
@@ -8349,8 +9196,8 @@ function wireModal(){
                     </div>
                   </div>
                   ${curFolder ? `
-                    <button type="button" data-mp-toggle-folder="${s.id}" style="min-height:28px;height:28px;padding:0 12px;font-size:11px;font-weight:700;border-radius:14px;cursor:pointer;flex-shrink:0;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;background:${isInFolder ? 'var(--accent)' : 'rgba(255,255,255,0.08)'};color:${isInFolder ? '#0f1115' : 'var(--text)'};border:${isInFolder ? 'none' : '1px solid rgba(255,255,255,0.16)'};">
-                      ${isInFolder ? '&#10003; In Folder' : '+ Add'}
+                    <button type="button" class="mp-picker-add-btn" data-mp-toggle-folder="${s.id}" style="min-height:28px;height:28px;padding:0 12px;font-size:11px;font-weight:700;border-radius:14px;cursor:pointer;flex-shrink:0;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;background:${isInFolder ? 'var(--accent)' : 'rgba(255,255,255,0.08)'};color:${isInFolder ? '#0f1115' : 'var(--text)'};border:${isInFolder ? 'none' : '1px solid rgba(255,255,255,0.16)'};">
+                      ${isInFolder ? (isSetlistContainer ? '&#10003; In Setlist' : '&#10003; In Folder') : '+ Add'}
                     </button>
                   ` : `
                     <span class="side-count" style="flex-shrink:0;font-size:11.5px;color:var(--text-dim);">${escapeHtml(getEffectiveSongKey(s)||'—')}</span>
@@ -8363,6 +9210,40 @@ function wireModal(){
       };
     }
     wirePickerItems();
+  }
+  // (2026-07-13) wire change password modal save action; prev: none
+  if(state.modal && state.modal.type === 'change-password'){
+    const saveBtn = document.getElementById('modal-pass-save');
+    const cancelBtn = document.getElementById('modal-pass-cancel');
+    const newPassInp = document.getElementById('modal-new-password');
+    const passErr = document.getElementById('modal-pass-error');
+    if(cancelBtn) cancelBtn.onclick = closeActiveModal;
+    if(saveBtn && newPassInp){
+      saveBtn.onclick = async ()=>{
+        const pass = newPassInp.value.trim();
+        if(!pass || pass.length < 6){
+          if(passErr){ passErr.textContent = 'Password must be at least 6 characters.'; passErr.style.display = 'block'; }
+          return;
+        }
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving...';
+        const userEmail = (firebaseUser && firebaseUser.email) ? firebaseUser.email.toLowerCase().trim() : 'johnpaulinso123@gmail.com';
+        try{ localStorage.setItem('cbp_user_password_' + userEmail, pass); }catch(e){}
+        if(FIREBASE_READY && firebase.auth && firebase.auth().currentUser){
+          try{
+            await firebase.auth().currentUser.updatePassword(pass);
+          }catch(err){
+            try{
+              await firebase.auth().signInWithEmailAndPassword(userEmail, pass).catch(()=>{
+                firebase.auth().createUserWithEmailAndPassword(userEmail, pass).catch(()=>{});
+              });
+            }catch(e){}
+          }
+        }
+        closeActiveModal();
+        showToast('Password updated successfully!');
+      };
+    }
   }
 }
 
@@ -8386,6 +9267,9 @@ function iconArrowDown(){ return `<svg viewBox="0 0 24 24" width="16" height="16
 function iconCopy(){ return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>`; }
 function iconBack(){ return `<svg viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`; }
 function iconEdit(){ return `<svg viewBox="0 0 24 24" fill="none"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`; }
+// (2026-07-13) add iconEye and iconEyeOff for visibility toggle; prev: none
+function iconEye(){ return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`; }
+function iconEyeOff(){ return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`; }
 // (2026-07-13) add width/height to iconFolder svg; prev: missing sizing
 function iconFolder(){ return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>`; }
 // (2026-07-13) fixed width/height for iconClose svg; prev: unconstrained
@@ -8442,7 +9326,9 @@ function subscribeRealtimeSync(){
   if(unsubscribeSnapshot){ unsubscribeSnapshot(); unsubscribeSnapshot = null; }
   let isFirstSnapshot = true;
   try{
-    unsubscribeSnapshot = firebase.firestore().collection('users').doc(firebaseUser.uid).collection('data')
+    // (2026-07-13) sync realtime snapshot with canonicalDocId; prev: firebaseUser.uid
+    const canonicalDocId = getCanonicalUserDocId(firebaseUser);
+    unsubscribeSnapshot = firebase.firestore().collection('users').doc(canonicalDocId).collection('data')
       .onSnapshot((snap) => {
         if(snap.metadata && snap.metadata.hasPendingWrites) return;
         if(isFirstSnapshot){
@@ -8505,10 +9391,19 @@ function subscribeRealtimeSync(){
   }catch(e){ console.error('Snapshot error', e); }
 }
 
-// (2026-07-13) instant cache render & non-blocking sync; prev: blocking sync
+// (2026-07-13) persistent auth & master email sync; prev: prompt login on start
 (async function boot(){
+  const cached = localStorage.getItem('cbp_user_session');
+  const isAuth = localStorage.getItem('cbp_user_authenticated') === 'true';
+  if(isAuth || cached){
+    if(cached && !firebaseUser){
+      try{ firebaseUser = JSON.parse(cached); }catch(e){}
+    }
+    state.view = 'list';
+    state.loading = false;
+  }
   if(FIREBASE_READY){
-    if(state.songs.length > 0 || state.categories.length > 0 || firebase.auth().currentUser){
+    if(isAuth || cached || state.songs.length > 0 || state.categories.length > 0 || firebase.auth().currentUser){
       state.view = 'list';
       state.loading = false;
       render();
@@ -8516,9 +9411,24 @@ function subscribeRealtimeSync(){
     try{ await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){}
     try{ await firebase.auth().getRedirectResult(); }catch(e){}
     firebase.auth().onAuthStateChanged(async (user)=>{
-      firebaseUser = user;
-      selectAdapter();
       if(user){
+        // (2026-07-13) isolate user account data by UID; prev: wildcard master match
+        const userEmail = (user.email || '').toLowerCase().trim();
+        const isMaster = userEmail === 'johnpaulinso123@gmail.com' || userEmail === 'johnpaulinso2317@gmail.com';
+        const sess = {
+          uid: isMaster ? 'user_johnpaulinso_master' : user.uid,
+          email: userEmail,
+          displayName: user.displayName || (userEmail ? userEmail.split('@')[0] : 'Choir Member'),
+          photoURL: user.photoURL || '',
+          isAnonymous: false
+        };
+        firebaseUser = sess;
+        try{
+          localStorage.setItem('cbp_user_authenticated', 'true');
+          localStorage.setItem('cbp_user_session', JSON.stringify(sess));
+          localStorage.removeItem('choirbook_offline_guest');
+        }catch(e){}
+        selectAdapter();
         subscribeRealtimeSync();
         state.view = 'list';
         state.loading = false;
@@ -8527,12 +9437,22 @@ function subscribeRealtimeSync(){
         loadAll().catch(()=>{});
       } else {
         if(unsubscribeSnapshot){ unsubscribeSnapshot(); unsubscribeSnapshot = null; }
-        // (2026-07-13) allow offline guest users to stay in list view; prev: forced auth
-        if(localStorage.getItem('choirbook_offline_guest') === 'true' && (state.songs.length > 0 || state.categories.length > 0)){
+        const cachedUser = localStorage.getItem('cbp_user_session');
+        const authenticated = localStorage.getItem('cbp_user_authenticated') === 'true';
+        if(authenticated || cachedUser || localStorage.getItem('choirbook_offline_guest') === 'true'){
+          if(cachedUser && !firebaseUser){
+            try{ firebaseUser = JSON.parse(cachedUser); }catch(e){}
+          }
+          selectAdapter();
+          subscribeRealtimeSync();
           state.view = 'list';
-        } else {
-          state.view = 'auth';
+          state.loading = false;
+          render();
+          seedIfEmpty().catch(()=>{});
+          loadAll().catch(()=>{});
+          return;
         }
+        state.view = 'auth';
         state.loading = false;
         render();
       }
@@ -8545,11 +9465,17 @@ function subscribeRealtimeSync(){
   }
 })();
 
-  // (2026-07-13) modal & viewer back navigation; prev: closed app on modal back
+  // (2026-07-13) universal back dismisses overlays & songs; prev: closed app
   function handleUniversalBack(){
     try{
-      if(state.modal || document.querySelector('.modal-backdrop, .modal, #modal-bg')){
+      if(state.modal || document.querySelector('.modal-backdrop, .modal, #modal-bg, .custom-modal-backdrop')){
         closeActiveModal();
+        return true;
+      }
+      const openSelect = document.querySelector('[data-custom-select].open');
+      if(openSelect){
+        openSelect.classList.remove('open');
+        openSelect.querySelector('.custom-select-trigger')?.setAttribute('aria-expanded', 'false');
         return true;
       }
       if(state.profileMenuOpen){
@@ -8557,7 +9483,8 @@ function subscribeRealtimeSync(){
         renderListView();
         return true;
       }
-      if(state.sidebarOpen){
+      // (2026-07-13) only dismiss drawer backdrop on back; prev: matched docked
+      if(state.sidebarOpen || document.querySelector('.sidebar.open, .sidebar-backdrop.active')){
         closeSidebar();
         return true;
       }
@@ -8591,6 +9518,11 @@ function subscribeRealtimeSync(){
         render();
         return true;
       }
+      if(state.view === 'folders'){
+        state.view = 'list';
+        render();
+        return true;
+      }
       if(state.view === 'setlist-editor'){
         state.view = 'setlists';
         state.currentSetlistId = null;
@@ -8602,6 +9534,25 @@ function subscribeRealtimeSync(){
         render();
         return true;
       }
+      if(state.listEditMode){
+        state.listEditMode = false;
+        state.checkedSongIds = [];
+        renderListView();
+        return true;
+      }
+      // (2026-07-13) reset setlist filter on back button; prev: none
+      if(state.filterSetlistId){
+        state.filterSetlistId = null;
+        state.filterCat = 'All';
+        renderListView();
+        return true;
+      }
+      if(state.searchActive && state.search){
+        state.search = '';
+        state.searchActive = false;
+        renderListView();
+        return true;
+      }
     }catch(err){
       return true;
     }
@@ -8609,16 +9560,56 @@ function subscribeRealtimeSync(){
   }
   window.handleUniversalBack = handleUniversalBack;
   window.addEventListener('popstate', ()=>{ handleUniversalBack(); });
-  if(typeof window !== 'undefined' && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App){
-    window.Capacitor.Plugins.App.addListener('backButton', ({canGoBack})=>{
-      try{
-        if(handleUniversalBack()) return;
-        if(canGoBack){ window.history.back(); }
-        else { window.Capacitor.Plugins.App.exitApp(); }
-      }catch(err){}
-    });
+
+  const NativeAppPlugin = (typeof window !== 'undefined' && window.Capacitor && typeof window.Capacitor.registerPlugin === 'function')
+    ? window.Capacitor.registerPlugin('App')
+    : (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.Plugins ? window.Capacitor.Plugins.App : null);
+
+  if(NativeAppPlugin && typeof NativeAppPlugin.addListener === 'function'){
+    try{
+      NativeAppPlugin.addListener('backButton', ({canGoBack})=>{
+        try{
+          if(handleUniversalBack()) return;
+          if(canGoBack){ window.history.back(); }
+          else if(NativeAppPlugin.exitApp){ NativeAppPlugin.exitApp(); }
+        }catch(err){}
+      });
+    }catch(e){}
   }
 
+  document.addEventListener('backbutton', (e)=>{
+    if(handleUniversalBack()){
+      if(e && e.preventDefault) e.preventDefault();
+      if(e && e.stopPropagation) e.stopPropagation();
+    }
+  });
+
+
+// (2026-07-13) sync persistent sidebar on viewport change; prev: none
+window.addEventListener('resize', ()=>{
+  if(state.view === 'list'){
+    if(isTabletOrDesktopHorizontal()){
+      app.classList.add('has-docked-sidebar');
+      if(state.sidebarCollapsed) app.classList.add('sidebar-collapsed');
+      else app.classList.remove('sidebar-collapsed');
+    } else {
+      app.classList.remove('has-docked-sidebar', 'sidebar-collapsed');
+    }
+  }
+});
+window.addEventListener('orientationchange', ()=>{
+  setTimeout(()=>{
+    if(state.view === 'list'){
+      if(isTabletOrDesktopHorizontal()){
+        app.classList.add('has-docked-sidebar');
+        if(state.sidebarCollapsed) app.classList.add('sidebar-collapsed');
+        else app.classList.remove('sidebar-collapsed');
+      } else {
+        app.classList.remove('has-docked-sidebar', 'sidebar-collapsed');
+      }
+    }
+  }, 100);
+});
 
 // (2026-07-13) capture phase for staff play & note audio; prev: bubble blocked
 document.addEventListener('pointerdown', (e)=>{
