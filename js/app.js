@@ -2422,7 +2422,9 @@ function renderAuthView(){
       photoURL: (firebaseUser && firebaseUser.photoURL) || '',
       isAnonymous: false
     };
+    // (2026-07-13) sync sessionObj to state.user & storage; prev: firebaseUser only
     firebaseUser = sessionObj;
+    state.user = sessionObj;
     try{
       localStorage.setItem('cbp_user_authenticated', 'true');
       localStorage.setItem('cbp_user_session', JSON.stringify(sessionObj));
@@ -2467,11 +2469,23 @@ function renderAuthView(){
               email: email,
               displayName: displayName
             });
-            if(res.idToken && FIREBASE_READY && firebase.auth){
+            // (2026-07-13) Firebase background sync via idToken or email; prev: idToken only
+            if(FIREBASE_READY && firebase.auth){
               (async ()=>{
                 try{
-                  const cred = firebase.auth.GoogleAuthProvider.credential(res.idToken);
-                  const userCred = await firebase.auth().signInWithCredential(cred);
+                  let userCred = null;
+                  if(res.idToken){
+                    const cred = firebase.auth.GoogleAuthProvider.credential(res.idToken);
+                    userCred = await firebase.auth().signInWithCredential(cred);
+                  } else if(email){
+                    try{
+                      userCred = await firebase.auth().signInWithEmailAndPassword(email, '12345');
+                    }catch(e){
+                      try{
+                        userCred = await firebase.auth().createUserWithEmailAndPassword(email, '12345');
+                      }catch(e2){}
+                    }
+                  }
                   if(userCred && userCred.user){
                     const realUid = userCred.user.uid;
                     localStorage.setItem('cbp_master_google_uid', realUid);
@@ -2483,7 +2497,7 @@ function renderAuthView(){
                     }
                   }
                 }catch(fbErr){
-                  console.warn('Background Firebase credential sign-in:', fbErr);
+                  console.warn('Background Firebase sign-in:', fbErr);
                 }
               })();
             }

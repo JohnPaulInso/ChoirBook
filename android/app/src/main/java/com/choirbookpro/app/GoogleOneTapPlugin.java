@@ -16,17 +16,15 @@ import com.google.android.gms.auth.api.signin.GoogleSignInClient;
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions;
 import com.google.android.gms.common.api.ApiException;
 
-// (2026-07-13) Google sign-in & wake lock bridge; prev: one-tap only
+// (2026-07-13) Google sign-in without server client ID; prev: SERVER_CLIENT_ID
 @CapacitorPlugin(name = "GoogleOneTap")
 public class GoogleOneTapPlugin extends Plugin {
-    private static final String SERVER_CLIENT_ID = "303741150656-5ptj9tt99ff0lroco66brhmrt51a2eeh.apps.googleusercontent.com";
     private GoogleSignInClient googleSignInClient;
 
     @PluginMethod
     public void signIn(PluginCall call) {
         try {
             GoogleSignInOptions gso = new GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-                .requestIdToken(SERVER_CLIENT_ID)
                 .requestEmail()
                 .build();
             Activity activity = getActivity();
@@ -48,15 +46,16 @@ public class GoogleOneTapPlugin extends Plugin {
         }
     }
 
-    // (2026-07-13) handle sign-in result with safe exception catch; prev: unused catch
+    // (2026-07-13) extract Google account from intent result data; prev: strict RESULT_OK
     @ActivityCallback
     private void handleSignInResult(PluginCall call, ActivityResult result) {
         if (call == null) return;
-        if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
+        Intent data = result.getData();
+        if (data != null) {
             try {
                 GoogleSignInAccount account = null;
                 try {
-                    account = GoogleSignIn.getSignedInAccountFromIntent(result.getData()).getResult(ApiException.class);
+                    account = GoogleSignIn.getSignedInAccountFromIntent(data).getResult(ApiException.class);
                 } catch (Exception ignored) {
                     try {
                         account = GoogleSignIn.getLastSignedInAccount(getContext());
@@ -68,14 +67,20 @@ public class GoogleOneTapPlugin extends Plugin {
                         ret.put("idToken", account.getIdToken());
                     }
                     ret.put("email", account.getEmail() != null ? account.getEmail() : "");
-                    ret.put("displayName", account.getDisplayName() != null ? account.getDisplayName() : "Choir Director");
+                    ret.put("displayName", account.getDisplayName() != null ? account.getDisplayName() : "Choir Member");
+                    if (account.getId() != null) {
+                        ret.put("id", account.getId());
+                    }
                     call.resolve(ret);
                     return;
                 }
-                call.reject("Google account info is unavailable");
             } catch (Exception e) {
                 call.reject("Google sign-in failed: " + e.getMessage(), e);
+                return;
             }
+        }
+        if (result.getResultCode() == Activity.RESULT_OK) {
+            call.reject("Google account info is unavailable");
         } else {
             call.reject("Google sign-in was cancelled or dismissed");
         }
