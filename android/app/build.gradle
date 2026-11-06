@@ -23,6 +23,12 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+    // (2026-07-13) rename output apk to ChoirBookPro.apk; prev: app-debug.apk
+    applicationVariants.all { variant ->
+        variant.outputs.all {
+            outputFileName = "ChoirBookPro.apk"
+        }
+    }
 }
 
 repositories {

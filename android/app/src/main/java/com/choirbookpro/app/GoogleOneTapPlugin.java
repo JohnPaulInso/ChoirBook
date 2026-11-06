@@ -81,6 +81,20 @@ public class GoogleOneTapPlugin extends Plugin {
         }
     }
 
+    // (2026-07-13) sign out google sign in client on logout; prev: none
+    @PluginMethod
+    public void signOut(PluginCall call) {
+        try {
+            GoogleSignInOptions gso = new GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN).build();
+            GoogleSignInClient client = GoogleSignIn.getClient(getContext(), gso);
+            client.signOut().addOnCompleteListener(task -> {
+                if (call != null) call.resolve();
+            });
+        } catch (Exception e) {
+            if (call != null) call.resolve();
+        }
+    }
+
     @PluginMethod
     public void setKeepScreenOn(PluginCall call) {
         boolean enable = call.getBoolean("enable", true);

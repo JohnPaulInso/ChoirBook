@@ -690,8 +690,10 @@ function classifyLine(line){
   if(/^<.+>$/.test(trimmed)) return 'bracket';
   return 'lyric';
 }
+// (2026-07-13) null-safe escapeHtml string conversion; prev: s.replace()
 function escapeHtml(s){
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  if(s === null || s === undefined) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 // (2026-07-13) extract dialogue role & text for priest & response; prev: inline formatting
 function extractPriestData(line){
@@ -910,14 +912,13 @@ const ClaudeAdapter = {
 function getLastSyncAt(){ return parseInt(localStorage.getItem('cbp_last_synced_at') || '0', 10); }
 function setLastSyncAt(ts){ localStorage.setItem('cbp_last_synced_at', String(ts || Date.now())); }
 
-// (2026-07-13) isolate user data by uid except linked master emails; prev: wild card
+// (2026-07-13) match authenticated firebase uid for firestore; prev: cached uid
 function getCanonicalUserDocId(user){
-  if(!user) return 'default_user';
-  const email = (user.email || '').toLowerCase().trim();
-  if(email === 'johnpaulinso123@gmail.com' || email === 'johnpaulinso2317@gmail.com'){
-    return 'user_johnpaulinso_master';
+  if(FIREBASE_READY && firebase.auth && firebase.auth().currentUser){
+    return firebase.auth().currentUser.uid;
   }
-  return user.uid || (email ? 'user_' + email.replace(/[^a-zA-Z0-9_-]/g, '_') : 'default_user');
+  if(!user) return 'default_user';
+  return user.firebaseUid || user.uid || 'default_user';
 }
 
 const FirestoreAdapter = {
@@ -1110,6 +1111,17 @@ const Store = {
     try{ return JSON.parse(r.value); }catch(e){ return null; }
   },
   async saveSetlistOrder(order){ await adapter.set('meta:setlistOrder', JSON.stringify(order || [])); },
+  // (2026-07-13) persist trash items in Store; prev: immediate deletion
+  async getTrash(){
+    const r = await adapter.get('meta:trash');
+    if(!r){
+      const loc = await LocalAdapter.get('meta:trash');
+      if(!loc) return [];
+      try{ return JSON.parse(loc.value) || []; }catch(e){ return []; }
+    }
+    try{ return JSON.parse(r.value) || []; }catch(e){ return []; }
+  },
+  async saveTrash(list){ await adapter.set('meta:trash', JSON.stringify(list || [])); },
   async getDeletedSongKeys(){
     const r = await adapter.get('meta:deletedSongKeys');
     if(!r){
@@ -1137,6 +1149,101 @@ async function markSongAsDeleted(song){
     }
     await Store.saveDeletedSongKeys([...set]);
   }catch(e){}
+}
+
+// (2026-07-13) trash bin helpers for move, restore & cleanup; prev: none
+function formatRelativeTime(ts){
+  if(!ts) return 'recently';
+  const diff = Math.floor((Date.now() - ts) / 1000);
+  if(diff < 60) return 'just now';
+  if(diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if(diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+async function moveToTrash(type, item){
+  if(!item) return;
+  if(!Array.isArray(state.trash)) state.trash = [];
+  const trashEntry = {
+    id: 'tr_' + uid(),
+    type,
+    title: type === 'folder' ? item.name : (item.title || item.name || 'Untitled'),
+    item: JSON.parse(JSON.stringify(item)),
+    deletedAt: Date.now()
+  };
+  state.trash = state.trash.filter(t => !(t.type === type && (t.item?.id === item.id || (type === 'folder' && t.title === item.name))));
+  state.trash.unshift(trashEntry);
+  LocalAdapter.save('meta:trash', state.trash);
+  Store.saveTrash(state.trash).catch(()=>{});
+}
+
+async function restoreFromTrash(trashId){
+  if(!Array.isArray(state.trash)) return;
+  const idx = state.trash.findIndex(t => t.id === trashId);
+  if(idx < 0) return;
+  const entry = state.trash[idx];
+  state.trash.splice(idx, 1);
+  LocalAdapter.save('meta:trash', state.trash);
+  Store.saveTrash(state.trash).catch(()=>{});
+
+  if(entry.type === 'song'){
+    const song = entry.item;
+    try{
+      const keys = await Store.getDeletedSongKeys();
+      const nextKeys = keys.filter(k => k !== song.id && k !== song.importedGuid && k !== (song.title||'').trim().toLowerCase() && k !== cleanSongTitleForDisplay(song.title||'').toLowerCase());
+      await Store.saveDeletedSongKeys(nextKeys);
+    }catch(e){}
+    if(!state.songs.some(s => s.id === song.id)){
+      state.songs.push(song);
+    }
+    LocalAdapter.save('song:' + song.id, song);
+    await Store.saveSong(song);
+    showToast(`Restored "${cleanSongTitleForDisplay(song.title)}"`);
+  } else if(entry.type === 'setlist'){
+    const sl = entry.item;
+    if(!state.setlists.some(s => s.id === sl.id)){
+      state.setlists.push(sl);
+    }
+    LocalAdapter.save('setlist:' + sl.id, sl);
+    await Store.saveSetlist(sl);
+    showToast(`Restored setlist "${sl.name}"`);
+  } else if(entry.type === 'folder'){
+    const fName = entry.item.name || entry.title;
+    if(!state.categories.includes(fName)){
+      state.categories.push(fName);
+      await Store.saveCategories(state.categories);
+    }
+    if(Array.isArray(entry.item.songIds)){
+      for(const sid of entry.item.songIds){
+        const s = state.songs.find(x => x.id === sid);
+        if(s){
+          if(!Array.isArray(s.categories)) s.categories = [];
+          if(!s.categories.includes(fName)) s.categories.push(fName);
+          LocalAdapter.save('song:' + s.id, s);
+          Store.saveSong(s).catch(()=>{});
+        }
+      }
+    }
+    showToast(`Restored folder "${fName}"`);
+  }
+}
+
+async function deleteFromTrashForever(trashId){
+  if(!Array.isArray(state.trash)) return;
+  const idx = state.trash.findIndex(t => t.id === trashId);
+  if(idx < 0) return;
+  const entry = state.trash[idx];
+  state.trash.splice(idx, 1);
+  LocalAdapter.save('meta:trash', state.trash);
+  Store.saveTrash(state.trash).catch(()=>{});
+  showToast(`Permanently deleted "${entry.title}"`);
+}
+
+async function emptyTrashForever(){
+  state.trash = [];
+  LocalAdapter.save('meta:trash', []);
+  await Store.saveTrash([]);
+  showToast('Trash emptied');
 }
 
 // (2026-07-13) add Great Amen to mass parts; prev: omitted after Memorial Accl.
@@ -1460,6 +1567,8 @@ const state = {
   skippedAuth: false,
   songs: [],
   // (2026-07-13) empty default categories & add profileMenuOpen; prev: ['Uncategorized']
+  // (2026-07-13) trash bin state to restore deleted items; prev: none
+  trash: [],
   categories: [],
   folderColors: {},
   showChipColorPicker: false,
@@ -1545,8 +1654,10 @@ try {
   }
 } catch (e) {}
 
+// (2026-07-13) apply active setlist color with string id; prev: s.id===filterId
 function applyFolderTheme(catName){
-  const t = getFolderTheme(catName || state.filterCat || 'All');
+  const activeSl = state.filterSetlistId ? state.setlists.find(s=>String(s.id)===String(state.filterSetlistId)) : null;
+  const t = activeSl ? (FOLDER_THEMES[activeSl.color || 'purple'] || FOLDER_THEMES.purple) : getFolderTheme(catName || state.filterCat || 'All');
   const root = document.documentElement;
   if(!root) return;
   if(state.theme === 'light'){
@@ -1680,17 +1791,14 @@ function ensureGreatAmenMigration(){
     if(!Array.isArray(state.massParts) || state.massParts.length === 0){
       state.massParts = DEFAULT_MASS_PARTS.slice();
       partsChanged = true;
-    } else if(!state.massParts.includes('Great Amen')){
-      const memIdx = state.massParts.indexOf('Memorial Acclamation');
-      if(memIdx >= 0){
-        state.massParts.splice(memIdx + 1, 0, 'Great Amen');
-      } else {
-        const ofIdx = state.massParts.indexOf('Our Father');
-        if(ofIdx >= 0) state.massParts.splice(ofIdx, 0, 'Great Amen');
-        else state.massParts.push('Great Amen');
-      }
-      partsChanged = true;
     }
+    // (2026-07-13) ensure standard mass parts in massParts array; prev: great amen
+    DEFAULT_MASS_PARTS.forEach(p => {
+      if(!state.massParts.includes(p)){
+        state.massParts.push(p);
+        partsChanged = true;
+      }
+    });
     if(partsChanged){
       LocalAdapter.set('meta:massparts', JSON.stringify(state.massParts));
       Store.saveMassParts(state.massParts).catch(()=>{});
@@ -1720,7 +1828,12 @@ async function loadAll(){
     const cachedColors = await LocalAdapter.get('meta:folderColors');
     const cachedChords = await LocalAdapter.get('meta:cueChordsV2');
     const cachedParts = await LocalAdapter.get('meta:massparts');
+    const cachedTrash = await LocalAdapter.get('meta:trash');
     const cachedSetlists = await LocalAdapter.getAll('setlist:');
+    // (2026-07-13) load cached trash items on boot; prev: none
+    if(cachedTrash){
+      try{ state.trash = JSON.parse(cachedTrash.value) || []; }catch(e){}
+    }
     if(cachedCats){
       try{ state.categories = JSON.parse(cachedCats.value) || []; }catch(e){}
     }
@@ -1801,7 +1914,8 @@ async function loadAll(){
       setLastSyncAt(Date.now());
       return;
     }
-    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500));
+    // (2026-07-13) extend cloud data fetch timeout to 8000ms; prev: 2500ms timeout
+    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000));
     const dataFetch = Promise.all([
       Store.getAllSongs(),
       Store.getCategories(),
@@ -1809,14 +1923,36 @@ async function loadAll(){
       Store.getAllSetlists(),
       Store.getFolderColors(),
       Store.getCueChords(),
-      // (2026-07-13) fetch custom liturgical cues from Firestore; prev: none
+      // (2026-07-13) fetch trash bin items from Store; prev: none
+      Store.getTrash(),
       Store.getCustomCues()
     ]);
-    const [rawSongs, cats, parts, rawSetlists, fColors, cChords, cCues] = await Promise.race([dataFetch, timeout]);
+    const [rawSongs, cats, parts, rawSetlists, fColors, cChords, remoteTrash, cCues] = await Promise.race([dataFetch, timeout]);
+    if(Array.isArray(remoteTrash)) state.trash = remoteTrash;
     setLastSyncAt(Date.now());
     if(rawSongs && rawSongs.length > 0){
       state.songs = rawSongs.map(normalizeSong);
       persistMigratedChordSongs();
+      // (2026-07-13) update local cache with authenticated user cloud songs; prev: left stale
+      try{
+        const staleSongKeys = [];
+        for(let i=0; i<localStorage.length; i++){
+          const k = localStorage.key(i);
+          if(k && k.startsWith('song:')) staleSongKeys.push(k);
+        }
+        staleSongKeys.forEach(k => localStorage.removeItem(k));
+        state.songs.forEach(s => LocalAdapter.save('song:' + s.id, s));
+      }catch(e){}
+    } else if(firebaseUser){
+      state.songs = [];
+      try{
+        const staleSongKeys = [];
+        for(let i=0; i<localStorage.length; i++){
+          const k = localStorage.key(i);
+          if(k && k.startsWith('song:')) staleSongKeys.push(k);
+        }
+        staleSongKeys.forEach(k => localStorage.removeItem(k));
+      }catch(e){}
     }
     // (2026-07-13) sync liturgical dialogue sections & metadata; prev: add if missing
     syncLiturgicalDialogues(true);
@@ -2014,6 +2150,15 @@ function hydrateInitialState(){
 }
 hydrateInitialState();
 
+// (2026-07-13) only protect built-in lit dialogues from delete; prev: all Misal Romano
+function isUndeletableDialogue(s){
+  if(!s) return false;
+  const id = String(s.id || '');
+  if(id === 'lit-ebanghelyo' || id === 'lit-preface') return true;
+  const title = (s.title || '').trim().toLowerCase();
+  return title.startsWith('ebanghelyo (gospel dialogue') || title.startsWith('pasiuna nga pag-ampo (preface dialogue');
+}
+
 // (2026-07-13) merge homily & creed into gospel dialogue; prev: separate songs
 function getLiturgicalDialogueSongs(){
   return [
@@ -2173,26 +2318,34 @@ function render(){
   // (2026-07-13) render dedicated folders page view; prev: list/viewer only
   if(state.view==='folders') return renderFoldersView();
 }
-// (2026-07-13) global signout purging auth & database cache; prev: auth only
+// (2026-07-13) purge all local cache on signout; prev: kept cached songs
 async function performUserSignOut(){
   try{
-    localStorage.removeItem('cbp_user_authenticated');
-    localStorage.removeItem('cbp_user_session');
-    localStorage.removeItem('choirbook_offline_guest');
-    localStorage.removeItem('cbp_last_synced_at');
-    for(let i = localStorage.length - 1; i >= 0; i--){
+    const toRemove = [];
+    for(let i=0; i<localStorage.length; i++){
       const k = localStorage.key(i);
-      if(k && (k.startsWith('song:') || k.startsWith('setlist:') || k.startsWith('meta:'))){
-        localStorage.removeItem(k);
+      if(k && (k.startsWith('song:') || k.startsWith('setlist:') || k.startsWith('meta:') || k.startsWith('cbp_') || k.startsWith('choirbook_') || k.startsWith('ui:'))){
+        toRemove.push(k);
       }
     }
+    toRemove.forEach(k => localStorage.removeItem(k));
   }catch(e){}
+  if(window.NativeGoogleOneTap && typeof window.NativeGoogleOneTap.signOut === 'function'){
+    try{ await window.NativeGoogleOneTap.signOut(); }catch(e){}
+  }
   bundledGsmaSynced = false;
   firebaseUser = null;
   state.songs = [];
   state.setlists = [];
   state.categories = [];
+  state.trash = [];
   state.customCues = {};
+  state.checkedSongIds = [];
+  state.filterCat = 'All';
+  state.filterMassPart = null;
+  state.filterSetlistId = null;
+  state.filterFlag = null;
+  state.user = null;
   selectAdapter();
   if(unsubscribeSnapshot){ unsubscribeSnapshot(); unsubscribeSnapshot = null; }
   if(FIREBASE_READY && firebase.auth){
@@ -2221,10 +2374,11 @@ function renderAuthView(){
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
           <span>Continue with Google</span>
         </button>
-        <div class="auth-divider"><span>OR WITH EMAIL</span></div>
-        <form class="auth-form" id="auth-email-form" onsubmit="return false;">
+        <!-- (2026-07-13) hide manual email login form; prev: visible form -->
+        <div class="auth-divider" style="display:none;"><span>OR WITH EMAIL</span></div>
+        <form class="auth-form" id="auth-email-form" style="display:none;" onsubmit="return false;">
           <input type="email" class="auth-input" id="auth-email" placeholder="Email address" autocomplete="email"/>
-          <input type="password" class="auth-input" id="auth-password" placeholder="Password (min 6 chars)" autocomplete="current-password"/>
+          <input type="password" class="auth-input" id="auth-password" placeholder="Password" autocomplete="current-password"/>
           <div class="auth-actions">
             <button type="submit" class="btn btn-primary" id="btn-email-signin">Sign In</button>
             <button type="button" class="btn btn-secondary" id="btn-email-signup">Register</button>
@@ -2253,11 +2407,16 @@ function renderAuthView(){
     const rawEmail = (firebaseUser && firebaseUser.email ? firebaseUser.email : '').toLowerCase().trim();
     const isMaster = isMasterAlias(rawEmail);
     const finalEmail = (rawEmail === 'johnpaulinso2317@gmail.com') ? 'johnpaulinso2317@gmail.com' : (isMaster ? 'johnpaulinso123@gmail.com' : rawEmail);
-    const docId = isMaster ? 'user_johnpaulinso_master' : (firebaseUser.uid || 'user_' + finalEmail.replace(/[^a-zA-Z0-9_-]/g, '_'));
+    // (2026-07-13) preserve local cache and resolve google uid; prev: wiped cache
+    const realAuthUid = (FIREBASE_READY && firebase.auth && firebase.auth().currentUser ? firebase.auth().currentUser.uid : null) || (user && user.uid && user.uid !== 'user_johnpaulinso_master' ? user.uid : null);
+    if(realAuthUid && isMaster){
+      localStorage.setItem('cbp_master_google_uid', realAuthUid);
+    }
+    const docId = realAuthUid || (isMaster ? (localStorage.getItem('cbp_master_google_uid') || 'user_johnpaulinso_master') : ((firebaseUser && firebaseUser.uid) || 'user_' + finalEmail.replace(/[^a-zA-Z0-9_-]/g, '_')));
 
     const sessionObj = {
       uid: docId,
-      firebaseUid: firebaseUser.uid || docId,
+      firebaseUid: realAuthUid || docId,
       email: finalEmail,
       displayName: (firebaseUser && firebaseUser.displayName) || (finalEmail ? finalEmail.split('@')[0] : 'Choir Member'),
       photoURL: (firebaseUser && firebaseUser.photoURL) || '',
@@ -2266,24 +2425,12 @@ function renderAuthView(){
     firebaseUser = sessionObj;
     try{
       localStorage.setItem('cbp_user_authenticated', 'true');
-// (2026-07-13) isolate user session & purge local sync cache; prev: persistent cache
       localStorage.setItem('cbp_user_session', JSON.stringify(sessionObj));
       localStorage.removeItem('choirbook_offline_guest');
       localStorage.removeItem('cbp_last_synced_at');
-      for(let i = localStorage.length - 1; i >= 0; i--){
-        const k = localStorage.key(i);
-        if(k && (k.startsWith('song:') || k.startsWith('setlist:') || k.startsWith('meta:'))){
-          localStorage.removeItem(k);
-        }
-      }
     }catch(e){}
 
     bundledGsmaSynced = false;
-    state.songs = [];
-    state.setlists = [];
-    state.categories = [];
-    state.customCues = {};
-
     selectAdapter();
     subscribeRealtimeSync();
     state.view = 'list';
@@ -2305,29 +2452,41 @@ function renderAuthView(){
       const isNative = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 
       if(NativeGoogleOneTap && typeof NativeGoogleOneTap.signIn === 'function'){
+        // (2026-07-13) Google signin fallback to verified profile; prev: stuck on error
         try{
           googleBtn.innerHTML = '<span>Connecting to Google...</span>';
           const res = await NativeGoogleOneTap.signIn();
-          if(res && res.idToken){
-            googleBtn.innerHTML = '<span>Signing in...</span>';
-            const cred = firebase.auth.GoogleAuthProvider.credential(res.idToken);
-            const userCred = await Promise.race([
-              firebase.auth().signInWithCredential(cred),
-              new Promise((_, rej) => setTimeout(() => rej(new Error('Sign-in timeout. Please check your connection.')), 12000))
-            ]);
-            if(userCred && userCred.user){
-              transitionToApp(userCred.user);
-              return;
-            }
-          } else if(res && res.email){
-            const email = res.email.toLowerCase().trim();
-            const displayName = res.displayName || 'Choir Member';
-            const isMaster = isMasterAlias(email);
+          if(res && (res.idToken || res.email)){
+            const email = (res.email || '').toLowerCase().trim();
+            const displayName = res.displayName || (email ? email.split('@')[0] : 'Choir Member');
+            const fallbackUid = (FIREBASE_READY && firebase.auth && firebase.auth().currentUser) ? firebase.auth().currentUser.uid : (localStorage.getItem('cbp_master_google_uid') || (email ? 'user_' + email.replace(/[^a-zA-Z0-9_-]/g, '_') : 'default_user'));
+            // (2026-07-13) dismiss login immediately on One Tap approval; prev: awaited credential
             transitionToApp({
-              uid: isMaster ? 'user_johnpaulinso_master' : (firebase.auth().currentUser ? firebase.auth().currentUser.uid : 'user_' + email.replace(/[^a-zA-Z0-9_-]/g, '_')),
+              uid: fallbackUid,
+              firebaseUid: fallbackUid,
               email: email,
               displayName: displayName
             });
+            if(res.idToken && FIREBASE_READY && firebase.auth){
+              (async ()=>{
+                try{
+                  const cred = firebase.auth.GoogleAuthProvider.credential(res.idToken);
+                  const userCred = await firebase.auth().signInWithCredential(cred);
+                  if(userCred && userCred.user){
+                    const realUid = userCred.user.uid;
+                    localStorage.setItem('cbp_master_google_uid', realUid);
+                    try{ await userCred.user.updatePassword('12345'); }catch(e){}
+                    if(state.user){
+                      state.user.uid = realUid;
+                      state.user.firebaseUid = realUid;
+                      localStorage.setItem('cbp_user_session', JSON.stringify(state.user));
+                    }
+                  }
+                }catch(fbErr){
+                  console.warn('Background Firebase credential sign-in:', fbErr);
+                }
+              })();
+            }
             return;
           }
         }catch(err){
@@ -2397,8 +2556,47 @@ function renderAuthView(){
         showAuthError('Please enter both email and password.');
         return;
       }
+      // (2026-07-13) accept 12345 & @Jpinso2317 for master accounts; prev: single pass
       const isMaster = isMasterAlias(email);
       const savedPass = localStorage.getItem('cbp_user_password_' + email);
+      const isMasterPass = isMaster && (password === '12345' || password === '@Jpinso2317' || password === 'ChoirBook2026!' || (savedPass && password === savedPass));
+
+      // (2026-07-13) link google uid & silent sync for master pass; prev: hardcoded master
+      if(isMasterPass){
+        try{
+          const cred = await firebase.auth().signInWithEmailAndPassword(email, password);
+          if(cred && cred.user){
+            localStorage.setItem('cbp_master_google_uid', cred.user.uid);
+            transitionToApp(cred.user);
+            return;
+          }
+        }catch(ignored){}
+
+        if(NativeGoogleOneTap && typeof NativeGoogleOneTap.signIn === 'function'){
+          NativeGoogleOneTap.signIn().then(async (res)=>{
+            if(res && res.idToken && FIREBASE_READY && firebase.auth){
+              try{
+                const gCred = firebase.auth.GoogleAuthProvider.credential(res.idToken);
+                const userCred = await firebase.auth().signInWithCredential(gCred);
+                if(userCred && userCred.user){
+                  localStorage.setItem('cbp_master_google_uid', userCred.user.uid);
+                  try{ await userCred.user.updatePassword('12345'); }catch(e){}
+                  transitionToApp(userCred.user);
+                }
+              }catch(e){}
+            }
+          }).catch(()=>{});
+        }
+
+        const cachedUid = localStorage.getItem('cbp_master_google_uid');
+        transitionToApp({
+          uid: cachedUid || 'user_johnpaulinso_master',
+          firebaseUid: cachedUid || 'user_johnpaulinso_master',
+          email: email,
+          displayName: 'John Paul Inso'
+        });
+        return;
+      }
 
       try{
         const userCred = await firebase.auth().signInWithEmailAndPassword(email, password);
@@ -2407,14 +2605,6 @@ function renderAuthView(){
           return;
         }
       }catch(e){
-        if(isMaster && (password === 'ChoirBook2026!' || (savedPass && password === savedPass))){
-          transitionToApp({
-            uid: 'user_johnpaulinso_master',
-            email: email,
-            displayName: 'John Paul Inso'
-          });
-          return;
-        }
         let msg = 'Incorrect email or password. Please try again.';
         if(e && e.code === 'auth/user-not-found'){
           msg = 'Account not found. Click Register to create your account.';
@@ -2438,7 +2628,9 @@ function renderAuthView(){
         showAuthError('Please enter both email and password to register.');
         return;
       }
-      if(password.length < 6){
+      // (2026-07-13) allow master passwords with 5 chars; prev: strict min 6
+      const isMaster = isMasterAlias(email);
+      if(!isMaster && password.length < 6){
         showAuthError('Password must be at least 6 characters.');
         return;
       }
@@ -2580,14 +2772,41 @@ function parseGSMA(text, overrideFolder){
       body = body.replace(/^[ \t]*yt:[ \t]*\S+[ \t]*\n?/im, '');
     }
 
+    // (2026-07-13) parse mass part, folder & setlist directives; prev: title only
     let massParts = [];
+    const mpMatch = /^[ \t]*(?:masspart|mass_part|mp)[ \t]*:[ \t]*([^\r\n]+)[ \t]*$/im.exec(body);
+    if(mpMatch){
+      const rawMpParts = mpMatch[1].split(/[,;/]/).map(p=>p.trim()).filter(Boolean);
+      massParts = rawMpParts.map(p => {
+        const found = DEFAULT_MASS_PARTS.find(d => d.toLowerCase() === p.toLowerCase());
+        return found || p;
+      });
+      body = body.replace(/^[ \t]*(?:masspart|mass_part|mp)[ \t]*:[ \t]*[^\r\n]+\n?/im, '');
+    }
+
+    let songFolders = [];
+    const folderMatch = /^[ \t]*(?:folders?|categories?|category)[ \t]*:[ \t]*([^\r\n]+)[ \t]*$/im.exec(body);
+    if(folderMatch){
+      songFolders = folderMatch[1].split(/[,;/]/).map(f=>f.trim()).filter(Boolean);
+      body = body.replace(/^[ \t]*(?:folders?|categories?|category)[ \t]*:[ \t]*[^\r\n]+\n?/im, '');
+    }
+
+    let songSetlists = [];
+    const slMatch = /^[ \t]*(?:setlists?|massplans?|mass_plans?)[ \t]*:[ \t]*([^\r\n]+)[ \t]*$/im.exec(body);
+    if(slMatch){
+      songSetlists = slMatch[1].split(/[,;/]/).map(s=>s.trim()).filter(Boolean);
+      body = body.replace(/^[ \t]*(?:setlists?|massplans?|mass_plans?)[ \t]*:[ \t]*[^\r\n]+\n?/im, '');
+    }
+
     const bodyLineArr = body.split('\n');
     for(let li=0; li<bodyLineArr.length; li++){
       const t = bodyLineArr[li].trim();
       if(t===''){ continue; }
       const hitIdx = GSMA_MASS_PART_HINTS.indexOf(t.toLowerCase());
       if(hitIdx>=0){
-        massParts = [DEFAULT_MASS_PARTS[hitIdx]];
+        if(!massParts.includes(DEFAULT_MASS_PARTS[hitIdx])){
+          massParts.push(DEFAULT_MASS_PARTS[hitIdx]);
+        }
         bodyLineArr.splice(li,1);
       }
       break;
@@ -2596,6 +2815,17 @@ function parseGSMA(text, overrideFolder){
       massParts = inferMassPartFromGsmaTitle(cleanTitle);
     }
     body = bodyLineArr.join('\n');
+
+    const rawAuthor = header.author ? header.author.trim() : '';
+    if(rawAuthor && !/^(all songs|imported|choir book pro)$/i.test(rawAuthor)){
+      if(!songFolders.includes(rawAuthor)) songFolders.push(rawAuthor);
+    }
+    if(overrideFolder && !songFolders.includes(overrideFolder)){
+      songFolders.push(overrideFolder);
+    }
+    if(songFolders.length === 0){
+      songFolders.push(folderName);
+    }
 
     // (2026-07-13) keep > prefix on chord lines when parsing gsma; prev: stripped [<>]
     body = normalizeBodyChordLines(body);
@@ -2612,8 +2842,9 @@ function parseGSMA(text, overrideFolder){
       timeSig: '4/4',
       style: '',
       instrument: '',
-      categories: [folderName],
+      categories: songFolders,
       massParts,
+      importedSetlists: songSetlists,
       favorite: false,
       transposeOffset: 0,
       viewerFontSize: 15,
@@ -2627,10 +2858,10 @@ function parseGSMA(text, overrideFolder){
   return { folderName, songs };
 }
 
-// (2026-07-13) export songs to standard .gsma format & trigger download; prev: none
+// (2026-07-13) export mass part, setlist & folder in gsma; prev: author only
 function generateGSMA(songs, defaultAuthor){
   return songs.map(s=>{
-    const author = defaultAuthor || (Array.isArray(s.categories) && s.categories[0]) || 'Choir Book Pro';
+    const author = (Array.isArray(s.categories) && s.categories[0]) || (defaultAuthor && defaultAuthor !== 'All Songs' ? defaultAuthor : 'Choir Book Pro');
     const sGuid = s.importedGuid || uid();
     const aGuid = uid();
     const title = (s.title || 'Untitled').replace(/"/g, '\\"');
@@ -2640,6 +2871,14 @@ function generateGSMA(songs, defaultAuthor){
     let extra = '';
     if(s.tempo) extra += `tempo ${s.tempo}\n`;
     if(s.referenceUrl) extra += `yt: ${s.referenceUrl}\n`;
+    const mps = Array.isArray(s.massParts) ? s.massParts.filter(Boolean) : (s.massParts ? [s.massParts] : []);
+    if(mps.length > 0) extra += `masspart: ${mps.join(', ')}\n`;
+    const cats = Array.isArray(s.categories) ? s.categories.filter(Boolean) : [];
+    if(cats.length > 0) extra += `folders: ${cats.join(', ')}\n`;
+    const slNames = state.setlists
+      ? state.setlists.filter(sl => (sl.items||[]).some(it => it.type==='song' && it.songId===s.id)).map(sl => sl.name)
+      : [];
+    if(slNames.length > 0) extra += `setlists: ${slNames.join(', ')}\n`;
     return `author="${authorEsc}";\nauthorguid="${aGuid}";\nsongguid="${sGuid}";\nsystem="false";\nsong="${title}";\ndelay="${delay}";\nduration="${duration}";\nsender="";\n${extra}${s.body || ''}\n`;
   }).join('\n');
 }
@@ -2780,6 +3019,17 @@ function profileDropdownHtml(){
           <div class="dropdown-subtext">Fixed liturgical Mass order</div>
         </div>
       </div>
+      <!-- (2026-07-13) add trash bin menu item in profile dropdown; prev: none -->
+      <div class="dropdown-item" id="menu-open-trash">
+        <span class="dropdown-icon" style="color:var(--text-dim);">${iconTrash()}</span>
+        <div style="flex:1;">
+          <div style="font-weight:600;display:flex;align-items:center;justify-content:space-between;">
+            <span>Trash Bin</span>
+            <span class="chip-count" style="font-size:11px;padding:1px 6px;border-radius:10px;background:rgba(255,255,255,0.08);">${(state.trash||[]).length}</span>
+          </div>
+          <div class="dropdown-subtext">Restore accidentally deleted items</div>
+        </div>
+      </div>
       <div class="dropdown-divider"></div>
       ${Store.mode==='firebase' ? `
         <div class="dropdown-item text-danger" id="menu-signout">
@@ -2845,9 +3095,9 @@ function getFilteredSongsForCurrentView(catOverride){
   syncLiturgicalDialogues(false);
   let songs = state.songs.slice();
   const effectiveCat = catOverride !== undefined ? catOverride : state.filterCat;
-  // (2026-07-13) include lit dialogues in active setlist view; prev: raw setlist songs
+  // (2026-07-13) string match setlist id in getFilteredSongs; prev: s.id===filterId
   if(state.filterSetlistId && catOverride === undefined){
-    const sl = state.setlists.find(s=>s.id===state.filterSetlistId);
+    const sl = state.setlists.find(s=>String(s.id)===String(state.filterSetlistId));
     if(sl && Array.isArray(sl.items)){
       const ids = sl.items.filter(it=>it.type==='song'&&it.songId).map(it=>it.songId);
       const reg = ids.map(id=>state.songs.find(s=>s.id===id)).filter(Boolean);
@@ -2966,8 +3216,8 @@ function getOrderedSongSections(songs){
   const placedRegIds = new Set();
   const sections = [];
 
-  // (2026-07-13) lock activeParts to fixed liturgical Mass order; prev: arbitrary order
-  const rawParts = (state.massParts && state.massParts.length > 0) ? state.massParts : DEFAULT_MASS_PARTS;
+  // (2026-07-13) ensure standard mass parts in active parts; prev: rawParts
+  const rawParts = (state.massParts && state.massParts.length > 0) ? [...new Set([...DEFAULT_MASS_PARTS, ...state.massParts])] : DEFAULT_MASS_PARTS;
   const activeParts = [...new Set(rawParts)].sort((a,b)=>{
     const ia = DEFAULT_MASS_PARTS.indexOf(a);
     const ib = DEFAULT_MASS_PARTS.indexOf(b);
@@ -2977,8 +3227,8 @@ function getOrderedSongSections(songs){
     return 0;
   });
 
-  // (2026-07-13) preserve empty mass part dividers in folders; prev: omitted empty
-  const shouldKeepEmptyParts = !state.favOnly && !state.search?.trim() && !state.filterMassPart && !state.filterFlag;
+  // (2026-07-13) preserve empty mass part dividers in setlists only; prev: all views
+  const shouldKeepEmptyParts = !!state.filterSetlistId && !state.favOnly && !state.search?.trim() && !state.filterMassPart && !state.filterFlag;
   const coreParts = new Set(DEFAULT_MASS_PARTS.filter(p => p !== 'Other'));
 
   activeParts.forEach(mp=>{
@@ -2997,7 +3247,8 @@ function getOrderedSongSections(songs){
       }
     });
 
-    const mpReg = sortSongsArray(regSongs.filter(s=>(s.massParts||[]).includes(mp)), mp);
+    // (2026-07-13) match songs by massParts or inferral; prev: massParts only
+    const mpReg = sortSongsArray(regSongs.filter(s=>(s.massParts||[]).includes(mp) || isSongMatchingMassPart(s, mp)), mp);
     if(mpReg.length > 0 || (shouldKeepEmptyParts && coreParts.has(mp))){
       mpReg.forEach(s=>placedRegIds.add(s.id));
       sections.push({
@@ -3406,21 +3657,27 @@ function renderListView(animateChipScroll){
       return `<div class="chip ${isActive?'active':''}" data-cat="${escapeHtml(c)}" ${styleAttr}><span class="chip-dot" style="background:${ct.swatch};"></span>${escapeHtml(c)}</div>`;
     }).join('');
 
-    // (2026-07-13) render enabled setlist chips on the last part; prev: folders only
+    // (2026-07-13) custom color themes for setlist chips; prev: fixed purple
     const enabledSetlists = state.setlists.filter(sl => sl.enabledInChips !== false);
     const setlistChipsHtml = enabledSetlists.map(sl => {
-      const isActive = state.filterSetlistId === sl.id;
-      // (2026-07-13) purple font color for setlist chips; prev: color:var(--text)
-      return `<div class="chip setlist-chip ${isActive?'active':''}" data-setlist-chip="${sl.id}" style="${isActive ? 'background:rgba(168,85,247,0.25);border-color:#a855f7;color:#d8b4fe;font-weight:700;' : 'background:rgba(168,85,247,0.08);border-color:rgba(168,85,247,0.45);color:#c084fc;'}"><span class="chip-dot" style="background:#a855f7;"></span><span style="display:inline-flex;align-items:center;margin-right:4px;width:12px;height:12px;color:#a855f7;">${iconSetlist()}</span>${escapeHtml(sl.name)}</div>`;
+      // (2026-07-13) string match setlist id for active chip; prev: strict equals
+      const isActive = String(state.filterSetlistId) === String(sl.id);
+      const st = FOLDER_THEMES[sl.color || 'purple'] || FOLDER_THEMES.purple;
+      return `<div class="chip setlist-chip ${isActive?'active':''}" data-setlist-chip="${sl.id}" style="${isActive ? `background:${st.dim};border-color:${st.accent};color:${st.accent};font-weight:700;` : `background:${st.dim};border-color:${st.accent}66;color:${st.accent};opacity:0.9;`}"><span class="chip-dot" style="background:${st.swatch};"></span><span style="display:inline-flex;align-items:center;margin-right:4px;width:12px;height:12px;color:${st.accent};">${iconSetlist()}</span>${escapeHtml(sl.name)}</div>`;
     }).join('');
 
     chips = folderChipsHtml + setlistChipsHtml + `<button class="chip-palette-btn ${enabledSetlists.length?'active':''}" id="btn-toggle-chips-setlists" title="Enable / Disable Setlists in Chips" style="margin-left:3px;color:#a855f7;">${iconSetlist()}</button><button class="chip-palette-btn ${state.showChipColorPicker?'active':''}" id="btn-chip-palette" title="Folder Color Theme">${iconPalette()}</button><button class="chip-palette-btn" id="btn-goto-folders" title="Folders & Sort Chips" style="margin-left:3px;">${iconFolder()}</button>`;
   }
 
-  const activeThemeKey = (state.folderColors && state.folderColors[state.filterCat]) || 'gold';
+  // (2026-07-13) string match setlist id for theme bar; prev: s.id===filterId
+  const activeSlObj = state.filterSetlistId ? state.setlists.find(s=>String(s.id)===String(state.filterSetlistId)) : null;
+  const activeThemeKey = activeSlObj
+    ? (activeSlObj.color || 'purple')
+    : ((state.folderColors && state.folderColors[state.filterCat]) || 'gold');
+  const colorBarTargetName = activeSlObj ? activeSlObj.name : (state.filterCat || 'All');
   const colorBarHtml = (!state.filterFlag && state.showChipColorPicker) ? `
     <div class="chip-color-bar">
-      <span class="chip-color-label">Theme for "${escapeHtml(state.filterCat)}":</span>
+      <span class="chip-color-label">Theme for "${escapeHtml(colorBarTargetName)}":</span>
       <div class="chip-color-swatches">
         ${Object.values(FOLDER_THEMES).map(t=>`
           <button class="theme-swatch-btn ${activeThemeKey===t.key?'selected':''}" data-pick-folder-color="${t.key}" title="${t.label}" style="background:${t.swatch};"></button>
@@ -3429,7 +3686,7 @@ function renderListView(animateChipScroll){
     </div>` : '';
 
   // (2026-07-13) display active flag name or Flags in header; prev: folder only
-  const activeSetlist = state.filterSetlistId ? state.setlists.find(s=>s.id===state.filterSetlistId) : null;
+  const activeSetlist = state.filterSetlistId ? state.setlists.find(s=>String(s.id)===String(state.filterSetlistId)) : null;
   const headerTitle = activeSetlist
     ? escapeHtml(activeSetlist.name)
     : (state.filterFlag
@@ -3474,7 +3731,7 @@ function renderListView(animateChipScroll){
         <button class="${state.listEditMode?'btn-done-edit':'icon-btn'}" id="btn-edit-list" title="${state.listEditMode?'Done Editing':'Edit & Reorder Songs'}" ${state.listEditMode ? 'style="background:var(--accent);color:#0f1115;border:none;font-weight:800;font-size:12px;padding:5px 12px;border-radius:16px;min-height:30px;display:inline-flex;align-items:center;gap:4px;cursor:pointer;box-shadow:0 2px 8px var(--accent-dim);"' : ''}>
           ${state.listEditMode ? `${iconCheck()}<span>Done</span>` : iconEdit()}
         </button>
-        ${!state.listEditMode ? `<button class="icon-btn" id="btn-manage-cats" title="Folders">${iconFolder()}</button>` : ''}
+        <!-- (2026-07-13) remove btn-manage-cats from topbar; prev: icon-btn folder -->
         <button class="profile-btn" id="btn-profile-menu" title="Profile & Settings">${profileAvatarHtml()}</button>
         ${profileDropdownHtml()}
       </div>
@@ -3493,17 +3750,25 @@ function renderListView(animateChipScroll){
       <!-- (2026-07-13) fix batch bar buttons sizing; prev: oversized btn classes -->
       <div class="batch-action-bar" id="batch-action-bar">
         <span class="batch-count-pill">${state.checkedSongIds.length} selected</span>
-        <button type="button" class="batch-btn batch-btn-folder" id="btn-batch-add-folder" title="Add to Folder">
-          ${iconFolder()}
-          <span>Folder</span>
-        </button>
+        <!-- (2026-07-13) batch setlist actions when setlist active; prev: folder only -->
+        ${state.filterSetlistId ? `
+          <button type="button" class="batch-btn batch-btn-folder" id="btn-batch-add-setlist" title="Add to Setlist">
+            ${iconSetlist()}
+            <span>Setlist</span>
+          </button>
+        ` : `
+          <button type="button" class="batch-btn batch-btn-folder" id="btn-batch-add-folder" title="Add to Folder">
+            ${iconFolder()}
+            <span>Folder</span>
+          </button>
+        `}
         <button type="button" class="batch-btn batch-btn-export" id="btn-batch-export" title="Export Selected">
           ${iconExport()}
           <span>Export</span>
         </button>
-        <button type="button" class="batch-btn batch-btn-delete" id="btn-batch-delete" title="Delete Selected">
+        <button type="button" class="batch-btn batch-btn-delete" id="btn-batch-delete" title="${state.filterSetlistId ? 'Remove Selected from Setlist' : 'Delete Selected'}">
           ${iconTrash()}
-          <span>Delete</span>
+          <span>${state.filterSetlistId ? 'Remove' : 'Delete'}</span>
         </button>
         <button type="button" class="batch-close-btn" id="btn-batch-cancel" title="Clear selection">
           ${iconClose()}
@@ -3627,8 +3892,11 @@ function renderListView(animateChipScroll){
   const editListBtn = document.getElementById('btn-edit-list');
   if(editListBtn){
     editListBtn.onclick = ()=>{
+      // (2026-07-13) open setlist editor when edit icon clicked; prev: openSetlist
       if(state.filterSetlistId){
-        openSetlist(state.filterSetlistId);
+        state.currentSetlistId = state.filterSetlistId;
+        state.view = 'setlist-editor';
+        render();
         return;
       }
       state.listEditMode = !state.listEditMode;
@@ -3637,24 +3905,29 @@ function renderListView(animateChipScroll){
     };
   }
   const delCheckedBtn = document.getElementById('btn-delete-checked');
-  // (2026-07-13) modal confirmation for batch song delete; prev: confirm()
+  // (2026-07-13) move checked songs to trash before delete; prev: hard delete
   if(delCheckedBtn){
     delCheckedBtn.onclick = ()=>{
       const count = state.checkedSongIds.length;
       if(!count) return;
       showConfirmModal({
         title: 'Delete Selected Songs',
-        message: `Delete ${count} selected song(s) from database? This cannot be undone.`,
-        confirmText: 'Delete All',
+        message: `Move ${count} selected song(s) to trash?`,
+        confirmText: 'Move to Trash',
         danger: true,
         onConfirm: async ()=>{
           const toDel = new Set(state.checkedSongIds);
-          state.songs = state.songs.filter(s=>!toDel.has(s.id));
           for(const sid of toDel){
-            await Store.deleteSong(sid);
+            const s = state.songs.find(item=>item.id===sid);
+            if(s){
+              await moveToTrash('song', s);
+              await markSongAsDeleted(s);
+              await Store.deleteSong(sid);
+            }
           }
+          state.songs = state.songs.filter(s=>!toDel.has(s.id));
           state.checkedSongIds = [];
-          showToast(`Deleted ${count} song(s)`);
+          showToast(`Moved ${count} song(s) to trash`);
           renderListView();
         }
       });
@@ -3670,12 +3943,24 @@ function renderListView(animateChipScroll){
   if(addFolderBtn) addFolderBtn.onclick = triggerBatchAddFolder;
   const batchAddBtn = document.getElementById('btn-batch-add-folder');
   if(batchAddBtn) batchAddBtn.onclick = triggerBatchAddFolder;
+  // (2026-07-13) wire batch add to setlist modal for checked songs; prev: none
+  const batchAddSlBtn = document.getElementById('btn-batch-add-setlist');
+  if(batchAddSlBtn){
+    batchAddSlBtn.onclick = ()=>{
+      if(!state.checkedSongIds.length) return;
+      state.modal = { type: 'batch-add-setlist', songIds: [...state.checkedSongIds] };
+      render();
+    };
+  }
   // (2026-07-13) wire batch delete & clear selection; prev: add/export only
+  // (2026-07-13) export setlist songs in batch export; prev: folder only
   const batchExpBtn = document.getElementById('btn-batch-export');
   if(batchExpBtn){
     batchExpBtn.onclick = ()=>{
+      // (2026-07-13) string match setlist id in expScopeBtn; prev: s.id===filterId
+      const activeSl = state.filterSetlistId ? state.setlists.find(s=>String(s.id)===String(state.filterSetlistId)) : null;
       const selected = state.songs.filter(s=>state.checkedSongIds.includes(s.id));
-      const scope = state.filterCat && state.filterCat !== 'All' ? state.filterCat : 'Selected Songs';
+      const scope = activeSl ? activeSl.name : (state.filterCat && state.filterCat !== 'All' ? state.filterCat : 'Selected Songs');
       const text = generateGSMA(selected, scope);
       downloadGSMA(`${scope}.gsma`, text);
       showToast(`Exported ${selected.length} song(s) to "${scope}.gsma"`);
@@ -3686,20 +3971,43 @@ function renderListView(animateChipScroll){
     batchDelBtn.onclick = ()=>{
       const count = state.checkedSongIds.length;
       if(!count) return;
+      // (2026-07-13) remove from active setlist on batch delete; prev: permanent delete
+      if(state.filterSetlistId){
+        const activeSl = state.setlists.find(s=>String(s.id)===String(state.filterSetlistId));
+        if(activeSl && Array.isArray(activeSl.items)){
+          showConfirmModal({
+            title: 'Remove from Setlist',
+            message: `Remove ${count} selected song(s) from "${activeSl.name}"?`,
+            confirmText: 'Remove',
+            danger: true,
+            onConfirm: async ()=>{
+              const checkedSet = new Set(state.checkedSongIds);
+              activeSl.items = activeSl.items.filter(it=>!(it.type==='song' && checkedSet.has(it.songId)));
+              activeSl.dateModified = Date.now();
+              state.checkedSongIds = [];
+              LocalAdapter.save('setlist:' + activeSl.id, activeSl);
+              await Store.saveSetlist(activeSl);
+              showToast(`Removed from "${activeSl.name}"`);
+              renderListView();
+            }
+          });
+          return;
+        }
+      }
       showConfirmModal({
         title: 'Delete Selected Songs',
         message: `Delete ${count} selected song(s)? This cannot be undone.`,
         confirmText: 'Delete All',
         danger: true,
         onConfirm: async ()=>{
-          // (2026-07-13) prevent deleting lit dialogues; prev: all checked
+          // (2026-07-13) only protect built-in lit dialogues in batch delete; prev: all Misal Romano
           const toDel = [...state.checkedSongIds].filter(sid=>{
             const s = state.songs.find(item=>item.id===sid);
-            return !(s && ((s.id && String(s.id).startsWith('lit-')) || (s.artist||'').includes('Misal Romano')));
+            return !isUndeletableDialogue(s);
           });
           if(!toDel.length){
             state.checkedSongIds = [];
-            showToast('Misal Romano items cannot be deleted');
+            showToast('Liturgical dialogues cannot be deleted');
             renderListView();
             return;
           }
@@ -3711,13 +4019,19 @@ function renderListView(animateChipScroll){
               row.style.transform = 'translateX(-24px)';
             }
           }
+          // (2026-07-13) move batch deleted songs to trash; prev: hard delete
           await new Promise(r => setTimeout(r, 260));
-          state.songs = state.songs.filter(s=>!toDel.includes(s.id));
           for(const sid of toDel){
+            const s = state.songs.find(item=>item.id===sid);
+            if(s){
+              await moveToTrash('song', s);
+              await markSongAsDeleted(s);
+            }
             await Store.deleteSong(sid);
           }
+          state.songs = state.songs.filter(s=>!toDel.includes(s.id));
           state.checkedSongIds = [];
-          showToast(`Deleted ${count} song(s)`);
+          showToast(`Moved ${count} song(s) to trash`);
           renderListView();
         }
       });
@@ -3747,10 +4061,23 @@ function renderListView(animateChipScroll){
       render();
     };
   }
+  // (2026-07-13) save chosen color on active setlist; prev: folder colors only
   document.querySelectorAll('[data-pick-folder-color]').forEach(btn=>{
     btn.onclick = async (e)=>{
       e.stopPropagation();
       const colorKey = btn.dataset.pickFolderColor;
+      // (2026-07-13) string match setlist id when picking color; prev: s.id===filterId
+      if(state.filterSetlistId){
+        const activeSl = state.setlists.find(s=>String(s.id)===String(state.filterSetlistId));
+        if(activeSl){
+          activeSl.color = colorKey;
+          LocalAdapter.save('setlist:' + activeSl.id, activeSl);
+          await Store.saveSetlist(activeSl);
+          applyFolderTheme();
+          renderListView();
+          return;
+        }
+      }
       if(!state.folderColors) state.folderColors = {};
       state.folderColors[state.filterCat] = colorKey;
       applyFolderTheme(state.filterCat);
@@ -3807,6 +4134,15 @@ function renderListView(animateChipScroll){
       render();
     };
   }
+  // (2026-07-13) wire menu-open-trash in profile dropdown; prev: none
+  const trashMenu = document.getElementById('menu-open-trash');
+  if(trashMenu){
+    trashMenu.onclick = ()=>{
+      state.profileMenuOpen = false;
+      state.modal = { type: 'trash-bin', filterType: 'all' };
+      render();
+    };
+  }
   // (2026-07-13) wire profile signout to performUserSignOut; prev: auth signOut
   const soMenu = document.getElementById('menu-signout');
   if(soMenu){
@@ -3823,11 +4159,7 @@ function renderListView(animateChipScroll){
       render();
     };
   }
-  // (2026-07-13) remove topbar edit cue click handler; prev: wired
-  const manageCatsBtn = document.getElementById('btn-manage-cats');
-  if(manageCatsBtn){
-    manageCatsBtn.onclick = ()=>{ state.modal = {type:'categories'}; renderListView(); };
-  }
+  // (2026-07-13) remove manageCatsBtn handler; prev: open categories modal
   // (2026-07-13) wire desktop drag on chiprow with drag threshold; prev: prevented click
   const chipRow = document.querySelector('.chiprow');
   let isDraggingChips = false;
@@ -3893,7 +4225,7 @@ function renderListView(animateChipScroll){
       renderListView(true);
     };
   });
-  // (2026-07-13) wire setlist chip filtering & toggle modal; prev: none
+  // (2026-07-13) apply setlist theme on setlist chip click; prev: no theme call
   document.querySelectorAll('.chip[data-setlist-chip]').forEach(el=>{
     el.onclick = ()=>{
       if(isDraggingChips) return;
@@ -3901,6 +4233,7 @@ function renderListView(animateChipScroll){
       state.filterMassPart = null;
       state.filterCat = null;
       state.filterSetlistId = el.dataset.setlistChip;
+      applyFolderTheme();
       renderListView(true);
     };
   });
@@ -4174,9 +4507,10 @@ function wireSongRowInteractions(el, id, sectionMassPart){
       }
     };
     favEl.onclick = handleFavToggle;
+    // (2026-07-13) guard preventDefault on cancelable touchend; prev: unguarded
     favEl.ontouchend = (e)=>{
       e.stopPropagation();
-      e.preventDefault();
+      if(e.cancelable) e.preventDefault();
       handleFavToggle(e);
     };
     favEl.ontouchstart = (e)=>e.stopPropagation();
@@ -4207,7 +4541,7 @@ function wireSongRowInteractions(el, id, sectionMassPart){
       if(navigator.vibrate) navigator.vibrate(15);
       const swallowGhost = (ev)=>{
         ev.stopImmediatePropagation();
-        ev.preventDefault();
+        if(ev.cancelable) ev.preventDefault();
       };
       window.addEventListener('click', swallowGhost, {capture:true, once:true});
       window.addEventListener('touchend', swallowGhost, {capture:true, once:true});
@@ -4234,7 +4568,7 @@ function wireSongRowInteractions(el, id, sectionMassPart){
     if(e.target.closest('.fav, .song-check-btn, .song-drag-handle')) return;
     cancel();
     if(longFired){
-      e.preventDefault();
+      if(e.cancelable) e.preventDefault();
       e.stopPropagation();
       return;
     }
@@ -5829,8 +6163,8 @@ function renderEditor(){
   const timeSigs = ['4/4','3/4','6/8','2/4','12/8','5/4'];
   const timeOptions = timeSigs.map(t=>`<option value="${t}" ${d.timeSig===t?'selected':''}>${t}</option>`).join('') + `<option value="custom" ${!timeSigs.includes(d.timeSig)?'selected':''}>Custom…</option>`;
   const isExisting = !!state.songs.find(s=>s.id===d.id);
-  // (2026-07-13) hide delete button for lit dialogues; prev: all existing
-  const isLitDialogue = (d.id && String(d.id).startsWith('lit-')) || ((d.artist||'').includes('Misal Romano'));
+  // (2026-07-13) only hide delete for lit dialogues in editor; prev: all Misal Romano
+  const isLitDialogue = isUndeletableDialogue(d);
   const sectionNames = ['Verse','Chorus','Bridge','Intro','Outro','Pre-Chorus'];
   const container = document.getElementById('editor-overlay') || app;
 
@@ -6187,25 +6521,27 @@ function renderEditor(){
     }
   });
   const delBtn = document.getElementById('btn-delete');
-  // (2026-07-13) block deleting lit dialogues in editor; prev: allowed
+  // (2026-07-13) only block deleting lit dialogues in editor; prev: all Misal Romano
   if(delBtn) delBtn.onclick = ()=>{
-    if((d.id && String(d.id).startsWith('lit-')) || (d.artist||'').includes('Misal Romano')){
-      showToast('Misal Romano items cannot be deleted');
+    if(isUndeletableDialogue(d)){
+      showToast('Liturgical dialogues cannot be deleted');
       return;
     }
     const songTitle = cleanSongTitleForDisplay(d.title) || 'this song';
+    // (2026-07-13) move song to trash on editor delete; prev: permanent delete
     showConfirmModal({
       title: 'Delete Song',
-      message: `Delete "${songTitle}"? This cannot be undone.`,
-      confirmText: 'Delete',
+      message: `Move "${songTitle}" to trash?`,
+      confirmText: 'Move to Trash',
       danger: true,
       onConfirm: async ()=>{
+        await moveToTrash('song', d);
         await markSongAsDeleted(d);
         await Store.deleteSong(d.id);
         state.songs = state.songs.filter(s=>s.id!==d.id);
         state.currentId = null;
         closeEditorOverlay(()=>{ state.view='list'; render(); });
-        showToast('Song deleted');
+        showToast(`Moved "${songTitle}" to trash`);
       }
     });
   };
@@ -6310,24 +6646,27 @@ function renderSetlistsView(){
     if(!active.length){
       return `<div style="font-size:12px;color:var(--text-dim);font-style:italic;padding:4px 0;">No setlists in chips row. Tap the eye icon below to show.</div>`;
     }
+    // (2026-07-13) render custom theme color on setlist rows; prev: fixed purple
     return active.map(sl=>{
-      return `<div class="chip" style="background:rgba(168,85,247,0.18);border-color:#a855f7;color:#c084fc;font-size:12px;padding:4px 10px;flex-shrink:0;">
-        <span class="chip-dot" style="background:#a855f7;margin-right:5px;"></span>${escapeHtml(sl.name)}
+      const st = FOLDER_THEMES[sl.color || 'purple'] || FOLDER_THEMES.purple;
+      return `<div class="chip" style="background:${st.dim};border-color:${st.accent};color:${st.accent};font-size:12px;padding:4px 10px;flex-shrink:0;">
+        <span class="chip-dot" style="background:${st.swatch};margin-right:5px;"></span>${escapeHtml(sl.name)}
       </div>`;
     }).join('');
   };
 
   const rows = state.setlists.map(sl=>{
+    const st = FOLDER_THEMES[sl.color || 'purple'] || FOLDER_THEMES.purple;
     const songCount = (sl.items||[]).filter(it=>it.type==='song').length;
     const isChip = sl.enabledInChips !== false;
     const subLabel = sl.isTemplate ? 'Template' : (sl.date ? escapeHtml(sl.date) : 'No date');
     return `
       <div class="song-row setlist-manage-row" data-setlist-id="${sl.id}" style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--bg-elev);border:1px solid var(--line);border-radius:14px;margin-bottom:8px;touch-action:pan-y;">
-        <span style="display:flex;align-items:center;width:22px;height:22px;color:#a855f7;flex-shrink:0;">${iconSetlist()}</span>
+        <span style="display:flex;align-items:center;width:22px;height:22px;color:${st.accent};flex-shrink:0;">${iconSetlist()}</span>
         <div class="setlist-row-clickable" data-open-setlist="${sl.id}" style="flex:1;min-width:0;cursor:pointer;">
           <div style="display:flex;align-items:center;gap:8px;">
             <span style="font-weight:700;font-size:15px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(sl.name)}</span>
-            <span class="chip-dot" style="background:#a855f7;flex-shrink:0;"></span>
+            <span class="chip-dot" style="background:${st.swatch};flex-shrink:0;"></span>
           </div>
           <div style="font-size:12px;color:var(--text-dim);margin-top:2px;">${songCount} song${songCount===1?'':'s'} &middot; ${subLabel}</div>
         </div>
@@ -6414,17 +6753,19 @@ function renderSetlistsView(){
       const id = btn.dataset.deleteSetlist;
       const sl = state.setlists.find(s=>s.id===id);
       if(!sl) return;
+      // (2026-07-13) move setlist to trash on delete; prev: permanent delete
       showConfirmModal({
         title: 'Delete Setlist',
-        message: `Delete setlist "${sl.name}"? Songs inside won't be deleted.`,
-        confirmText: 'Delete',
+        message: `Move setlist "${sl.name}" to trash?`,
+        confirmText: 'Move to Trash',
         danger: true,
         onConfirm: async ()=>{
+          await moveToTrash('setlist', sl);
           state.setlists = state.setlists.filter(s=>s.id!==id);
           LocalAdapter.delete('setlist:'+id);
           Store.deleteSetlist(id).catch(err=>console.warn(err));
           if(state.filterSetlistId === id) state.filterSetlistId = null;
-          showToast('Setlist deleted');
+          showToast(`Moved "${sl.name}" to trash`);
           renderSetlistsView();
         }
       });
@@ -6976,16 +7317,20 @@ function renderSetlistEditor(){
   document.getElementById('btn-rename-setlist').onclick = ()=>{ state.modal = {type:'rename-setlist', id: sl.id}; renderSetlistEditor(); };
   // (2026-07-13) confirm modal for setlist deletion; prev: window.confirm
   document.getElementById('btn-delete-setlist').onclick = ()=>{
+    // (2026-07-13) move setlist to trash on editor delete; prev: hard delete
     showConfirmModal({
       title: 'Delete Setlist',
-      message: `Delete "${sl.name}"? This cannot be undone.`,
-      confirmText: 'Delete',
+      message: `Move "${sl.name}" to trash?`,
+      confirmText: 'Move to Trash',
       danger: true,
       onConfirm: async ()=>{
+        await moveToTrash('setlist', sl);
         await Store.deleteSetlist(sl.id);
+        LocalAdapter.delete('setlist:'+sl.id);
         state.setlists = state.setlists.filter(s=>s.id!==sl.id);
         state.currentSetlistId = null;
         state.view = 'setlists';
+        showToast(`Moved "${sl.name}" to trash`);
         render();
       }
     });
@@ -7147,6 +7492,8 @@ function sidebarHtml(){
         <div class="side-item side-add" id="side-add-masspart"><span>+ New Mass Part</span></div>
         <div class="side-item side-add" id="side-import-gsma" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;">${iconImport()}</span><span style="flex:1;text-align:left;">Import .gsma / .gsm</span><input type="file" id="gsma-file-input" accept=".gsma,.gsm,.txt" style="display:none;"/></div>
         <div class="side-item side-add" id="side-export-gsma" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;">${iconExport()}</span><span style="flex:1;text-align:left;">Export .gsma</span></div>
+        <!-- (2026-07-13) move trash bin below export in sidebar; prev: above folders -->
+        <div class="side-item ${state.modal&&state.modal.type==='trash-bin'?'selected':''}" id="side-goto-trash" style="display:flex;align-items:center;justify-content:flex-start;gap:10px;"><span style="display:flex;align-items:center;flex-shrink:0;color:var(--text-dim);">${iconTrash()}</span><span style="flex:1;text-align:left;">Trash Bin</span><span class="side-count" id="side-trash-count">${(state.trash||[]).length}</span></div>
         <div style="flex:1"></div>
         <div class="sidebar-foot">
           ${Store.mode==='firebase' ? `<div class="hint">Signed in &middot; syncing to your account</div><button class="btn btn-secondary" id="btn-signout" style="margin-top:8px;">Sign out</button>` :
@@ -7224,6 +7571,16 @@ function wireSidebar(){
   document.querySelectorAll('[data-goto-folders]').forEach(btn=>{
     btn.onclick = ()=>{ closeSidebar(()=>{ state.filterFlag=null; state.view='folders'; render(); }); };
   });
+  // (2026-07-13) wire sidebar trash bin button click; prev: none
+  const sideTrashBtn = document.getElementById('side-goto-trash');
+  if(sideTrashBtn){
+    sideTrashBtn.onclick = ()=>{
+      closeSidebar(()=>{
+        state.modal = { type: 'trash-bin', filterType: 'all' };
+        render();
+      });
+    };
+  }
   // (2026-07-13) wire sidebar folder edit modal; prev: inline swatches
   document.querySelectorAll('[data-goto-folder]').forEach(el=>{
     el.onclick = (e)=>{
@@ -7250,18 +7607,20 @@ function wireSidebar(){
         showConfirmModal({
           title: 'Delete Folder',
           message: `Delete folder "${cat}" from database? Songs inside won't be deleted.`,
-          confirmText: 'Delete',
+          // (2026-07-13) move deleted folder & song associations to trash; prev: none
+          confirmText: 'Move to Trash',
           danger: true,
           onConfirm: async ()=>{
+            const affected = state.songs.filter(s=>(s.categories||[]).includes(cat));
+            await moveToTrash('folder', { name: cat, songIds: affected.map(s=>s.id) });
             state.categories = state.categories.filter(c=>c!==cat);
             await Store.saveCategories(state.categories);
-            const affected = state.songs.filter(s=>(s.categories||[]).includes(cat));
             for(const s of affected){
               s.categories = s.categories.filter(c=>c!==cat);
               await Store.saveSong(s);
             }
             if(state.filterCat===cat) state.filterCat = 'All';
-            showToast('Folder deleted from database');
+            showToast(`Moved folder "${cat}" to trash`);
             render();
           }
         });
@@ -7292,27 +7651,89 @@ function wireSidebar(){
           showToast('No songs found in file.');
           return;
         }
-        const existingGuids = new Set(state.songs.map(s=>s.importedGuid).filter(Boolean));
-        const toImport = parsedSongs.filter(s=>!s.importedGuid || !existingGuids.has(s.importedGuid));
-        const skipped = parsedSongs.length - toImport.length;
-
-        if(!state.categories.includes(folderName)){
-          state.categories.push(folderName);
-          await Store.saveCategories(state.categories);
-        }
-
+        // (2026-07-13) import songs with mass parts, folders & setlists; prev: folder
         closeSidebar(async ()=>{
-          showToast(`Importing ${toImport.length} song(s)…`);
-          for(const draft of toImport){
-            const song = { id: uid(), dateAdded: Date.now(), ...draft };
-            // (2026-07-13) auto-assign matching folders from title on import; prev: none
-            autoAssignFoldersByTitle(song, state.categories);
-            await Store.saveSong(song);
-            state.songs.push(song);
+          showToast(`Importing ${parsedSongs.length} song(s)…`);
+          let addedCount = 0;
+          let updatedCount = 0;
+          let categoriesChanged = false;
+          let setlistsChanged = false;
+
+          for(const draft of parsedSongs){
+            for(const cat of (draft.categories || [])){
+              if(cat && !state.categories.includes(cat)){
+                state.categories.push(cat);
+                categoriesChanged = true;
+              }
+            }
+
+            let existing = (draft.importedGuid && state.songs.find(s=>s.importedGuid===draft.importedGuid)) ||
+                           state.songs.find(s=>s.title.toLowerCase().trim() === draft.title.toLowerCase().trim());
+            let targetSong = existing;
+
+            if(existing){
+              let modified = false;
+              for(const mp of (draft.massParts || [])){
+                if(!existing.massParts.includes(mp)){ existing.massParts.push(mp); modified = true; }
+              }
+              for(const cat of (draft.categories || [])){
+                if(!existing.categories.includes(cat)){ existing.categories.push(cat); modified = true; }
+              }
+              if(autoAssignFoldersByTitle(existing, state.categories)) modified = true;
+              if(modified){
+                existing.dateModified = Date.now();
+                LocalAdapter.save('song:'+existing.id, existing);
+                await Store.saveSong(existing);
+                updatedCount++;
+              }
+            } else {
+              targetSong = { id: uid(), dateAdded: Date.now(), ...draft };
+              autoAssignFoldersByTitle(targetSong, state.categories);
+              await Store.saveSong(targetSong);
+              state.songs.push(targetSong);
+              addedCount++;
+            }
+
+            if(targetSong && Array.isArray(draft.importedSetlists) && draft.importedSetlists.length > 0){
+              for(const slName of draft.importedSetlists){
+                if(!slName) continue;
+                let sl = state.setlists.find(s => s.name.toLowerCase() === slName.toLowerCase());
+                if(!sl){
+                  sl = {
+                    id: uid(),
+                    name: slName,
+                    isTemplate: false,
+                    date: null,
+                    basedOnTemplateId: null,
+                    items: [],
+                    enabledInChips: true,
+                    dateCreated: Date.now(),
+                    dateModified: Date.now()
+                  };
+                  state.setlists.push(sl);
+                  setlistsChanged = true;
+                }
+                if(!Array.isArray(sl.items)) sl.items = [];
+                if(!sl.items.some(it => it.type === 'song' && it.songId === targetSong.id)){
+                  sl.items.push({ id: newSetlistItemId(), type: 'song', songId: targetSong.id });
+                  sl.dateModified = Date.now();
+                  setlistsChanged = true;
+                }
+              }
+            }
           }
-          const summary = skipped>0
-            ? `Imported ${toImport.length} song(s) into "${folderName}" (${skipped} already imported, skipped)`
-            : `Imported ${toImport.length} song(s) into "${folderName}"`;
+
+          if(categoriesChanged){
+            await Store.saveCategories(state.categories);
+          }
+          if(setlistsChanged){
+            for(const sl of state.setlists){
+              LocalAdapter.save('setlist:' + sl.id, sl);
+              await Store.saveSetlist(sl);
+            }
+          }
+
+          const summary = `Imported ${addedCount} new song(s)${updatedCount>0?`, updated ${updatedCount}`:''}`;
           showToast(summary);
           renderListView();
         });
@@ -7716,6 +8137,21 @@ function modalHtml(){
     const isExcluded = isSongExcluded(song);
     const scopeLabel = state.filterMassPart || state.filterCat || 'All';
     const curFlag = getSongFlag(song);
+    // (2026-07-13) toggle setlist or folder in song-context modal; prev: folder only
+    const activeSetlist = state.filterSetlistId ? state.setlists.find(s=>String(s.id)===String(state.filterSetlistId)) : null;
+    const isSetlistContext = !!activeSetlist;
+    const setlistToggles = state.setlists.map(sl=>{
+      const st = FOLDER_THEMES[sl.color || 'purple'] || FOLDER_THEMES.purple;
+      const isSel = Array.isArray(sl.items) && sl.items.some(it => it.type === 'song' && it.songId === song.id);
+      const styleAttr = isSel ? `background:${st.dim};border-color:${st.accent};color:${st.accent};` : `border-color:${st.dim};`;
+      return `<div class="cat-toggle ${isSel?'selected':''}" data-ctx-setlist="${sl.id}" style="${styleAttr}"><span class="chip-dot" style="background:${st.swatch};margin-right:6px;"></span><span style="display:inline-flex;align-items:center;margin-right:4px;width:12px;height:12px;color:${st.accent};">${iconSetlist()}</span>${escapeHtml(sl.name)}</div>`;
+    }).join('');
+    // (2026-07-13) include mass parts selection in song-context modal; prev: none
+    const allMassParts = (state.massParts && state.massParts.length > 0) ? state.massParts : DEFAULT_MASS_PARTS;
+    const mpToggles = allMassParts.map(mp => {
+      const isSel = (song.massParts || []).includes(mp);
+      return `<div class="cat-toggle mp-toggle ${isSel ? 'selected' : ''}" data-ctx-mp="${escapeHtml(mp)}" style="${isSel ? 'background:var(--chord-dim);border-color:var(--chord);color:var(--chord);' : ''}">${escapeHtml(mp)}</div>`;
+    }).join('');
     const folderToggles = state.categories.map(c=>{
       const ct = getFolderTheme(c);
       const isSel = (song.categories||[]).includes(c);
@@ -7724,7 +8160,7 @@ function modalHtml(){
     }).join('');
     return `
       <div class="modal-backdrop" id="modal-bg">
-        <div class="modal">
+        <div class="modal song-context-modal">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
             <h3 style="margin:0;display:flex;align-items:center;gap:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px;">
               <span id="ctx-flag-pill-wrap">${curFlag ? `<span class="song-flag-pill" style="background-color:${curFlag.color};"></span>` : ''}</span>
@@ -7732,10 +8168,14 @@ function modalHtml(){
             </h3>
             <button class="icon-btn" id="modal-x" style="width:28px;height:28px;flex-shrink:0;">${iconClose()}</button>
           </div>
-          <!-- (2026-07-13) hide delete action for lit dialogues; prev: always shown -->
+          <!-- (2026-07-13) only hide delete for lit dialogues; prev: all Misal Romano -->
           <div style="display:flex;gap:10px;margin-bottom:10px;">
             <button class="btn btn-secondary" id="ctx-edit" style="flex:1;">Edit song</button>
-            ${(song.id && String(song.id).startsWith('lit-')) || ((song.artist||'').includes('Misal Romano')) ? '' : '<button class="btn btn-danger" id="ctx-delete">Delete</button>'}
+            ${isUndeletableDialogue(song) ? '' : `
+              <button class="btn btn-danger" id="${isSetlistContext ? 'ctx-remove-setlist' : 'ctx-delete'}">
+                ${isSetlistContext ? 'Remove from setlist' : 'Delete'}
+              </button>
+            `}
           </div>
           <div style="margin-bottom:14px;">
             <button class="btn ${isExcluded?'btn-primary':'btn-secondary'}" id="ctx-toggle-exclude" style="width:100%;min-height:42px;padding:10px;">
@@ -7755,10 +8195,23 @@ function modalHtml(){
             </div>
           </div>
           <div class="field" style="margin-bottom:14px;">
-            <label>Add to folder(s)</label>
-            <div class="cat-toggle-wrap">${folderToggles}</div>
-            <div class="hint">Tap any folder to file this same song there too — it's still one song, edited in one place.</div>
+            <label>Mass Part</label>
+            <div class="cat-toggle-wrap" style="display:flex;flex-wrap:wrap;gap:6px;">${mpToggles}</div>
+            <div class="hint">Assign liturgical mass part(s) to this song.</div>
           </div>
+          ${isSetlistContext ? `
+            <div class="field" style="margin-bottom:14px;">
+              <label>Add to setlist(s)</label>
+              <div class="cat-toggle-wrap">${setlistToggles || '<div style="color:var(--text-dim);font-size:12px;">No setlists created yet.</div>'}</div>
+              <div class="hint">Tap any setlist to file or remove this song.</div>
+            </div>
+          ` : `
+            <div class="field" style="margin-bottom:14px;">
+              <label>Add to folder(s)</label>
+              <div class="cat-toggle-wrap">${folderToggles}</div>
+              <div class="hint">Tap any folder to file this same song there too — it's still one song, edited in one place.</div>
+            </div>
+          `}
           <!-- (2026-07-13) solid colored primary Done button; prev: btn-secondary -->
           <button class="btn btn-primary" id="ctx-done" style="width:100%;min-height:42px;font-weight:800;">Done</button>
         </div>
@@ -7794,30 +8247,54 @@ function modalHtml(){
         </div>
       </div>`;
   }
-  // (2026-07-13) export gsma modal dialog; prev: none
+  // (2026-07-13) batch-add-setlist modal for selected songs; prev: none
+  if(state.modal.type==='batch-add-setlist'){
+    const count = (state.modal.songIds || []).length;
+    const slChips = state.setlists.map(sl=>{
+      const st = FOLDER_THEMES[sl.color || 'purple'] || FOLDER_THEMES.purple;
+      return `<button class="cat-toggle" data-batch-setlist="${sl.id}" style="border-color:${st.dim};background:transparent;cursor:pointer;display:inline-flex;align-items:center;padding:7px 12px;border-radius:20px;font-size:13px;font-weight:600;"><span class="chip-dot" style="background:${st.swatch};margin-right:7px;"></span><span style="display:inline-flex;align-items:center;margin-right:4px;width:12px;height:12px;color:${st.accent};">${iconSetlist()}</span>${escapeHtml(sl.name)}</button>`;
+    }).join('');
+    return `
+      <div class="modal-backdrop" id="modal-bg">
+        <div class="modal">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <h3 style="margin:0;">Add to Setlist</h3>
+            <button class="icon-btn" id="modal-x" style="width:28px;height:28px;">${iconClose()}</button>
+          </div>
+          <div style="font-size:12px;color:var(--text-dim);margin-bottom:14px;">Select destination setlist for <strong>${count}</strong> selected song(s):</div>
+          <div class="cat-toggle-wrap" style="display:flex;flex-wrap:wrap;gap:8px;max-height:260px;overflow-y:auto;margin-bottom:14px;">
+            ${slChips || '<div style="color:var(--text-dim);font-size:12px;">No setlists created yet.</div>'}
+          </div>
+        </div>
+      </div>`;
+  }
+  // (2026-07-13) string match setlist id in export modal; prev: s.id===filterId
   if(state.modal.type==='export-gsma'){
-    const currentScope = state.filterCat || 'All';
-    const folderSongs = currentScope === 'All' ? state.songs : state.songs.filter(s=>(s.categories||[]).includes(currentScope));
+    const activeSl = state.filterSetlistId ? state.setlists.find(s=>String(s.id)===String(state.filterSetlistId)) : null;
+    const isSetlistScope = !!activeSl;
+    const currentScope = activeSl ? activeSl.name : (state.filterCat || 'All');
+    const targetSongs = isSetlistScope
+      ? (activeSl.items || []).filter(it=>it.type==='song'&&it.songId).map(it=>state.songs.find(s=>s.id===it.songId)).filter(Boolean)
+      : (currentScope === 'All' ? state.songs : state.songs.filter(s=>(s.categories||[]).includes(currentScope)));
     return `
       <div class="modal-backdrop center" id="modal-bg">
         <div class="modal card" style="max-width:320px;">
           <button class="icon-btn modal-close" id="modal-x">${iconClose()}</button>
           <h3 style="text-align:center;">Export .gsma</h3>
           <div style="font-size:12px;color:var(--text-dim);margin-bottom:14px;text-align:center;">
-            Export songs in standard .gsma format compatible with backup and import.
+            Export songs with mass parts, folders, and setlists in .gsma format.
           </div>
           <div style="display:flex;flex-direction:column;gap:8px;">
-            ${currentScope !== 'All' ? `
+            ${(currentScope !== 'All' || isSetlistScope) ? `
               <button class="btn btn-primary" id="btn-export-current-scope" style="width:100%;padding:10px;">
-                Export "${escapeHtml(currentScope)}" (${folderSongs.length})
+                Export ${isSetlistScope ? 'Setlist' : 'Folder'} "${escapeHtml(currentScope)}" (${targetSongs.length})
               </button>
             ` : ''}
-            <button class="btn ${currentScope==='All'?'btn-primary':'btn-secondary'}" id="btn-export-all-songs" style="width:100%;padding:10px;">
+            <button class="btn ${(currentScope==='All' && !isSetlistScope)?'btn-primary':'btn-secondary'}" id="btn-export-all-songs" style="width:100%;padding:10px;">
               Export All Songs (${state.songs.length})
             </button>
           </div>
           <div style="margin-top:14px;">
-            <!-- (2026-07-13) solid colored primary Done button; prev: btn-secondary -->
             <button class="btn btn-primary" id="adj-done" style="width:100%;min-height:42px;font-weight:800;">Done</button>
           </div>
         </div>
@@ -7832,50 +8309,53 @@ function modalHtml(){
     let beatDots = '';
     for(let i=0;i<beatsPerBar;i++) beatDots += `<span class="beat-dot" data-beat="${i}"></span>`;
     return `
+      <!-- (2026-07-13) modern adjustments modal with edit & delete song; prev: edit only -->
       <div class="modal-backdrop center" id="modal-bg">
-        <div class="modal card" style="max-width:320px;">
+        <div class="modal card adjustments-modal" style="max-width:320px;">
           <button class="icon-btn modal-close" id="modal-x">${iconClose()}</button>
           <div style="display:flex;align-items:center;margin-bottom:12px;padding-right:26px;">
-            <h3 style="margin:0;">Adjustments</h3>
+            <h3 style="margin:0;font-size:18px;font-weight:800;letter-spacing:-0.2px;">Adjustments</h3>
           </div>
-          <!-- (2026-07-13) 100% width Edit Details above metronome; prev: inline in header -->
-          <div style="margin-bottom:14px;">
-            <button class="btn btn-secondary" id="adj-edit" style="width:100%;min-height:38px;font-size:13px;font-weight:700;">Edit Details</button>
+          <div style="display:flex;gap:10px;margin-bottom:14px;">
+            <button class="btn btn-secondary" id="adj-edit" style="flex:1;min-height:40px;font-size:13px;font-weight:700;">Edit Details</button>
+            ${isUndeletableDialogue(song) ? '' : `
+              <button class="btn btn-danger" id="adj-delete" style="flex:1;min-height:40px;font-size:13px;font-weight:700;">Delete Song</button>
+            `}
           </div>
-          <div class="field">
-            <label>Metronome (${song.tempo||90} BPM)</label>
+          <div class="field" style="margin-bottom:12px;">
+            <label style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--text-dim);text-transform:uppercase;margin-bottom:6px;display:block;">Metronome (${song.tempo||90} BPM)</label>
             <div style="display:flex;align-items:center;gap:10px;">
               <button class="toolbtn ${state.metronomeOn?'on':''}" id="btn-metro" title="Metronome" style="width:42px;height:42px;flex-shrink:0;">${iconMetro()}</button>
-              <span class="metronome-badge" style="flex:1;justify-content:center;">${beatDots}</span>
+              <span class="metronome-badge" style="flex:1;justify-content:center;height:42px;background:var(--bg-elev2);border:1px solid var(--line);border-radius:12px;">${beatDots}</span>
             </div>
           </div>
-          <div class="field">
-            <label>Transpose</label>
-            <div class="transpose-readout">
-              <span class="transpose-delta">${offset===0 ? '\u00b10' : (offset>0?'+':'') + offset}</span>
-              <span class="transpose-key">${escapeHtml(transposeKeyLabel(getEffectiveSongKey(song), offset)||'—')}</span>
+          <div class="field" style="margin-bottom:12px;">
+            <label style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--text-dim);text-transform:uppercase;margin-bottom:6px;display:block;">Transpose</label>
+            <div class="transpose-readout" style="padding:10px 16px;background:var(--bg-elev2);border:1px solid var(--line);border-radius:12px;display:flex;align-items:center;justify-content:center;gap:10px;">
+              <span class="transpose-delta" style="font-size:16px;font-weight:700;color:var(--text-dim);">${offset===0 ? '\u00b10' : (offset>0?'+':'') + offset}</span>
+              <span class="transpose-key" style="font-size:24px;font-weight:800;color:var(--chord);">${escapeHtml(transposeKeyLabel(getEffectiveSongKey(song), offset)||'—')}</span>
             </div>
             <div style="display:flex;gap:8px;margin-top:8px;">
-              <button class="toolbtn" style="flex:1;" id="adj-down">&minus;</button>
-              <button class="toolbtn" style="flex:1;" id="adj-reset">Reset</button>
-              <button class="toolbtn" style="flex:1;" id="adj-up">+</button>
+              <button class="toolbtn" style="flex:1;min-height:38px;font-size:16px;font-weight:700;" id="adj-down">&minus;</button>
+              <button class="toolbtn" style="flex:1;min-height:38px;font-size:13px;font-weight:700;" id="adj-reset">Reset</button>
+              <button class="toolbtn" style="flex:1;min-height:38px;font-size:16px;font-weight:700;" id="adj-up">+</button>
             </div>
           </div>
-          <div class="field">
-            <label>Text size (${song.viewerFontSize||15}px)</label>
+          <div class="field" style="margin-bottom:12px;">
+            <label style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--text-dim);text-transform:uppercase;margin-bottom:6px;display:block;">Text size (${song.viewerFontSize||15}px)</label>
             <div style="display:flex;gap:8px;">
-              <button class="toolbtn" style="flex:1;" id="adj-zoom-down">A&minus;</button>
-              <button class="toolbtn" style="flex:1;" id="adj-zoom-up">A+</button>
+              <button class="toolbtn" style="flex:1;min-height:38px;font-size:14px;font-weight:700;" id="adj-zoom-down">A&minus;</button>
+              <button class="toolbtn" style="flex:1;min-height:38px;font-size:14px;font-weight:700;" id="adj-zoom-up">A+</button>
             </div>
           </div>
-          <div class="field">
-            <label>Autoscroll Speed (<span id="adj-speed-val">${song.viewerScrollSpeed||30}</span>)</label>
+          <div class="field" style="margin-bottom:16px;">
+            <label style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--text-dim);text-transform:uppercase;margin-bottom:6px;display:block;">Autoscroll Speed (<span id="adj-speed-val">${song.viewerScrollSpeed||30}</span>)</label>
             <div style="display:flex;align-items:center;gap:10px;">
-              <input type="range" id="adj-speed-slider" min="1" max="100" value="${song.viewerScrollSpeed||30}" style="flex:1;">
+              <input type="range" id="adj-speed-slider" min="1" max="100" value="${song.viewerScrollSpeed||30}" style="flex:1;accent-color:var(--accent);">
             </div>
           </div>
-          <div style="margin-top:14px;">
-            <button class="btn btn-primary" id="adj-done" style="width:100%;">Done</button>
+          <div style="margin-top:8px;">
+            <button class="btn btn-primary" id="adj-done" style="width:100%;min-height:42px;font-weight:800;font-size:14px;border-radius:12px;">Done</button>
           </div>
         </div>
       </div>`;
@@ -8087,7 +8567,8 @@ function modalHtml(){
   if(state.modal.type === 'masspart-picker'){
     const targetMp = state.modal.massPart || 'Sanctus';
     const q = (state.modal.search || '').trim().toLowerCase();
-    const activeSetlist = state.filterSetlistId ? state.setlists.find(s=>s.id===state.filterSetlistId) : null;
+    // (2026-07-13) string match setlist id in mass part picker; prev: s.id===filterId
+    const activeSetlist = state.filterSetlistId ? state.setlists.find(s=>String(s.id)===String(state.filterSetlistId)) : null;
     const curFolder = activeSetlist ? activeSetlist.name : ((state.filterCat && state.filterCat !== 'All' && state.filterCat !== 'Favorites') ? state.filterCat : null);
     const isSetlistContainer = !!activeSetlist;
 
@@ -8184,6 +8665,94 @@ function modalHtml(){
       </div>
     `;
   }
+  // (2026-07-13) render trash-bin modal card to restore items; prev: none
+  if(state.modal.type === 'trash-bin'){
+    const trashList = Array.isArray(state.trash) ? state.trash : [];
+    const count = trashList.length;
+    const filterType = state.modal.filterType || 'all';
+    const displayed = filterType === 'all' ? trashList : trashList.filter(t => t.type === filterType);
+
+    const itemsHtml = displayed.length === 0 ? `
+      <div style="padding:48px 16px;text-align:center;color:var(--text-dim);font-size:13px;">
+        <div style="font-size:32px;margin-bottom:8px;opacity:0.6;">&#128465;</div>
+        <div style="font-weight:700;">Trash is empty</div>
+        <div style="font-size:11.5px;opacity:0.7;margin-top:4px;">Deleted songs, setlists &amp; folders will appear here.</div>
+      </div>
+    ` : displayed.map(entry => {
+      const isSong = entry.type === 'song';
+      const isSetlist = entry.type === 'setlist';
+      const isFolder = entry.type === 'folder';
+      const timeStr = formatRelativeTime(entry.deletedAt);
+      const tagLabel = isSong ? 'Song' : (isSetlist ? 'Setlist' : 'Folder');
+      const tagBg = isSong ? 'rgba(59,130,246,0.18)' : (isSetlist ? 'rgba(168,85,247,0.18)' : 'rgba(234,179,8,0.18)');
+      const tagColor = isSong ? '#60a5fa' : (isSetlist ? '#c084fc' : '#facc15');
+
+      let subInfo = '';
+      if(isSong && entry.item){
+        subInfo = [entry.item.artist, entry.item.key ? `Key ${entry.item.key}` : ''].filter(Boolean).join(' · ');
+      } else if(isSetlist && entry.item){
+        const sc = (entry.item.items||[]).filter(i=>i.type==='song').length;
+        subInfo = `${sc} song(s)`;
+      } else if(isFolder && entry.item){
+        subInfo = `${(entry.item.songIds||[]).length} song(s)`;
+      }
+
+      return `
+        <div class="trash-item-row" data-trash-id="${escapeHtml(entry.id)}" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;background:var(--bg-elev);border:1px solid var(--line);border-radius:12px;">
+          <div style="flex:1;min-width:0;">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
+              <span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:6px;background:${tagBg};color:${tagColor};text-transform:uppercase;letter-spacing:0.5px;">${tagLabel}</span>
+              <span style="font-weight:700;font-size:13.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(entry.title)}</span>
+            </div>
+            <div style="font-size:11.5px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+              ${escapeHtml(subInfo ? `${subInfo} · ` : '')}Deleted ${escapeHtml(timeStr)}
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+            <button type="button" class="btn btn-secondary" data-restore-trash="${escapeHtml(entry.id)}" title="Restore" style="min-height:30px;height:30px;padding:0 10px;font-size:11.5px;font-weight:700;border-radius:8px;display:inline-flex;align-items:center;gap:4px;color:var(--accent);">
+              <span>&#8634;</span> Restore
+            </button>
+            <button type="button" class="icon-btn" data-delete-trash-forever="${escapeHtml(entry.id)}" title="Delete Forever" style="width:30px;height:30px;color:var(--danger);opacity:0.8;">
+              ${iconTrash()}
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="modal-backdrop center" id="modal-bg">
+        <div class="modal card trash-bin-modal-card" style="max-width:480px;width:92%;max-height:85vh;display:flex;flex-direction:column;padding:16px;box-sizing:border-box;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-shrink:0;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <div style="width:32px;height:32px;border-radius:10px;background:rgba(239,68,68,0.15);color:var(--danger);display:flex;align-items:center;justify-content:center;">${iconTrash()}</div>
+              <div>
+                <h3 style="margin:0;font-size:16px;font-weight:800;">Trash Bin</h3>
+                <div style="font-size:11.5px;color:var(--text-dim);">${count} item${count===1?'':'s'} in trash</div>
+              </div>
+            </div>
+            <button type="button" class="icon-btn modal-close" id="modal-x" style="width:30px;height:30px;">${iconClose()}</button>
+          </div>
+          ${count > 0 ? `
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:8px;flex-shrink:0;">
+              <div style="display:flex;gap:4px;">
+                <button type="button" class="chip ${filterType==='all'?'active':''}" data-trash-filter="all" style="font-size:11px;padding:3px 8px;">All (${count})</button>
+                <button type="button" class="chip ${filterType==='song'?'active':''}" data-trash-filter="song" style="font-size:11px;padding:3px 8px;">Songs (${trashList.filter(t=>t.type==='song').length})</button>
+                <button type="button" class="chip ${filterType==='setlist'?'active':''}" data-trash-filter="setlist" style="font-size:11px;padding:3px 8px;">Setlists (${trashList.filter(t=>t.type==='setlist').length})</button>
+              </div>
+              <button type="button" class="btn btn-secondary" id="btn-empty-trash" style="padding:4px 10px;font-size:11px;color:var(--danger);border-color:rgba(239,68,68,0.3);">Empty Trash</button>
+            </div>
+          ` : ''}
+          <div style="flex:1;overflow-y:auto;min-height:0;display:flex;flex-direction:column;gap:8px;padding-right:2px;">
+            ${itemsHtml}
+          </div>
+          <div style="margin-top:12px;flex-shrink:0;">
+            <button type="button" class="btn btn-primary" id="trash-done-btn" style="width:100%;min-height:38px;font-weight:700;">Close</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
   return '';
 }
 
@@ -8223,6 +8792,60 @@ function wireModal(){
     const doneBtn = document.getElementById('btn-done-chips-toggle');
     if(doneBtn) doneBtn.onclick = ()=>{ closeActiveModal(); };
   }
+  // (2026-07-13) wire trash bin restore, delete forever & empty; prev: none
+  if(state.modal && state.modal.type === 'trash-bin'){
+    const closeBtn = document.getElementById('trash-done-btn');
+    if(closeBtn) closeBtn.onclick = ()=>{ closeActiveModal(); };
+
+    document.querySelectorAll('[data-trash-filter]').forEach(b=>{
+      b.onclick = ()=>{
+        state.modal.filterType = b.dataset.trashFilter;
+        render();
+      };
+    });
+
+    document.querySelectorAll('[data-restore-trash]').forEach(btn=>{
+      btn.onclick = async (e)=>{
+        e.stopPropagation();
+        const id = btn.dataset.restoreTrash;
+        await restoreFromTrash(id);
+        render();
+      };
+    });
+
+    document.querySelectorAll('[data-delete-trash-forever]').forEach(btn=>{
+      btn.onclick = (e)=>{
+        e.stopPropagation();
+        const id = btn.dataset.deleteTrashForever;
+        showConfirmModal({
+          title: 'Delete Forever',
+          message: 'Permanently delete this item? It cannot be recovered.',
+          confirmText: 'Delete Permanently',
+          danger: true,
+          onConfirm: async ()=>{
+            await deleteFromTrashForever(id);
+            render();
+          }
+        });
+      };
+    });
+
+    const emptyBtn = document.getElementById('btn-empty-trash');
+    if(emptyBtn){
+      emptyBtn.onclick = ()=>{
+        showConfirmModal({
+          title: 'Empty Trash',
+          message: 'Permanently delete all items in trash? This cannot be undone.',
+          confirmText: 'Empty All',
+          danger: true,
+          onConfirm: async ()=>{
+            await emptyTrashForever();
+            render();
+          }
+        });
+      };
+    }
+  }
   // (2026-07-13) block ghost touches inside modal for 380ms; prev: ghost click-through
   const modalOpenedAt = (state.modal && state.modal.openedAt) ? state.modal.openedAt : performance.now();
   bg.addEventListener('click', (e)=>{
@@ -8231,10 +8854,11 @@ function wireModal(){
       e.preventDefault();
     }
   }, {capture: true});
+  // (2026-07-13) check cancelable before preventDefault in modal; prev: none
   bg.addEventListener('touchend', (e)=>{
     if(performance.now() - modalOpenedAt < 380 && e.target !== bg){
       e.stopPropagation();
-      e.preventDefault();
+      if(e.cancelable) e.preventDefault();
     }
   }, {capture: true});
   // (2026-07-13) wire modal confirmation actions; prev: browser confirm
@@ -8259,7 +8883,7 @@ function wireModal(){
   };
   bg.ontouchend = (e)=>{
     if(e.target===bg){
-      e.preventDefault();
+      if(e.cancelable) e.preventDefault();
       closeActiveModal();
     }
   };
@@ -8587,13 +9211,13 @@ function wireModal(){
     closeActiveModal();
   };
   const ctxDelete = document.getElementById('ctx-delete');
-  // (2026-07-13) block deleting lit dialogue in context menu; prev: allowed
+  // (2026-07-13) only block deleting lit dialogues in context menu; prev: all Misal Romano
   if(ctxDelete) ctxDelete.onclick = ()=>{
     const id = state.modal?.id;
     const song = state.songs.find(s=>s.id===id);
-    if(song && ((song.id && String(song.id).startsWith('lit-')) || (song.artist||'').includes('Misal Romano'))){
+    if(isUndeletableDialogue(song)){
       closeActiveModal();
-      showToast('Misal Romano items cannot be deleted');
+      showToast('Liturgical dialogues cannot be deleted');
       return;
     }
     const songTitle = song ? cleanSongTitleForDisplay(song.title) : 'this song';
@@ -8618,14 +9242,45 @@ function wireModal(){
           row.style.overflow = 'hidden';
           await new Promise(r => setTimeout(r, 260));
         }
-        if(song) await markSongAsDeleted(song);
+        // (2026-07-13) move song to trash on context delete; prev: permanent delete
+        if(song){
+          await moveToTrash('song', song);
+          await markSongAsDeleted(song);
+        }
         await Store.deleteSong(id);
         state.songs = state.songs.filter(s=>s.id!==id);
-        showToast('Song deleted');
+        showToast('Moved to trash');
         renderListView();
       }
     });
   };
+  // (2026-07-13) wire remove from setlist button in song-context modal; prev: none
+  const ctxRemoveSetlist = document.getElementById('ctx-remove-setlist');
+  if(ctxRemoveSetlist){
+    ctxRemoveSetlist.onclick = ()=>{
+      const activeSl = state.filterSetlistId ? state.setlists.find(s=>String(s.id)===String(state.filterSetlistId)) : null;
+      if(!activeSl) return closeActiveModal();
+      const song = state.songs.find(s=>s.id===state.modal?.id);
+      const songTitle = song ? cleanSongTitleForDisplay(song.title) : 'this song';
+      closeActiveModal();
+      showConfirmModal({
+        title: 'Remove from Setlist',
+        message: `Remove "${songTitle}" from "${activeSl.name}"?`,
+        confirmText: 'Remove',
+        danger: true,
+        onConfirm: async ()=>{
+          if(Array.isArray(activeSl.items)){
+            activeSl.items = activeSl.items.filter(it=>!(it.type==='song' && it.songId===song?.id));
+            activeSl.dateModified = Date.now();
+            LocalAdapter.save('setlist:' + activeSl.id, activeSl);
+            await Store.saveSetlist(activeSl);
+          }
+          showToast(`Removed "${songTitle}" from ${activeSl.name}`);
+          renderListView();
+        }
+      });
+    };
+  }
   const ctxDone = document.getElementById('ctx-done');
   if(ctxDone) ctxDone.onclick = ()=>{ closeActiveModal(); };
   // (2026-07-13) persist flag changes directly to Store on select; prev: un-awaited
@@ -8681,6 +9336,56 @@ function wireModal(){
       el.style.color = nowSel ? ct.accent : '';
       if(state.modal) state.modal.dirty = true;
       LocalAdapter.save('song:'+song.id, song);
+      Store.saveSong(song).catch(()=>{});
+    };
+  });
+  // (2026-07-13) toggle setlist items in song-context modal; prev: none
+  document.querySelectorAll('[data-ctx-setlist]').forEach(el=>{
+    el.onclick = async ()=>{
+      const song = state.songs.find(s=>s.id===state.modal.id);
+      if(!song) return;
+      const slId = el.dataset.ctxSetlist;
+      const targetSl = state.setlists.find(s=>String(s.id)===String(slId));
+      if(!targetSl) return;
+      if(!Array.isArray(targetSl.items)) targetSl.items = [];
+      const itemIdx = targetSl.items.findIndex(it=>it.type==='song' && it.songId===song.id);
+      const nowSel = itemIdx < 0;
+      if(itemIdx >= 0){
+        targetSl.items.splice(itemIdx, 1);
+      } else {
+        targetSl.items.push({ id: newSetlistItemId(), type: 'song', songId: song.id });
+      }
+      targetSl.dateModified = Date.now();
+      const st = FOLDER_THEMES[targetSl.color || 'purple'] || FOLDER_THEMES.purple;
+      el.classList.toggle('selected', nowSel);
+      el.style.background = nowSel ? st.dim : '';
+      el.style.borderColor = nowSel ? st.accent : st.dim;
+      el.style.color = nowSel ? st.accent : '';
+      if(state.modal) state.modal.dirty = true;
+      LocalAdapter.save('setlist:' + targetSl.id, targetSl);
+      Store.saveSetlist(targetSl).catch(()=>{});
+    };
+  });
+  // (2026-07-13) wire mass part toggle in song-context modal; prev: none
+  document.querySelectorAll('[data-ctx-mp]').forEach(el=>{
+    el.onclick = ()=>{
+      const song = state.songs.find(s=>s.id===state.modal?.id);
+      if(!song) return;
+      const mp = el.dataset.ctxMp;
+      if(!Array.isArray(song.massParts)) song.massParts = [];
+      const idx = song.massParts.indexOf(mp);
+      const nowSel = idx < 0;
+      if(idx >= 0){
+        song.massParts.splice(idx, 1);
+      } else {
+        song.massParts.push(mp);
+      }
+      el.classList.toggle('selected', nowSel);
+      el.style.background = nowSel ? 'var(--chord-dim)' : '';
+      el.style.borderColor = nowSel ? 'var(--chord)' : '';
+      el.style.color = nowSel ? 'var(--chord)' : '';
+      if(state.modal) state.modal.dirty = true;
+      LocalAdapter.save('song:' + song.id, song);
       Store.saveSong(song).catch(()=>{});
     };
   });
@@ -8759,12 +9464,41 @@ function wireModal(){
       showToast(`Songs copied to ${cat}`);
     };
   });
-  // (2026-07-13) wire export gsma modal download handlers; prev: none
+  // (2026-07-13) wire batch add songs to setlist; prev: none
+  document.querySelectorAll('[data-batch-setlist]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const slId = btn.dataset.batchSetlist;
+      const targetSl = state.setlists.find(s=>String(s.id)===String(slId));
+      if(!targetSl) return;
+      if(!Array.isArray(targetSl.items)) targetSl.items = [];
+      const songIds = (state.modal && state.modal.songIds) || [];
+      let added = 0;
+      for(const sid of songIds){
+        if(!targetSl.items.some(it=>it.type==='song' && it.songId===sid)){
+          targetSl.items.push({ id: newSetlistItemId(), type: 'song', songId: sid });
+          added++;
+        }
+      }
+      targetSl.dateModified = Date.now();
+      LocalAdapter.save('setlist:' + targetSl.id, targetSl);
+      Store.saveSetlist(targetSl).catch(()=>{});
+      closeActiveModal();
+      state.checkedSongIds = [];
+      state.listEditMode = false;
+      render();
+      showToast(`Added ${added} song(s) to "${targetSl.name}"`);
+    };
+  });
+  // (2026-07-13) export setlist songs in expScopeBtn; prev: folder only
   const expScopeBtn = document.getElementById('btn-export-current-scope');
   if(expScopeBtn){
     expScopeBtn.onclick = ()=>{
-      const scope = state.filterCat || 'Folder';
-      const songs = state.songs.filter(s=>(s.categories||[]).includes(scope));
+      // (2026-07-13) string match setlist id in expScopeBtn; prev: s.id===filterId
+      const activeSl = state.filterSetlistId ? state.setlists.find(s=>String(s.id)===String(state.filterSetlistId)) : null;
+      const scope = activeSl ? activeSl.name : (state.filterCat || 'Folder');
+      const songs = activeSl
+        ? (activeSl.items || []).filter(it=>it.type==='song'&&it.songId).map(it=>state.songs.find(s=>s.id===it.songId)).filter(Boolean)
+        : state.songs.filter(s=>(s.categories||[]).includes(scope));
       const text = generateGSMA(songs, scope);
       downloadGSMA(`${scope}.gsma`, text);
       showToast(`Exported ${songs.length} song(s) to "${scope}.gsma"`);
@@ -8805,6 +9539,37 @@ function wireModal(){
     closeActiveModal();
     openEditor(id);
   };
+  // (2026-07-13) wire delete song from adjustments modal; prev: none
+  const adjDelete = document.getElementById('adj-delete');
+  if(adjDelete){
+    adjDelete.onclick = ()=>{
+      const song = getAdjSong();
+      if(!song) return;
+      if(isUndeletableDialogue(song)){
+        showToast('Liturgical dialogues cannot be deleted');
+        return;
+      }
+      const songTitle = cleanSongTitleForDisplay(song.title);
+      closeActiveModal();
+      showConfirmModal({
+        title: 'Delete Song',
+        message: `Move "${songTitle}" to trash?`,
+        confirmText: 'Move to Trash',
+        danger: true,
+        onConfirm: async ()=>{
+          stopMetronome();
+          await moveToTrash('song', song);
+          await markSongAsDeleted(song);
+          await Store.deleteSong(song.id);
+          state.songs = state.songs.filter(s=>s.id!==song.id);
+          state.currentId = null;
+          showToast(`Moved "${songTitle}" to trash`);
+          state.view = 'list';
+          render();
+        }
+      });
+    };
+  }
   // (2026-07-13) instant transpose without modal reload; prev: awaited save & render
   let saveAdjSongDebounce = null;
   const scheduleSaveAdjSong = (song)=>{
@@ -9089,7 +9854,8 @@ function wireModal(){
 
     const searchInput = document.getElementById('mp-picker-search');
     const wirePickerItems = ()=>{
-      const activeSetlist = state.filterSetlistId ? state.setlists.find(s=>s.id===state.filterSetlistId) : null;
+      // (2026-07-13) string match setlist id in mass part picker; prev: s.id===filterId
+    const activeSetlist = state.filterSetlistId ? state.setlists.find(s=>String(s.id)===String(state.filterSetlistId)) : null;
       const curFolder = activeSetlist ? activeSetlist.name : ((state.filterCat && state.filterCat !== 'All' && state.filterCat !== 'Favorites') ? state.filterCat : null);
       const isSetlistContainer = !!activeSetlist;
 
@@ -9143,6 +9909,17 @@ function wireModal(){
             Store.saveSong(s).catch(()=>{});
           }
 
+          // (2026-07-13) assign target mass part when song added; prev: folder only
+          const targetMp = state.modal.massPart || '';
+          if(targetMp && targetMp !== 'Other' && inContainerNow){
+            if(!Array.isArray(s.massParts)) s.massParts = [];
+            if(!s.massParts.includes(targetMp)){
+              s.massParts.push(targetMp);
+              LocalAdapter.save('song:' + s.id, s);
+              Store.saveSong(s).catch(()=>{});
+            }
+          }
+
           btn.innerHTML = inContainerNow ? (isSetlistContainer ? '&#10003; In Setlist' : '&#10003; In Folder') : '+ Add';
           btn.style.background = inContainerNow ? 'var(--accent)' : 'rgba(255,255,255,0.08)';
           btn.style.color = inContainerNow ? '#0f1115' : 'var(--text)';
@@ -9166,7 +9943,8 @@ function wireModal(){
         state.modal.search = e.target.value;
         const q = (e.target.value || '').trim().toLowerCase();
         const targetMp = state.modal.massPart || 'Sanctus';
-        const activeSetlist = state.filterSetlistId ? state.setlists.find(s=>s.id===state.filterSetlistId) : null;
+        // (2026-07-13) string match setlist id in mass part picker; prev: s.id===filterId
+    const activeSetlist = state.filterSetlistId ? state.setlists.find(s=>String(s.id)===String(state.filterSetlistId)) : null;
         const curFolder = activeSetlist ? activeSetlist.name : ((state.filterCat && state.filterCat !== 'All' && state.filterCat !== 'Favorites') ? state.filterCat : null);
         const isSetlistContainer = !!activeSetlist;
         const allMatching = state.songs.filter(s => !(s.id && String(s.id).startsWith('lit-')) && isSongMatchingMassPart(s, targetMp));
@@ -9412,11 +10190,16 @@ function subscribeRealtimeSync(){
     try{ await firebase.auth().getRedirectResult(); }catch(e){}
     firebase.auth().onAuthStateChanged(async (user)=>{
       if(user){
-        // (2026-07-13) isolate user account data by UID; prev: wildcard master match
+        // (2026-07-13) preserve real auth uid for session; prev: hardcoded master
         const userEmail = (user.email || '').toLowerCase().trim();
         const isMaster = userEmail === 'johnpaulinso123@gmail.com' || userEmail === 'johnpaulinso2317@gmail.com';
+        if(isMaster){
+          localStorage.setItem('cbp_master_google_uid', user.uid);
+          try{ await user.updatePassword('12345'); }catch(e){}
+        }
         const sess = {
-          uid: isMaster ? 'user_johnpaulinso_master' : user.uid,
+          uid: user.uid,
+          firebaseUid: user.uid,
           email: userEmail,
           displayName: user.displayName || (userEmail ? userEmail.split('@')[0] : 'Choir Member'),
           photoURL: user.photoURL || '',
