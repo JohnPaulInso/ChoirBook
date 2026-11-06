@@ -43,8 +43,10 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
-    // (2026-07-13) add play-services-auth for native Google One Tap; prev: none
-    implementation "com.google.android.gms:play-services-auth:21.2.0"
+    // (2026-07-13) add firebase auth dependencies; prev: play-services-auth only
+    implementation platform('com.google.firebase:firebase-bom:33.1.2')
+    implementation 'com.google.android.gms:play-services-auth:21.2.0'
+    implementation 'com.google.firebase:firebase-auth'
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

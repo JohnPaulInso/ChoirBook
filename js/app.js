@@ -2453,74 +2453,75 @@ function renderAuthView(){
 
       const isNative = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 
-      if(NativeGoogleOneTap && typeof NativeGoogleOneTap.signIn === 'function'){
-        // (2026-07-13) Google signin fallback to verified profile; prev: stuck on error
-        try{
-          googleBtn.innerHTML = '<span>Connecting to Google...</span>';
-          const res = await NativeGoogleOneTap.signIn();
-          if(res && (res.idToken || res.email)){
-            const email = (res.email || '').toLowerCase().trim();
-            const displayName = res.displayName || (email ? email.split('@')[0] : 'Choir Member');
-            const fallbackUid = (FIREBASE_READY && firebase.auth && firebase.auth().currentUser) ? firebase.auth().currentUser.uid : (localStorage.getItem('cbp_master_google_uid') || (email ? 'user_' + email.replace(/[^a-zA-Z0-9_-]/g, '_') : 'default_user'));
-            // (2026-07-13) dismiss login immediately on One Tap approval; prev: awaited credential
-            transitionToApp({
-              uid: fallbackUid,
-              firebaseUid: fallbackUid,
-              email: email,
-              displayName: displayName
-            });
-            // (2026-07-13) Firebase background sync via idToken or email; prev: idToken only
-            if(FIREBASE_READY && firebase.auth){
-              (async ()=>{
-                try{
-                  let userCred = null;
-                  if(res.idToken){
-                    const cred = firebase.auth.GoogleAuthProvider.credential(res.idToken);
-                    userCred = await firebase.auth().signInWithCredential(cred);
-                  } else if(email){
-                    try{
-                      userCred = await firebase.auth().signInWithEmailAndPassword(email, '12345');
-                    }catch(e){
-                      try{
-                        userCred = await firebase.auth().createUserWithEmailAndPassword(email, '12345');
-                      }catch(e2){}
-                    }
-                  }
-                  if(userCred && userCred.user){
-                    const realUid = userCred.user.uid;
-                    localStorage.setItem('cbp_master_google_uid', realUid);
-                    try{ await userCred.user.updatePassword('12345'); }catch(e){}
-                    if(state.user){
-                      state.user.uid = realUid;
-                      state.user.firebaseUid = realUid;
-                      localStorage.setItem('cbp_user_session', JSON.stringify(state.user));
-                    }
-                  }
-                }catch(fbErr){
-                  console.warn('Background Firebase sign-in:', fbErr);
-                }
-              })();
+      // (2026-07-13) NativeAuth Google signin matching HydroGreen; prev: GSO only
+      if(isNative){
+        googleBtn.innerHTML = '<span>Connecting to Google...</span>';
+        let authUser = null;
+        const NativeAuth = (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.FirebaseAuthentication) || (window.Capacitor && typeof window.Capacitor.registerPlugin === 'function' ? window.Capacitor.registerPlugin('FirebaseAuthentication') : null);
+        if(NativeAuth && typeof NativeAuth.signInWithGoogle === 'function'){
+          try{
+            let res = null;
+            try{
+              res = await NativeAuth.signInWithGoogle({ useCredentialManager: true });
+            }catch(e1){
+              try{
+                res = await NativeAuth.signInWithGoogle({ useCredentialManager: false });
+              }catch(e2){
+                res = await NativeAuth.signInWithGoogle();
+              }
             }
-            return;
+            if(res && res.credential && res.credential.idToken && FIREBASE_READY && firebase.auth){
+              try{
+                const cred = firebase.auth.GoogleAuthProvider.credential(res.credential.idToken, res.credential.accessToken);
+                const fbRes = await firebase.auth().signInWithCredential(cred);
+                if(fbRes && fbRes.user) authUser = fbRes.user;
+              }catch(e){}
+            }
+            if(!authUser && res && res.user){
+              authUser = res.user;
+            }
+          }catch(err){
+            const msg = (err && (err.message || err.toString())) || '';
+            if(msg.toLowerCase().includes('cancel') || msg.toLowerCase().includes('dismiss')){
+              googleBtn.disabled = false;
+              googleBtn.style.opacity = '1';
+              googleBtn.innerHTML = origText;
+              return;
+            }
           }
-        }catch(err){
-          const msg = (err && (err.message || err.toString())) || '';
-          if(msg.toLowerCase().includes('cancel') || msg.toLowerCase().includes('dismiss')){
-            googleBtn.disabled = false;
-            googleBtn.style.opacity = '1';
-            googleBtn.innerHTML = origText;
-            return;
+        }
+        if(!authUser && NativeGoogleOneTap && typeof NativeGoogleOneTap.signIn === 'function'){
+          try{
+            const res = await NativeGoogleOneTap.signIn();
+            if(res && (res.idToken || res.email)){
+              authUser = {
+                uid: res.id || (res.email ? 'user_' + res.email.replace(/[^a-zA-Z0-9_-]/g, '_') : 'default_user'),
+                email: res.email,
+                displayName: res.displayName || (res.email ? res.email.split('@')[0] : 'Choir Member')
+              };
+              if(res.idToken && FIREBASE_READY && firebase.auth){
+                try{
+                  const cred = firebase.auth.GoogleAuthProvider.credential(res.idToken);
+                  const fbRes = await firebase.auth().signInWithCredential(cred);
+                  if(fbRes && fbRes.user) authUser = fbRes.user;
+                }catch(e){}
+              }
+            }
+          }catch(err){
+            const msg = (err && (err.message || err.toString())) || '';
+            if(msg.toLowerCase().includes('cancel') || msg.toLowerCase().includes('dismiss')){
+              googleBtn.disabled = false;
+              googleBtn.style.opacity = '1';
+              googleBtn.innerHTML = origText;
+              return;
+            }
           }
-          showAuthError(msg || 'Google sign-in failed. Please try again or use Email / Password.');
-          googleBtn.disabled = false;
-          googleBtn.style.opacity = '1';
-          googleBtn.innerHTML = origText;
+        }
+        if(authUser){
+          transitionToApp(authUser);
           return;
         }
-      }
-
-      if(isNative){
-        showAuthError('Google sign-in is not ready. Please use Email or Guest mode.');
+        showAuthError('Google sign-in could not complete. Please try again.');
         googleBtn.disabled = false;
         googleBtn.style.opacity = '1';
         googleBtn.innerHTML = origText;
