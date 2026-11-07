@@ -4863,21 +4863,26 @@ function wireSongRowInteractions(el, id, sectionMassPart){
   el.addEventListener('contextmenu', e=>e.preventDefault());
 }
 
-// (2026-07-13) arm 7s autoscroll on song open; prev: stopped before render
+// (2026-07-13) preserve song scroll positions on swipe; prev: reset to top
 function openViewer(id, fromSetlistId, preferredMassPart){
-  // (2026-07-13) reset lastViewerSongId so song scrolls to top; prev: kept scroll
+  const existingChartWrap = document.getElementById('chart-wrap');
+  if(existingChartWrap && state.currentId){
+    if(!state.songScrollPositions) state.songScrollPositions = {};
+    state.songScrollPositions[state.currentId] = existingChartWrap.scrollTop;
+  }
+  if(state.view !== 'viewer'){
+    state.songScrollPositions = {};
+  }
   state.lastViewerSongId = null;
-  // (2026-07-13) record current list scroll before switching to viewer; prev: unrecorded
   const lw = document.getElementById('list-wrap');
   if(lw && !fromSetlistId) state.lastListScroll = lw.scrollTop;
   state.currentId = id;
   state.cameFromSetlistId = fromSetlistId || null;
   if(preferredMassPart) state.selectedViewerMassPart = preferredMassPart;
   state.view = 'viewer';
-  // (2026-07-13) ensure cue card and piano are expanded on open; prev: state.hideCueCard
   state.hideCueCard = false;
   stopMetronome();
-  autoscrollFloatPos = 0;
+  autoscrollFloatPos = (state.songScrollPositions && state.songScrollPositions[id]) ? state.songScrollPositions[id] : 0;
   lastUserScrollAt = 0;
   const song = state.songs.find(s=>s.id===id);
   startAutoscroll(song, false);
@@ -5521,8 +5526,8 @@ function renderSongSheetContent(s, isPeek){
       renderedLines.push(`<hr class="chart-hr"/>`);
       while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){ i++; }
     } else if(cls === 'section'){
-      // (2026-07-13) preface cue piano placed at preface dialogue; prev: at pag-ampo halad
-      if(s.id === 'lit-preface' && !isPeek && !prefaceCueRendered && /pasiuna\s+nga\s+pag-?ampo|preface\s+dialogue/i.test(line)){
+      // (2026-07-13) preface cue piano above pag-ampo ibabaw; prev: preface dialogue
+      if(s.id === 'lit-preface' && !isPeek && !prefaceCueRendered && (/pag-?ampo\s+ibabaw/i.test(line) || /pasiuna\s+nga\s+pag-?ampo|preface\s+dialogue/i.test(line))){
         prefaceCueRendered = true;
         while(renderedLines.length > 0 && (renderedLines[renderedLines.length - 1] === '<hr class="chart-hr"/>' || renderedLines[renderedLines.length - 1] === '<div>&nbsp;</div>')){
           renderedLines.pop();
@@ -5535,7 +5540,8 @@ function renderSongSheetContent(s, isPeek){
       }
       while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){ i++; }
     } else if(cls === 'priest'){
-      if(s.id === 'lit-preface' && !isPeek && !prefaceCueRendered && /maanaa\s+kaninyo/i.test(line)){
+      // (2026-07-13) fallback preface cue above pag-ampo ibabaw; prev: maanaa only
+      if(s.id === 'lit-preface' && !isPeek && !prefaceCueRendered && (/pag-?ampo\s+ibabaw/i.test(line) || /maanaa\s+kaninyo/i.test(line))){
         prefaceCueRendered = true;
         while(renderedLines.length > 0 && (renderedLines[renderedLines.length - 1] === '<hr class="chart-hr"/>' || renderedLines[renderedLines.length - 1] === '<div>&nbsp;</div>')){
           renderedLines.pop();
@@ -5640,8 +5646,9 @@ function renderViewer(){
   if(!song){ state.view='list'; return renderListView(); }
   const isSameSong = state.lastViewerSongId === song.id;
   const existingChartWrap = document.getElementById('chart-wrap');
-  // (2026-07-13) scroll back to top when navigating to next song; prev: kept scroll
-  const prevScrollTop = (isSameSong && existingChartWrap) ? existingChartWrap.scrollTop : 0;
+  // (2026-07-13) restore song scroll when swiping back; prev: reset to 0
+  const savedScroll = (state.songScrollPositions && state.songScrollPositions[song.id] != null) ? state.songScrollPositions[song.id] : 0;
+  const prevScrollTop = (isSameSong && existingChartWrap) ? existingChartWrap.scrollTop : savedScroll;
   state.lastViewerSongId = song.id;
   const existingSidebarList = document.getElementById('viewer-sidebar-list');
   const prevSidebarScroll = existingSidebarList ? existingSidebarList.scrollTop : 0;
@@ -5760,8 +5767,18 @@ function renderViewer(){
 
   const chartWrap = document.getElementById('chart-wrap');
   const chartBody = document.getElementById('chart-body');
+  // (2026-07-13) apply scroll to viewer and peek slides; prev: chartWrap only
   if(chartWrap && prevScrollTop > 0){
     chartWrap.scrollTop = prevScrollTop;
+    autoscrollFloatPos = prevScrollTop;
+  }
+  const prevPeek = document.getElementById('peek-slide-prev');
+  if(prevPeek && prevSong && state.songScrollPositions && state.songScrollPositions[prevSong.id]){
+    prevPeek.scrollTop = state.songScrollPositions[prevSong.id];
+  }
+  const nextPeek = document.getElementById('peek-slide-next');
+  if(nextPeek && nextSong && state.songScrollPositions && state.songScrollPositions[nextSong.id]){
+    nextPeek.scrollTop = state.songScrollPositions[nextSong.id];
   }
 
   // (2026-07-13) wire landscape folder song sidebar events; prev: none
@@ -6044,9 +6061,9 @@ function renderViewer(){
         setTimeout(()=>{ if(sliderTrack) sliderTrack.style.transition = ''; }, 240);
       }
     };
-    // (2026-07-13) exclude cue card, sticky piano & melody from swipe; prev: swipe bugs
+    // (2026-07-13) allow swipe on cues; prev: blocked .masspart-cue-card
     const handleSwipeStart = (clientX, clientY, target)=>{
-      if(target.closest('.cue-piano-key, .speed-slider-wrap, .scroll-square, button, select, input, textarea, a, .staff-play-btn, .intro-melody-box, .masspart-cue-card, .cue-toggle-btn, .sticky-piano-tray, .sticky-piano-key')){
+      if(target.closest('.cue-piano-key, .speed-slider-wrap, .scroll-square, button, select, input, textarea, a, .staff-play-btn, .intro-melody-box, .cue-toggle-btn, .sticky-piano-tray, .sticky-piano-key')){
         return false;
       }
       isSwipeDrag = true;
@@ -6125,8 +6142,9 @@ function renderViewer(){
     }
   };
   document.getElementById('btn-adjust').onclick = ()=>{ state.modal = {type:'adjust', id:song.id}; renderViewer(); };
-  // (2026-07-13) restore restart button click handler; prev: single id
+  // (2026-07-13) reset song scroll position on restart; prev: retained scroll
   document.querySelectorAll('#btn-restart, #btn-slider-restart, .playbar-restart').forEach(btn => { btn.onclick = ()=>{
+    if(state.songScrollPositions) state.songScrollPositions[song.id] = 0;
     chartWrap.scrollTo({top:0, behavior:'smooth'});
     autoscrollFloatPos = 0;
     lastUserScrollAt = 0;
@@ -6207,8 +6225,10 @@ function renderViewer(){
   chartWrap.addEventListener('touchmove', markUserScroll, {passive:true});
   chartWrap.addEventListener('wheel', markUserScroll, {passive:true});
   chartWrap.addEventListener('pointerdown', markUserScroll, {passive:true});
-  // (2026-07-13) reliable 2s delay when pulled to top; prev: infinite loop
+  // (2026-07-13) update song scroll cache on scroll; prev: unrecorded
   chartWrap.addEventListener('scroll', ()=>{
+    if(!state.songScrollPositions) state.songScrollPositions = {};
+    state.songScrollPositions[song.id] = chartWrap.scrollTop;
     if(isProgrammaticAutoscroll) return;
     const isAutoscrollStep = Math.abs(chartWrap.scrollTop - Math.floor(autoscrollFloatPos)) <= 1 && (performance.now() - lastUserScrollAt > 600);
     if(isAutoscrollStep) return;

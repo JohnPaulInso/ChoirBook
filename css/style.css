@@ -410,12 +410,15 @@ body.theme-light .sticky-piano-key.black-key{background:#1e293b;border-color:#0f
 .dialogue-cue-item:last-child{border-bottom:none;margin-bottom:2px;}
 .chart-body .dialogue-cue-item{white-space:normal;margin:3px 0 6px;padding-bottom:5px;}
 .chart-body .dialogue-cue-item .cue-line{white-space:normal;}
-.chart-body .dialogue-cue-item .cue-chord-row{white-space:pre;overflow-x:auto;}
+/* (2026-07-13) hide scrollbars on cue & notepad; prev: default scrollbars */
+.chart-body .dialogue-cue-item .cue-chord-row{white-space:pre;overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none;}
+.chart-body .dialogue-cue-item .cue-chord-row::-webkit-scrollbar{display:none;width:0;height:0;}
 .chart-body .cue-priest{font-size:1em;line-height:1.35;color:var(--text-dim);margin-bottom:1px;}
 .chart-body .cue-response{font-size:1em;line-height:1.35;color:var(--text);font-weight:700;}
 .chart-body .cue-chord-row{font-size:1em;line-height:1.2;font-family:'JetBrains Mono',monospace;color:var(--chord);font-weight:700;margin:0;}
 .chart-body .dialogue-badge{font-size:0.75em;vertical-align:middle;}
-.cue-chord-row{font-family:'JetBrains Mono',monospace;font-size:12.5px;font-weight:700;color:var(--chord);letter-spacing:0.1px;line-height:1.2;white-space:pre;overflow-x:auto;padding-left:0;margin:0;}
+.cue-chord-row{font-family:'JetBrains Mono',monospace;font-size:12.5px;font-weight:700;color:var(--chord);letter-spacing:0.1px;line-height:1.2;white-space:pre;overflow-x:auto;padding-left:0;margin:0;scrollbar-width:none;-ms-overflow-style:none;}
+.cue-chord-row::-webkit-scrollbar{display:none;width:0;height:0;}
 .masspart-cue-body .cue-chord-row{padding-left:9ch;}
 .badge-svg{flex-shrink:0;display:inline-block;vertical-align:-1px;}
 .chart-meta-inline b{color:var(--text);font-weight:700;}
@@ -423,7 +426,12 @@ body.theme-light .sticky-piano-key.black-key{background:#1e293b;border-color:#0f
 
 /* (2026-07-13) chart-wrap sizing in slider track; prev: flex:1 */
 .chart-wrap{width:100%;min-width:100%;flex-shrink:0;height:100%;overflow-y:auto;overflow-x:hidden;max-width:100%;box-sizing:border-box;padding:18px 16px 45vh;-webkit-overflow-scrolling:touch;touch-action:pan-y pinch-zoom;
-  scroll-behavior:auto;font-size:15px;position:relative;}
+  scroll-behavior:auto;font-size:15px;position:relative;scrollbar-width:none;-ms-overflow-style:none;}
+.chart-wrap::-webkit-scrollbar,
+.chart-slide::-webkit-scrollbar,
+.chart-slide *::-webkit-scrollbar,
+.masspart-cue-card::-webkit-scrollbar,
+.dialogue-cue-item::-webkit-scrollbar{display:none !important;width:0 !important;height:0 !important;}
 .chart-title{font-family:'Manrope';font-size:1.33em;font-weight:800;margin-bottom:2px;overflow-wrap:anywhere;word-break:break-word;}
 .chart-artist{font-size:0.87em;color:var(--text-dim);margin-bottom:8px;overflow-wrap:anywhere;}
 .chart-meta-inline{font-size:0.77em;color:var(--text-dim);margin-bottom:18px;line-height:1.7;}
@@ -620,7 +628,7 @@ body:not(.theme-light) .viewer-slider-track,
 body:not(.theme-light) .chart-slide{background:#090a0f !important;}
 body:not(.theme-light) .viewer-toolbar{background:#090b10 !important;border-top:1px solid #171b26 !important;}
 .viewer-slider-track{position:relative;flex:1;display:flex;width:100%;height:100%;overflow:visible;min-height:0;will-change:transform;}
-.chart-slide{width:100%;min-width:100%;flex-shrink:0;height:100%;box-sizing:border-box;padding:18px 16px 45vh;overflow-y:auto;overflow-x:hidden;font-size:15px;background:var(--bg);position:relative;}
+.chart-slide{width:100%;min-width:100%;flex-shrink:0;height:100%;box-sizing:border-box;padding:18px 16px 45vh;overflow-y:auto;overflow-x:hidden;font-size:15px;background:var(--bg);position:relative;scrollbar-width:none;-ms-overflow-style:none;}
 .chart-slide.is-prev{position:absolute;top:0;bottom:0;left:-100%;width:100%;pointer-events:none;z-index:1;border-right:1px solid rgba(255,255,255,0.08);}
 .chart-slide.is-next{position:absolute;top:0;bottom:0;left:100%;width:100%;pointer-events:none;z-index:1;border-left:1px solid rgba(255,255,255,0.08);}
 .chart-slide.is-current{position:relative;z-index:2;}

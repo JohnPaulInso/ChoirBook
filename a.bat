@@ -39,14 +39,18 @@ echo ============================================
 echo  Build complete!
 echo ============================================
 
-set "APK_PATH=%~dp0android\app\build\outputs\apk\debug\app-debug.apk"
+rem (2026-07-13) open folder in windows explorer on .\a; prev: select only
+set "APK_DIR=%~dp0android\app\build\outputs\apk\debug"
+set "APK_PATH=%APK_DIR%\app-debug.apk"
 if exist "%APK_PATH%" (
     echo APK generated at: %APK_PATH%
     copy /Y "%APK_PATH%" "%~dp0choir-book-debug.apk" >nul 2>&1
-    copy /Y "%APK_PATH%" "%~dp0android\app\build\outputs\apk\debug\choir-book-debug.apk" >nul 2>&1
-    explorer.exe /select,"%APK_PATH%"
+    copy /Y "%APK_PATH%" "%APK_DIR%\choir-book-debug.apk" >nul 2>&1
+)
+if exist "%APK_DIR%" (
+    explorer.exe "%APK_DIR%"
 ) else (
-    echo Note: Check android\app\build\outputs\apk\debug\ for generated APK.
+    explorer.exe "%~dp0"
 )
 rem (2026-07-13) Return 0 exit code on successful APK build; was unhandled code
 exit /b 0
