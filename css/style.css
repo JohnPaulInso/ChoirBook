@@ -252,9 +252,9 @@ body:not(.theme-light) #viewer-topbar{background:#131722 !important;border-botto
 /* (2026-07-13) smooth scroll behavior for chip row; prev: instant auto */
 .chiprow{display:flex;align-items:center;gap:6px;padding:6px 12px;overflow-x:auto;background:var(--bg-elev);border-bottom:1px solid var(--line);flex-shrink:0;scrollbar-width:none;scroll-behavior:smooth;}
 .chiprow::-webkit-scrollbar{display:none;}
-/* (2026-07-13) restore original compact chip design; prev: 20px pill */
-.chip{display:inline-flex;align-items:center;gap:6px;background:var(--bg-elev2);border:1.5px solid var(--line);color:var(--text-dim);padding:4px 11px;
-  border-radius:16px;font-size:12px;white-space:nowrap;cursor:pointer;flex-shrink:0;font-weight:600;
+/* (2026-07-13) compact sleek pill chips for chiprow; prev: 12px 16px radius */
+.chip{display:inline-flex;align-items:center;gap:5px;background:var(--bg-elev2);border:1.2px solid var(--line);color:var(--text-dim);padding:3px 9px;
+  border-radius:12px;font-size:11.5px;white-space:nowrap;cursor:pointer;flex-shrink:0;font-weight:600;
   touch-action:manipulation;-webkit-tap-highlight-color:transparent;user-select:none;
   transition:background-color .15s ease, border-color .15s ease, color .15s ease, transform .1s ease;}
 .chip:active{transform:scale(0.95);}
@@ -262,7 +262,7 @@ body:not(.theme-light) #viewer-topbar{background:#131722 !important;border-botto
 /* (2026-07-13) setlist chips purple text color; prev: white var(--text) */
 .setlist-chip{color:#c084fc!important;border-color:rgba(168,85,247,0.45)!important;background:rgba(168,85,247,0.08)!important;}
 .setlist-chip.active{background:rgba(168,85,247,0.25)!important;border-color:#a855f7!important;color:#d8b4fe!important;font-weight:700;}
-.chip-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+.chip-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
 /* (2026-07-13) wrap swatch hovers in hover:hover media; prev: raw hover */
 /* (2026-07-13) restore compact chip palette button & 13px svg; prev: 34px */
 .chip-palette-btn{background:var(--bg-elev2);border:1.5px solid var(--line);color:var(--text-dim);width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;padding:0;margin-left:2px;touch-action:manipulation;-webkit-tap-highlight-color:transparent;}
@@ -814,12 +814,12 @@ body:not(.theme-light) .viewer-toolbar{background:#090b10 !important;border-top:
 .chord-name{text-align:center;font-size:22px;font-weight:800;margin-bottom:14px;color:var(--chord);}
 svg.fretboard, svg.keyboard{display:block;margin:0 auto;}
 
-/* (2026-07-13) make cat-toggle-wrap scrollable when items overflow; prev: unbounded */
-.cat-toggle-wrap{display:flex;flex-wrap:wrap;gap:9px;max-height:220px;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:2px;}
+/* (2026-07-13) compact sleek pill chips for modal & editor; prev: 40px bulky */
+.cat-toggle-wrap{display:flex;flex-wrap:wrap;gap:6px;max-height:220px;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:2px;}
 .cat-toggle-wrap::-webkit-scrollbar{width:4px;}
 .cat-toggle-wrap::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.15);border-radius:4px;}
-.cat-toggle{background:var(--bg-elev2);border:1.5px solid var(--line);color:var(--text-dim);padding:10px 16px;
-  border-radius:20px;font-size:13.5px;font-weight:600;cursor:pointer;min-height:40px;display:flex;align-items:center;
+.cat-toggle{background:var(--bg-elev2);border:1.2px solid var(--line);color:var(--text-dim);padding:4px 10px;
+  border-radius:14px;font-size:11.5px;font-weight:600;cursor:pointer;min-height:28px;display:flex;align-items:center;
   transition:transform .1s ease, background-color .15s ease, border-color .15s ease, color .15s ease;}
 .cat-toggle:active{transform:scale(0.94);}
 .cat-toggle.selected{background:var(--accent-dim);border-color:var(--accent);color:var(--accent);}

@@ -6,8 +6,8 @@
     "semantic_hash": "fd3e09ee98396a6683e9f886b37aaf2c"
   },
   "android/app/capacitor.build.gradle": {
-    "mtime": 1793967867.3061383,
-    "seen": 1794051189.8596463,
+    "mtime": 1794067156.3690956,
+    "seen": 1794067478.1506872,
     "ast_hash": "20b1720c7c82ad1d0d50d3c25411c21f",
     "semantic_hash": "20b1720c7c82ad1d0d50d3c25411c21f"
   },
@@ -25,9 +25,9 @@
   },
   "android/app/src/main/java/com/choirbookpro/app/MainActivity.java": {
     "mtime": 1793970786.3944337,
-    "seen": 1794051189.8596551,
+    "seen": 1794067478.1510663,
     "ast_hash": "ce3d2a6b955929bf01fd0256c130e3e0",
-    "semantic_hash": ""
+    "semantic_hash": "ce3d2a6b955929bf01fd0256c130e3e0"
   },
   "android/app/src/test/java/com/getcapacitor/myapp/ExampleUnitTest.java": {
     "mtime": 1785512756.0,
@@ -42,8 +42,8 @@
     "semantic_hash": "682315a426653617c6a74fc12bef55b6"
   },
   "android/capacitor.settings.gradle": {
-    "mtime": 1793967867.305138,
-    "seen": 1794051189.859659,
+    "mtime": 1794067156.3680956,
+    "seen": 1794067478.1512814,
     "ast_hash": "1a21328b8ae2ae9af0d02a6c12dddb9d",
     "semantic_hash": "1a21328b8ae2ae9af0d02a6c12dddb9d"
   },
@@ -84,10 +84,10 @@
     "semantic_hash": "2ef3df7caa84875136011501b7cac628"
   },
   "js/app.js": {
-    "mtime": 1794050962.9015365,
-    "seen": 1794051189.8596685,
-    "ast_hash": "6f5e5ec06c9bb6afa8ce0a8afd754d94",
-    "semantic_hash": ""
+    "mtime": 1794066869.886093,
+    "seen": 1794067478.1519203,
+    "ast_hash": "2348bc1b4df97597e76d686768ae0924",
+    "semantic_hash": "2348bc1b4df97597e76d686768ae0924"
   },
   "js/firebase-config.js": {
     "mtime": 1793634338.1893795,
@@ -163,9 +163,9 @@
   },
   "capacitor.config.ts": {
     "mtime": 1793970786.7428598,
-    "seen": 1794051189.859665,
+    "seen": 1794067478.1516876,
     "ast_hash": "5a5040e9441a3eba60f761efe34f7ac8",
-    "semantic_hash": ""
+    "semantic_hash": "5a5040e9441a3eba60f761efe34f7ac8"
   },
   "android/app/src/main/res/drawable-land-hdpi/splash.png": {
     "mtime": 1785512756.0,
@@ -337,8 +337,8 @@
   },
   "icons/logo-1024.png": {
     "mtime": 1793648782.087094,
-    "seen": 1794051189.8597045,
+    "seen": 1794067478.1530716,
     "ast_hash": "d461d2b26bc63cbfb2dd723de35ca5d0",
-    "semantic_hash": ""
+    "semantic_hash": "d461d2b26bc63cbfb2dd723de35ca5d0"
   }
 }

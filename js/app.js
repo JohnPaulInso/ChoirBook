@@ -8805,9 +8805,10 @@ function modalHtml(){
   // (2026-07-13) batch-add-folder modal with + Add New Folder option; prev: existing only
   if(state.modal.type==='batch-add-folder'){
     const count = (state.modal.songIds || []).length;
+    // (2026-07-13) compact 11.5px batch folder chips; prev: 13px bulky
     const folderChips = state.categories.map(c=>{
       const ct = getFolderTheme(c);
-      return `<button class="cat-toggle" data-batch-folder="${escapeHtml(c)}" style="border-color:${ct.dim};background:transparent;cursor:pointer;display:inline-flex;align-items:center;padding:7px 12px;border-radius:20px;font-size:13px;font-weight:600;"><span class="chip-dot" style="background:${ct.swatch};margin-right:7px;"></span>${escapeHtml(c)}</button>`;
+      return `<button class="cat-toggle" data-batch-folder="${escapeHtml(c)}" style="border-color:${ct.dim};background:transparent;cursor:pointer;display:inline-flex;align-items:center;padding:4px 10px;border-radius:14px;font-size:11.5px;font-weight:600;"><span class="chip-dot" style="background:${ct.swatch};margin-right:6px;"></span>${escapeHtml(c)}</button>`;
     }).join('');
     return `
       <div class="modal-backdrop" id="modal-bg">
@@ -8835,9 +8836,10 @@ function modalHtml(){
   // (2026-07-13) batch-add-setlist modal for selected songs; prev: none
   if(state.modal.type==='batch-add-setlist'){
     const count = (state.modal.songIds || []).length;
+    // (2026-07-13) compact 11.5px batch setlist chips; prev: 13px bulky
     const slChips = state.setlists.map(sl=>{
       const st = FOLDER_THEMES[sl.color || 'purple'] || FOLDER_THEMES.purple;
-      return `<button class="cat-toggle" data-batch-setlist="${sl.id}" style="border-color:${st.dim};background:transparent;cursor:pointer;display:inline-flex;align-items:center;padding:7px 12px;border-radius:20px;font-size:13px;font-weight:600;"><span class="chip-dot" style="background:${st.swatch};margin-right:7px;"></span><span style="display:inline-flex;align-items:center;margin-right:4px;width:12px;height:12px;color:${st.accent};">${iconSetlist()}</span>${escapeHtml(sl.name)}</button>`;
+      return `<button class="cat-toggle" data-batch-setlist="${sl.id}" style="border-color:${st.dim};background:transparent;cursor:pointer;display:inline-flex;align-items:center;padding:4px 10px;border-radius:14px;font-size:11.5px;font-weight:600;"><span class="chip-dot" style="background:${st.swatch};margin-right:6px;"></span><span style="display:inline-flex;align-items:center;margin-right:4px;width:11px;height:11px;color:${st.accent};">${iconSetlist()}</span>${escapeHtml(sl.name)}</button>`;
     }).join('');
     return `
       <div class="modal-backdrop" id="modal-bg">
