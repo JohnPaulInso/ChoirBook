@@ -1,1 +1,24 @@
-{"0": "Core App State & View Controllers", "1": "Song List & Visualizer Renderers", "2": "Liturgical Mass Cues & Folder Themes", "3": "Song Metadata & Modal Handlers", "4": "Lyric Parsing & Text Processing", "5": "Music Theory & Chord Transposition", "6": "NPM Dependencies & Package Config", "7": "Android Test Suite", "8": "Web App Manifest & PWA Configuration", "9": "Android Screen Keep-Awake Plugin", "10": "Android Main Activity & Native Lifecycle", "11": "Gradle Build Wrapper Scripts", "12": "Service Worker Cache Controller", "13": "Root Offline Service Worker", "14": "Android App Gradle Build", "15": "Capacitor Android Plugin Build", "16": "Root Android Gradle Configuration", "17": "Capacitor Gradle Settings", "18": "Android Project Settings", "19": "Android Build Variables", "20": "Design Plan Architecture Documentation", "21": "Google Auth Setup & SHA-1 Guide", "22": "UI & Feature Improvements Specification", "23": "HTML5 Shell & Google GIS Entrypoint", "24": "Firebase Client Configuration", "25": "Liturgical Mass Flow Documentation", "26": "Setup & Build Instructions"}
+{
+  "4": "Lyric Parsing & Text Processing",
+  "6": "NPM Dependencies & Package Config",
+  "7": "Android Test Suite",
+  "8": "Web App Manifest & PWA Configuration",
+  "9": "Android Screen Keep-Awake Plugin",
+  "10": "Android Main Activity & Native Lifecycle",
+  "11": "Gradle Build Wrapper Scripts",
+  "12": "Service Worker Cache Controller",
+  "13": "Root Offline Service Worker",
+  "14": "Android App Gradle Build",
+  "15": "Capacitor Android Plugin Build",
+  "16": "Root Android Gradle Configuration",
+  "17": "Capacitor Gradle Settings",
+  "18": "Android Project Settings",
+  "19": "Android Build Variables",
+  "20": "Design Plan Architecture Documentation",
+  "21": "Google Auth Setup & SHA-1 Guide",
+  "22": "UI & Feature Improvements Specification",
+  "23": "HTML5 Shell & Google GIS Entrypoint",
+  "24": "Firebase Client Configuration",
+  "25": "Liturgical Mass Flow Documentation",
+  "26": "Setup & Build Instructions"
+}

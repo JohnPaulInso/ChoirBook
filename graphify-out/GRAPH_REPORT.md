@@ -1,22 +1,27 @@
-# Graph Report - Choir Book Pro  (2026-11-06)
+# Graph Report - Choir Book Pro  (2026-11-07)
 
 ## Corpus Check
-- 56 files · ~127,319 words
+- 27 files · ~126,031 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 25 file(s) not represented in the graph (top: .xml 10, (none) 3, .bat 3)
 
 ## Summary
-- 316 nodes · 835 edges · 27 communities (8 shown, 19 thin omitted)
-- Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS · INFERRED: 4 edges (avg confidence: 0.85)
+- 281 nodes · 669 edges · 28 communities (9 shown, 19 thin omitted)
+- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 4 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
+## Graph Freshness
+- Built from commit: `404e76e0`
+- Run `git rev-parse HEAD` and compare to check if the graph is stale.
+- Run `graphify update .` after code changes (no API cost).
+
 ## Community Hubs (Navigation)
-- Core App State & View Controllers
-- Song List & Visualizer Renderers
-- Liturgical Mass Cues & Folder Themes
-- Song Metadata & Modal Handlers
+- app.js
+- modalHtml
+- buildSongListRowsHtml
+- renderListView
 - Lyric Parsing & Text Processing
-- Music Theory & Chord Transposition
+- renderEditor
 - NPM Dependencies & Package Config
 - Android Test Suite
 - Web App Manifest & PWA Configuration
@@ -30,87 +35,92 @@
 - HTML5 Shell & Google GIS Entrypoint
 - Liturgical Mass Flow Documentation
 - Setup & Build Instructions
+- renderViewer
 
 ## God Nodes (most connected - your core abstractions)
-1. `renderViewer()` - 47 edges
-2. `wireModal()` - 44 edges
-3. `renderListView()` - 43 edges
-4. `modalHtml()` - 34 edges
-5. `renderEditor()` - 31 edges
-6. `escapeHtml()` - 29 edges
-7. `renderSetlistEditor()` - 28 edges
-8. `render()` - 23 edges
-9. `renderSongSheetContent()` - 22 edges
-10. `renderSetlistsView()` - 20 edges
+1. `renderViewer()` - 37 edges
+2. `renderListView()` - 31 edges
+3. `renderEditor()` - 28 edges
+4. `escapeHtml()` - 27 edges
+5. `modalHtml()` - 26 edges
+6. `render()` - 20 edges
+7. `renderSetlistEditor()` - 20 edges
+8. `get()` - 19 edges
+9. `renderSongSheetContent()` - 19 edges
+10. `showToast()` - 16 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `getGuitarShape()` --calls--> `noteIndex()`  [EXTRACTED]
-  js/app.js → js/app.js  _Bridges community 4 → community 0_
-- `modalHtml()` --calls--> `noteIndex()`  [EXTRACTED]
-  js/app.js → js/app.js  _Bridges community 4 → community 1_
 - `parseChordToken()` --calls--> `noteIndex()`  [EXTRACTED]
-  js/app.js → js/app.js  _Bridges community 4 → community 5_
-- `renderSetlistEditor()` --calls--> `transposeKeyLabel()`  [EXTRACTED]
-  js/app.js → js/app.js  _Bridges community 4 → community 3_
-- `modalHtml()` --calls--> `getGuitarShape()`  [EXTRACTED]
-  js/app.js → js/app.js  _Bridges community 0 → community 1_
+  js/app.js → js/app.js  _Bridges community 1 → community 0_
+- `transposeKeyLabel()` --calls--> `spellNote()`  [EXTRACTED]
+  js/app.js → js/app.js  _Bridges community 27 → community 1_
+- `transposeBody()` --calls--> `transposeToken()`  [EXTRACTED]
+  js/app.js → js/app.js  _Bridges community 1 → community 4_
+- `transposeBody()` --calls--> `tokenLooksLikeChord()`  [EXTRACTED]
+  js/app.js → js/app.js  _Bridges community 0 → community 4_
+- `renderEditor()` --calls--> `detectKeyFromBody()`  [EXTRACTED]
+  js/app.js → js/app.js  _Bridges community 0 → community 5_
 
 ## Import Cycles
 - None detected.
 
-## Communities (27 total, 19 thin omitted)
+## Communities (28 total, 19 thin omitted)
 
-### Community 0 - "Core App State & View Controllers"
-Cohesion: 0.05
-Nodes (58): closeEditorOverlay(), _col(), currentSong(), delete(), deleteSetlist(), deleteSong(), get(), getAll() (+50 more)
+### Community 0 - "app.js"
+Cohesion: 0.06
+Nodes (43): _col(), delete(), deleteSetlist(), deleteSong(), detectKeyFromBody(), ensureCollectInPsalmCue(), ensureGreatAmenMigration(), extractChordsFromBody() (+35 more)
 
-### Community 1 - "Song List & Visualizer Renderers"
-Cohesion: 0.10
-Nodes (37): buildFretboardSVG(), buildKeyboardSVG(), buildSongListRowsHtml(), downloadGSMA(), formatRelativeTime(), getActiveScopeKey(), getCurrentViewSectionTitle(), getFolderTheme() (+29 more)
-
-### Community 2 - "Liturgical Mass Cues & Folder Themes"
-Cohesion: 0.09
-Nodes (34): applyFolderTheme(), ensureCollectInPsalmCue(), ensureGreatAmenMigration(), findMassPartCue(), getCanonicalUserDocId(), getExpandedSetlistItemsWithLit(), getFilteredSongsForCurrentView(), getLastSyncAt() (+26 more)
-
-### Community 3 - "Song Metadata & Modal Handlers"
+### Community 1 - "modalHtml"
 Cohesion: 0.13
-Nodes (31): autoAssignFoldersByTitle(), autoOrganizeAllSongsByTitle(), cleanSongTitleForDisplay(), closeActiveModal(), currentSetlist(), deleteFromTrashForever(), emptyTrashForever(), generateGSMA() (+23 more)
+Nodes (26): buildFretboardSVG(), buildKeyboardSVG(), chordTones(), currentSetlist(), formatRelativeTime(), getActiveScopeKey(), getEffectiveSongArtist(), getEffectiveSongKey() (+18 more)
+
+### Community 2 - "buildSongListRowsHtml"
+Cohesion: 0.18
+Nodes (13): buildSongListRowsHtml(), getCurrentViewSectionTitle(), getExpandedSetlistItemsWithLit(), getFilteredSongsForCurrentView(), getLiturgicalDialogueSongs(), getOrderedSongSections(), getViewerSongList(), isSeededDefaultSong() (+5 more)
+
+### Community 3 - "renderListView"
+Cohesion: 0.10
+Nodes (39): applyFolderTheme(), autoAssignFoldersByTitle(), autoOrganizeAllSongsByTitle(), cleanSongTitleForDisplay(), closeActiveModal(), deleteFromTrashForever(), downloadGSMA(), emptyTrashForever() (+31 more)
 
 ### Community 4 - "Lyric Parsing & Text Processing"
-Cohesion: 0.14
-Nodes (28): chordTones(), classifyLine(), escapeHtml(), extractPriestData(), extractResponseData(), iconCueHide(), iconCueShow(), iconPeopleGroup() (+20 more)
+Cohesion: 0.15
+Nodes (22): classifyLine(), escapeHtml(), extractPriestData(), extractResponseData(), findMassPartCue(), getMassPartCueKey(), isMelodyNoteLine(), openCueEditor() (+14 more)
 
-### Community 5 - "Music Theory & Chord Transposition"
-Cohesion: 0.11
-Nodes (28): detectKeyFromBody(), extractChordsFromBody(), getEffectiveSongArtist(), getEffectiveSongKey(), getSongFlag(), getSongFlagRank(), iconCheckSmall(), iconDragBars() (+20 more)
+### Community 5 - "renderEditor"
+Cohesion: 0.29
+Nodes (10): closeEditorOverlay(), getAllKnownArtists(), insertAtCursor(), registerKnownArtist(), renderEditor(), performRedo(), performUndo(), pushHistoryState() (+2 more)
 
 ### Community 6 - "NPM Dependencies & Package Config"
-Cohesion: 0.09
-Nodes (22): author, dependencies, @capacitor/android, @capacitor/app, @capacitor/cli, @capacitor/core, @capacitor-firebase/authentication, description (+14 more)
+Cohesion: 0.08
+Nodes (23): config, author, dependencies, @capacitor/android, @capacitor/app, @capacitor/cli, @capacitor/core, @capacitor-firebase/authentication (+15 more)
 
 ### Community 8 - "Web App Manifest & PWA Configuration"
 Cohesion: 0.20
 Nodes (9): background_color, description, display, icons, name, orientation, short_name, start_url (+1 more)
 
+### Community 27 - "renderViewer"
+Cohesion: 0.12
+Nodes (26): currentSong(), getCueAccidentalsPref(), getCueChordMap(), getCueChordText(), getCueKeyIdx(), getCueNoteMode(), getCueSemis(), handleStaffPlayClick() (+18 more)
+
 ## Knowledge Gaps
-- **11 isolated node(s):** `@capacitor-firebase/authentication`, `@capacitor/android`, `@capacitor/app`, `@capacitor/cli`, `@capacitor/core` (+6 more)
+- **10 isolated node(s):** `@capacitor-firebase/authentication`, `@capacitor/android`, `@capacitor/app`, `@capacitor/core`, `Choir Book Pro Design Plan` (+5 more)
   These have ≤1 connection - possible missing edges. (Counts symbols only; 67 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
 - **19 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `renderEditor()` connect `Music Theory & Chord Transposition` to `Core App State & View Controllers`, `Song List & Visualizer Renderers`, `Liturgical Mass Cues & Folder Themes`, `Song Metadata & Modal Handlers`, `Lyric Parsing & Text Processing`?**
-  _High betweenness centrality (0.021) - this node is a cross-community bridge._
+- **Why does `renderEditor()` connect `renderEditor` to `app.js`, `modalHtml`, `buildSongListRowsHtml`, `renderListView`, `Lyric Parsing & Text Processing`?**
+  _High betweenness centrality (0.022) - this node is a cross-community bridge._
 - **What connects `@capacitor-firebase/authentication`, `@capacitor/android`, `@capacitor/app` to the rest of the system?**
-  _11 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `Core App State & View Controllers` be split into smaller, more focused modules?**
-  _Cohesion score 0.05189189189189189 - nodes in this community are weakly interconnected._
-- **Why does `renderViewer()` connect `Core App State & View Controllers` to `Song List & Visualizer Renderers`, `Liturgical Mass Cues & Folder Themes`, `Song Metadata & Modal Handlers`, `Lyric Parsing & Text Processing`, `Music Theory & Chord Transposition`?**
-  _High betweenness centrality (0.008) - this node is a cross-community bridge._
-- **Should `Song List & Visualizer Renderers` be split into smaller, more focused modules?**
-  _Cohesion score 0.0990990990990991 - nodes in this community are weakly interconnected._
-- **Why does `wireModal()` connect `Song Metadata & Modal Handlers` to `Core App State & View Controllers`, `Song List & Visualizer Renderers`, `Liturgical Mass Cues & Folder Themes`, `Lyric Parsing & Text Processing`, `Music Theory & Chord Transposition`?**
-  _High betweenness centrality (0.007) - this node is a cross-community bridge._
-- **Should `Liturgical Mass Cues & Folder Themes` be split into smaller, more focused modules?**
-  _Cohesion score 0.09090909090909091 - nodes in this community are weakly interconnected._
+  _10 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Should `app.js` be split into smaller, more focused modules?**
+  _Cohesion score 0.06327683615819209 - nodes in this community are weakly interconnected._
+- **Why does `renderViewer()` connect `renderViewer` to `app.js`, `modalHtml`, `buildSongListRowsHtml`, `renderListView`, `Lyric Parsing & Text Processing`, `renderEditor`?**
+  _High betweenness centrality (0.006) - this node is a cross-community bridge._
+- **Should `modalHtml` be split into smaller, more focused modules?**
+  _Cohesion score 0.12615384615384614 - nodes in this community are weakly interconnected._
+- **Why does `escapeHtml()` connect `Lyric Parsing & Text Processing` to `app.js`, `modalHtml`, `buildSongListRowsHtml`, `renderListView`, `renderEditor`, `renderViewer`?**
+  _High betweenness centrality (0.004) - this node is a cross-community bridge._
+- **Should `renderListView` be split into smaller, more focused modules?**
+  _Cohesion score 0.1039136302294197 - nodes in this community are weakly interconnected._

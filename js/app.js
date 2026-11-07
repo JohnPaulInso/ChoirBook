@@ -56,7 +56,8 @@ if (typeof document !== 'undefined') {
 /* ============================================================
    MUSIC THEORY CONSTANTS
    ============================================================ */
-const NOTES_SHARP = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+// (2026-07-13) default accidentals sharps with Bb instead of A#; prev: A#
+const NOTES_SHARP = ['C','C#','D','D#','E','F','F#','G','G#','A','Bb','B'];
 const NOTES_FLAT  = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
 const FLAT_KEYS = new Set(['F','Bb','Eb','Ab','Db','Gb','Cb','Dm','Gm','Cm','Fm','Bbm','Ebm']);
 
@@ -85,8 +86,11 @@ function parseChord(token){
   if(!m) return null;
   return { root: m[1], acc: m[2]||'', quality: m[3]||'', bassRoot: m[5]||null, bassAcc: m[6]||'' };
 }
+// (2026-07-13) spell index 10 always as Bb, other accidentals follow preferFlat; prev: raw array
 function spellNote(idx, preferFlat){
-  return (preferFlat ? NOTES_FLAT : NOTES_SHARP)[(idx%12+12)%12];
+  const cleanIdx = (idx % 12 + 12) % 12;
+  if(cleanIdx === 10) return 'Bb';
+  return (preferFlat ? NOTES_FLAT : NOTES_SHARP)[cleanIdx];
 }
 function transposeToken(token, semis, preferFlat){
   const mWrap = /^([>(]*)(.*?)([.)]*)$/.exec(token);
@@ -554,33 +558,50 @@ function renderMelodyStaffLine(line){
     'c': 0, 'd': 2, 'e': 4, 'f': 5, 'g': 7, 'a': 9, 'b': 11,
     'C': 12, 'D': 14, 'E': 16, 'F': 17, 'G': 19, 'A': 21, 'B': 23
   };
-  const re = /\(([^)]+)\)|(\S+)/g;
+  // (2026-07-13) support Chord=(multiple notes) & Chord=note; prev: single note
+  const re = /(?:([A-Za-z0-9#b\/\+\-]+)=)?(?:\(([^)]+)\)|(\S+))/g;
   re.lastIndex = startIdx;
   let m;
   const tokens = [];
   while((m = re.exec(rawLine))){
-    if(m[1] !== undefined){
-      tokens.push({ raw: m[0], inner: m[1], isChord: true, col: m.index, len: m[0].length });
-    } else {
-      tokens.push({ raw: m[2], inner: m[2], isChord: false, col: m.index, len: m[2].length });
+    let chord = m[1];
+    let isChord = m[2] !== undefined;
+    let inner = m[2];
+    let single = m[3];
+    if(isChord && !chord && inner){
+      const innerMatch = /^([A-Za-z0-9#b\/\+\-]+)=(.+)$/.exec(inner.trim());
+      if(innerMatch){
+        chord = innerMatch[1];
+        inner = innerMatch[2];
+      }
     }
+    const formattedChord = chord ? (chord.charAt(0).toUpperCase() + chord.slice(1)) : '';
+    tokens.push({
+      raw: m[0],
+      chord: formattedChord,
+      inner: inner !== undefined ? inner : (single !== undefined ? single : ''),
+      isChord,
+      col: m.index,
+      len: m[0].length
+    });
   }
   const maxCol = Math.max(rawLine.trimEnd().length - 1, 10);
   let itemsHtml = '';
   tokens.forEach((item)=>{
-    const { raw, inner, isChord, col, len } = item;
+    const { raw, chord, inner, isChord, col, len } = item;
     const ratio = Math.max(0, Math.min(1, col / maxCol));
     // (2026-07-13) add spacing on right of G-clef for notes; prev: 38px left start
     const leftCalc = `calc(56px + (100% - 84px) * ${ratio.toFixed(4)})`;
     // (2026-07-13) omit bar line text label below staff; prev: showed | label
-    if(raw === '|' || raw === '/' || raw === '\\'){
+    if(raw === '|' || raw === '/' || raw === '\\' || inner === '|' || inner === '/' || inner === '\\'){
       itemsHtml += `
         <span class="staff-note-group" style="left:${leftCalc};pointer-events:none;">
           <span class="staff-barline"></span>
         </span>`;
       return;
     }
-    const subToks = isChord ? inner.split(/[\s,]+/).map(s=>s.trim()).filter(Boolean) : [raw.replace(/^[>]/, '')];
+    const chordLabel = chord || '';
+    const subToks = isChord ? inner.split(/[\s,]+/).map(s=>s.trim()).filter(Boolean) : [inner];
     const parsedNotes = [];
     // (2026-07-13) omit +/- octave signs from staff note labels; prev: showed +/-
     subToks.forEach(st=>{
@@ -650,6 +671,7 @@ function renderMelodyStaffLine(line){
     const semisStr = parsedNotes.map(n=>n.semi).join(',');
     itemsHtml += `
       <span class="staff-note-group ${parsedNotes.length > 1 ? 'is-chord' : ''}" data-staff-note="${semisStr}" data-col="${col}" data-len="${len}" style="left:${leftCalc};" title="Tap to play ${escapeHtml(label)}">
+        ${chordLabel ? `<span class="staff-note-chord">${escapeHtml(chordLabel)}</span>` : ''}
         ${ledgerHtml}
         ${noteheadsHtml}
         ${stemHtml}
@@ -687,7 +709,8 @@ function classifyLine(line){
   if(line.startsWith('>')) return 'chord';
   if(/^\[.+\]$/.test(trimmed) || /^\(.+\)$/.test(trimmed)) return 'section';
   if(/^(Intro|Verse|Chorus|Bridge|Outro|Pre-Chorus|Interlude|Ending|Refrain)[\s:0-9IVX]*$/i.test(trimmed)) return 'section';
-  if(/^<.+>$/.test(trimmed)) return 'bracket';
+  // (2026-07-13) treat bracket chord lines as chord type; prev: 'bracket'
+  if(/^<.+>$/.test(trimmed) || /^[.<].*<[^>]+>[>.]*$/.test(trimmed) || /^<.*[A-G][b#]?m?.*>$/i.test(trimmed)) return 'chord';
   return 'lyric';
 }
 // (2026-07-13) null-safe escapeHtml string conversion; prev: s.replace()
@@ -781,24 +804,30 @@ function cleanSongTitleForDisplay(title){
   return cur;
 }
 
+// (2026-07-13) strip bracket wrappers in chord lines; prev: > prefix only
 function renderChordLine(line){
-  const cleanedLine = line.replace(/^> (?=\S)/, '').replace(/^>/, '');
+  const cleanedLine = line
+    .replace(/^> (?=\S)/, '')
+    .replace(/^>/, '')
+    .replace(/^[ \t]*<|[>][ \t]*$/g, m => ' '.repeat(m.length))
+    .replace(/<([^>]+)>/g, (m, inner) => ' ' + inner + ' ')
+    .replace(/[<>]/g, ' ');
   const re = /(\S+)/g;
   let last = 0, out = '';
   let m;
   while((m = re.exec(cleanedLine))){
     out += escapeHtml(cleanedLine.slice(last, m.index));
     const tok = m[1];
-    const clean = tok.replace(/^[>(]+|[.)]+$/g, '');
+    const clean = tok.replace(/^[>(<]+|[.)>]+$/g, '');
     if(CHORD_RE.test(clean)){
-      out += `<span class="chord-tok" data-chord="${escapeHtml(clean)}">${escapeHtml(tok)}</span>`;
+      out += `<span class="chord-tok" data-chord="${escapeHtml(clean)}">${escapeHtml(clean)}</span>`;
     } else if(clean !== '-' && clean.includes('-') && clean.split('-').filter(Boolean).every(p=>CHORD_RE.test(p))){
       out += tok.split('-').map(p=>{
-        const cp = p.replace(/^[>(]+|[.)]+$/g, '');
-        return CHORD_RE.test(cp) ? `<span class="chord-tok" data-chord="${escapeHtml(cp)}">${escapeHtml(p)}</span>` : escapeHtml(p);
+        const cp = p.replace(/^[>(<]+|[.)>]+$/g, '');
+        return CHORD_RE.test(cp) ? `<span class="chord-tok" data-chord="${escapeHtml(cp)}">${escapeHtml(cp)}</span>` : escapeHtml(cp);
       }).join('-');
     } else {
-      out += `<span style="color:var(--chord);font-weight:700;">${escapeHtml(tok)}</span>`;
+      out += `<span style="color:var(--chord);font-weight:700;">${escapeHtml(clean)}</span>`;
     }
     last = m.index + tok.length;
   }
@@ -806,26 +835,24 @@ function renderChordLine(line){
   return out;
 }
 /* Renders lines like "<G D Em C>" or "> G D Em C" — every chord inside the
-   bracket shown in the chord color, brackets themselves shown dim. */
+   bracket shown in the chord color, brackets themselves stripped. */
 function renderBracketLine(line){
-  const s = line.indexOf('<'), e = line.lastIndexOf('>');
-  if(s<0 || e<0 || e<=s) return renderChordLine(line);
-  const before = line.slice(0,s), inner = line.slice(s+1,e), after = line.slice(e+1);
-  const innerRendered = inner.replace(/(\S+)/g, tok => `<span class="chord-tok" data-chord="${escapeHtml(tok)}">${escapeHtml(tok)}</span>`);
-  return escapeHtml(before) + '<span class="bracket-tok">&lt;</span>' + innerRendered + '<span class="bracket-tok">&gt;</span>' + escapeHtml(after);
+  return renderChordLine(line);
 }
 function transposeBody(body, semis, preferFlat){
   return body.split('\n').map(line=>{
     const cls = classifyLine(line);
-    if(cls==='chord'){
-      return line.replace(/(\S+)/g, tok => tokenLooksLikeChord(tok) && tok!=='N.C.' && tok!=='%' ? transposeToken(tok, semis, preferFlat) : tok);
-    }
-    if(cls==='bracket'){
-      const s = line.indexOf('<'), e = line.lastIndexOf('>');
-      if(s<0||e<0||e<=s) return line;
-      const inner = line.slice(s+1,e);
-      const transposedInner = inner.replace(/(\S+)/g, tok => tokenLooksLikeChord(tok) ? transposeToken(tok, semis, preferFlat) : tok);
-      return line.slice(0,s+1) + transposedInner + line.slice(e);
+    if(cls==='chord' || cls==='bracket'){
+      return line.replace(/(\S+)/g, tok => {
+        const cleanTok = tok.replace(/^[<]+|[>]+$/g, '');
+        if(tokenLooksLikeChord(cleanTok) && cleanTok!=='N.C.' && cleanTok!=='%'){
+          const transposed = transposeToken(cleanTok, semis, preferFlat);
+          return tok.startsWith('<') && tok.endsWith('>') ? `<${transposed}>` :
+                 tok.startsWith('<') ? `<${transposed}` :
+                 tok.endsWith('>') ? `${transposed}>` : transposed;
+        }
+        return tok;
+      });
     }
     return line;
   }).join('\n');
@@ -1077,6 +1104,17 @@ const Store = {
     try{ return JSON.parse(r.value) || {}; }catch(e){ return {}; }
   },
   async saveCustomCues(cues){ await adapter.set('meta:customCues', JSON.stringify(cues || {})); },
+  // (2026-07-13) persist and fetch account artists & composers; prev: none
+  async getArtists(){
+    const r = await adapter.get('meta:artists');
+    if(!r){
+      const loc = await LocalAdapter.get('meta:artists');
+      if(!loc) return [];
+      try{ return JSON.parse(loc.value) || []; }catch(e){ return []; }
+    }
+    try{ return JSON.parse(r.value) || []; }catch(e){ return []; }
+  },
+  async saveArtists(artists){ await adapter.set('meta:artists', JSON.stringify(artists || [])); },
   async listSetlists(){ return adapter.list('setlist:'); },
   async getSetlist(key){
     const r = await adapter.get(key);
@@ -1250,15 +1288,21 @@ async function emptyTrashForever(){
 const DEFAULT_MASS_PARTS = ['Entrance','Kyrie','Gloria','Responsorial Psalm','Gospel Acclamation',
   'Offertory','Sanctus','Memorial Acclamation','Great Amen','Our Father','Lamb of God','Communion','Recessional','Other'];
 
-// (2026-07-13) clean distortion-free piano tone with limiter; prev: clipped gain
-let pianoAudioCtx = null, pianoMasterBus = null;
-function playPianoNote(noteIdx){
+// (2026-07-13) declare audio context & bus for piano audio; prev: undeclared
+let pianoAudioCtx = null;
+let pianoMasterBus = null;
+
+// (2026-07-13) volume boost option for sticky piano playback; prev: fixed peak
+function playPianoNote(noteIdx, volumeBoost = 1){
   try{
-    if(!pianoAudioCtx) pianoAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if(!pianoAudioCtx || pianoAudioCtx.state === 'closed'){
+      pianoAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      pianoMasterBus = null;
+    }
     if(pianoAudioCtx.state === 'suspended') pianoAudioCtx.resume();
     if(!pianoMasterBus){
       const masterGain = pianoAudioCtx.createGain();
-      masterGain.gain.value = 0.95;
+      masterGain.gain.value = 1.05;
       const comp = pianoAudioCtx.createDynamicsCompressor();
       comp.threshold.value = -3.0;
       comp.knee.value = 8;
@@ -1279,12 +1323,13 @@ function playPianoNote(noteIdx){
     filter.Q.value = 0.9;
     filter.connect(pianoMasterBus);
 
+    const boost = Math.min(Math.max(volumeBoost || 1, 0.5), 1.6);
     const partials = [
-      { mult: 1, type: 'sine', peak: 0.65, decay: 1.8 },
-      { mult: 1, type: 'triangle', peak: 0.20, decay: 1.2 },
-      { mult: 2, type: 'sine', peak: 0.18, decay: 0.9 },
-      { mult: 3, type: 'sine', peak: 0.08, decay: 0.5 },
-      { mult: 4, type: 'sine', peak: 0.03, decay: 0.3 }
+      { mult: 1, type: 'sine', peak: 0.75 * boost, decay: 1.8 },
+      { mult: 1, type: 'triangle', peak: 0.24 * boost, decay: 1.2 },
+      { mult: 2, type: 'sine', peak: 0.22 * boost, decay: 0.9 },
+      { mult: 3, type: 'sine', peak: 0.10 * boost, decay: 0.5 },
+      { mult: 4, type: 'sine', peak: 0.04 * boost, decay: 0.3 }
     ];
     partials.forEach(p=>{
       const osc = pianoAudioCtx.createOscillator();
@@ -1302,9 +1347,13 @@ function playPianoNote(noteIdx){
   }catch(e){}
 }
 
-// (2026-07-13) default cue chords to sharps instead of flats; prev: preferFlat
-function transposeSpacedChordLine(raw, semis, preferFlat = false){
-  if(!raw || !semis) return raw;
+// (2026-07-13) default cue chords to sharps with Bb; prev: flats
+function getCueAccidentalsPref(){
+  return (typeof localStorage !== 'undefined' && localStorage.getItem('cbp_cue_accidentals')) || 'sharps';
+}
+function transposeSpacedChordLine(raw, semis, preferFlat = (getCueAccidentalsPref() === 'flats')){
+  if(!raw) return raw;
+  if(!semis && !preferFlat) return raw;
   let out = '';
   let i = 0;
   while(i < raw.length){
@@ -1600,6 +1649,8 @@ const state = {
   // (2026-07-13) persistent landscape folder viewer sidebar state; prev: none
   sidebarCollapsed: (function(){ try{ return localStorage.getItem('cbp_sidebar_collapsed') === 'true'; }catch(e){ return false; } })(),
   viewerSidebarCollapsed: (function(){ try{ return localStorage.getItem('cbp_viewer_sidebar_collapsed') === 'true'; }catch(e){ return false; } })(),
+  // (2026-07-13) persistent sticky piano visibility state; prev: none
+  showStickyPiano: (function(){ try{ return localStorage.getItem('ui:showStickyPiano') === '1'; }catch(e){ return false; } })(),
   currentId: null,
   editingDraft: null,
   // (2026-07-13) track editor source view to return correctly; prev: forced viewer
@@ -1620,16 +1671,16 @@ const state = {
   cameFromSetlistId: null // when set, the song viewer's back button returns to this setlist instead of the main list
 };
 
-// (2026-07-13) tone down 8 folder themes & text accents to muted hues; prev: bright accents
+// (2026-07-13) cohesive slate atmospheric theme palette; prev: jet black
 const FOLDER_THEMES = {
-  gold:   { key:'gold',   label:'Gold',   swatch:'#d99b52', bg:'#0a0a0e', elev:'#13141a', elev2:'#1c1e26', elev3:'#252832', line:'#2c2f3b', accent:'#d99b52', dim:'rgba(217,155,82,0.14)' },
-  green:  { key:'green',  label:'Green',  swatch:'#5ea87a', bg:'#090c0b', elev:'#111614', elev2:'#19201d', elev3:'#212a26', line:'#27322d', accent:'#68b384', dim:'rgba(104,179,132,0.14)' },
-  purple: { key:'purple', label:'Purple', swatch:'#9d7cd8', bg:'#0a090e', elev:'#14121b', elev2:'#1d1b27', elev3:'#262333', line:'#2e2a3d', accent:'#a587dc', dim:'rgba(165,135,220,0.14)' },
-  blue:   { key:'blue',   label:'Blue',   swatch:'#619fd6', bg:'#090b0f', elev:'#11151d', elev2:'#191f2a', elev3:'#212937', line:'#283142', accent:'#6ba7dc', dim:'rgba(107,167,220,0.14)' },
-  red:    { key:'red',    label:'Red',    swatch:'#c96b75', bg:'#0c090b', elev:'#161215', elev2:'#201a1e', elev3:'#2a2227', line:'#32292f', accent:'#cf7680', dim:'rgba(207,118,128,0.14)' },
-  white:  { key:'white',  label:'White',  swatch:'#b8c0cc', bg:'#0e1015', elev:'#171a21', elev2:'#20242d', elev3:'#292e39', line:'#323845', accent:'#c2cad6', dim:'rgba(194,202,214,0.13)' },
-  pink:   { key:'pink',   label:'Pink',   swatch:'#c4729b', bg:'#0c090c', elev:'#161216', elev2:'#201a20', elev3:'#2a222a', line:'#322932', accent:'#cb7ea4', dim:'rgba(203,126,164,0.14)' },
-  yellow: { key:'yellow', label:'Yellow', swatch:'#c9b158', bg:'#0b0b09', elev:'#151411', elev2:'#1f1e19', elev3:'#292721', line:'#312f28', accent:'#cfb864', dim:'rgba(207,184,100,0.14)' }
+  gold:   { key:'gold',   label:'Gold',   swatch:'#e5a95d', bg:'#110e0a', elev:'#1a1611', elev2:'#262018', elev3:'#332b21', line:'#3d3428', accent:'#e5a95d', dim:'rgba(229,169,93,0.16)' },
+  green:  { key:'green',  label:'Green',  swatch:'#66ba88', bg:'#0a110d', elev:'#101a14', elev2:'#17261d', elev3:'#1f3327', line:'#273f31', accent:'#66ba88', dim:'rgba(102,186,136,0.16)' },
+  purple: { key:'purple', label:'Purple', swatch:'#a889e4', bg:'#0f0c18', elev:'#171324', elev2:'#211b33', elev3:'#2c2444', line:'#372e54', accent:'#a889e4', dim:'rgba(168,137,228,0.16)' },
+  blue:   { key:'blue',   label:'Blue',   swatch:'#5ca2f0', bg:'#0b101a', elev:'#111827', elev2:'#182234', elev3:'#202c44', line:'#223048', accent:'#5ca2f0', dim:'rgba(92,162,240,0.16)' },
+  red:    { key:'red',    label:'Red',    swatch:'#d9727d', bg:'#130b0d', elev:'#1c1013', elev2:'#28171b', elev3:'#351e24', line:'#42262d', accent:'#d9727d', dim:'rgba(217,114,125,0.16)' },
+  white:  { key:'white',  label:'White',  swatch:'#c5cee0', bg:'#0d1017', elev:'#141923', elev2:'#1c2331', elev3:'#252e3f', line:'#2f3a4e', accent:'#c5cee0', dim:'rgba(197,206,224,0.15)' },
+  pink:   { key:'pink',   label:'Pink',   swatch:'#d67ea7', bg:'#130b12', elev:'#1c101b', elev2:'#281726', elev3:'#351f33', line:'#42263f', accent:'#d67ea7', dim:'rgba(214,126,167,0.16)' },
+  yellow: { key:'yellow', label:'Yellow', swatch:'#dec66a', bg:'#111009', elev:'#1a180f', elev2:'#262316', elev3:'#332f1e', line:'#3d3824', accent:'#dec66a', dim:'rgba(222,198,106,0.16)' }
 };
 
 function getFolderTheme(catName){
@@ -1676,14 +1727,14 @@ function applyFolderTheme(catName){
     root.style.setProperty('--bg-elev2', t.elev2);
     root.style.setProperty('--bg-elev3', t.elev3);
     root.style.setProperty('--line', t.line);
-    root.style.setProperty('--text', '#f0f6fc');
-    root.style.setProperty('--text-dim', '#8b949e');
-    root.style.setProperty('--chord', '#ffe600');
-    root.style.setProperty('--chord-dim', 'rgba(255,230,0,0.2)');
+    root.style.setProperty('--text', '#edf2f7');
+    root.style.setProperty('--text-dim', '#8b9cb0');
+    root.style.setProperty('--chord', '#ffd23f');
+    root.style.setProperty('--chord-dim', 'rgba(255,210,63,0.18)');
   }
   root.style.setProperty('--accent', t.accent);
   root.style.setProperty('--accent-dim', t.dim);
-  // (2026-07-13) update --accent-shadow for folder theme; prev: static orange
+  // (2026-07-13) restore muted theme tokens & shadows; prev: vivid tokens
   root.style.setProperty('--accent-shadow', t.accent ? (t.accent + '70') : 'rgba(255,140,0,.45)');
 }
 
@@ -1925,10 +1976,15 @@ async function loadAll(){
       Store.getCueChords(),
       // (2026-07-13) fetch trash bin items from Store; prev: none
       Store.getTrash(),
-      Store.getCustomCues()
+      Store.getCustomCues(),
+      Store.getArtists()
     ]);
-    const [rawSongs, cats, parts, rawSetlists, fColors, cChords, remoteTrash, cCues] = await Promise.race([dataFetch, timeout]);
+    const [rawSongs, cats, parts, rawSetlists, fColors, cChords, remoteTrash, cCues, remoteArtists] = await Promise.race([dataFetch, timeout]);
     if(Array.isArray(remoteTrash)) state.trash = remoteTrash;
+    if(Array.isArray(remoteArtists)){
+      state.savedArtists = remoteArtists;
+      LocalAdapter.set('meta:artists', JSON.stringify(remoteArtists));
+    }
     setLastSyncAt(Date.now());
     if(rawSongs && rawSongs.length > 0){
       state.songs = rawSongs.map(normalizeSong);
@@ -2146,9 +2202,45 @@ function hydrateInitialState(){
     if(songs.length > 0) state.songs = songs;
     if(setlists.length > 0) state.setlists = setlists;
     applyFolderTheme(state.filterCat);
+    // (2026-07-13) hydrate saved account artists & composers; prev: none
+    const cachedArtists = localStorage.getItem('meta:artists');
+    if(cachedArtists){
+      try{
+        const parsed = JSON.parse(cachedArtists);
+        if(Array.isArray(parsed)) state.savedArtists = parsed;
+      }catch(e){}
+    }
   }catch(e){}
 }
 hydrateInitialState();
+
+// (2026-07-13) aggregate all account artists, composers, and known hymnals; prev: none
+function getAllKnownArtists(){
+  const set = new Set();
+  (state.savedArtists || []).forEach(a => { if(a && a.trim()) set.add(a.trim()); });
+  (state.songs || []).forEach(s => {
+    const a = (s.artist || '').trim();
+    if(a && !/misal\s*romano/i.test(a)) set.add(a);
+  });
+  KNOWN_HYMN_COMPOSERS.forEach(k => {
+    if(k.composer && !/misal\s*romano|lectionary|liturgical/i.test(k.composer)){
+      set.add(k.composer.trim());
+    }
+  });
+  return Array.from(set).sort((a,b)=>a.localeCompare(b));
+}
+
+// (2026-07-13) save newly added composer/singer to database; prev: none
+async function registerKnownArtist(artist){
+  if(!artist || !artist.trim()) return;
+  const clean = artist.trim();
+  if(!state.savedArtists) state.savedArtists = [];
+  if(!state.savedArtists.some(a => a.toLowerCase() === clean.toLowerCase())){
+    state.savedArtists.push(clean);
+    try{ LocalAdapter.set('meta:artists', JSON.stringify(state.savedArtists)); }catch(e){}
+    await Store.saveArtists(state.savedArtists).catch(()=>{});
+  }
+}
 
 // (2026-07-13) only protect built-in lit dialogues from delete; prev: all Misal Romano
 function isUndeletableDialogue(s){
@@ -2205,7 +2297,7 @@ Nagatoo ako sa Espiritu Santo, sa Santos ug Katoliko nga Simbahan, sa panag-ambi
       timeSig: '4/4', style: 'Chant', instrument: 'Guitar / Vocal', categories: [],
       massParts: ['Sanctus'],
       sectionTitle: 'Pasiuna nga Pag-ampo (Preface) \u2022 Before Sanctus',
-      anchorPart: 'Sanctus', anchorPos: 'before', litVersion: 5,
+      anchorPart: 'Sanctus', anchorPos: 'before', litVersion: 6,
       favorite: false, transposeOffset: 0, dateAdded: Date.now() - 3000,
       viewerFontSize: 15, viewerScrollSpeed: 30,
       body:
@@ -2228,7 +2320,7 @@ Nagatoo ako sa Espiritu Santo, sa Santos ug Katoliko nga Simbahan, sa panag-ambi
 \u2669 Response: Maanaa usab kanimo.
 
 \u27a4 Priest: Ibayaw ang inyong mga kasingkasing.
->        B     D        G       A         D
+>        B     D      G    A   D
 \u2669 Response: Amo nang gibayaw ngadto sa Ginoo.
 
 \u27a4 Priest: Magpasalamat kita sa Ginoo nga atong Dios.
@@ -2273,10 +2365,10 @@ function syncLiturgicalDialogues(persist){
       existing.anchorPart = ls.anchorPart;
       existing.anchorPos = ls.anchorPos;
       existing.optionalLit = ls.optionalLit;
-      if((!existing.userEdited && existing.litVersion !== 5) || existing.title !== ls.title){
+      if((!existing.userEdited && existing.litVersion !== 6) || existing.title !== ls.title || (existing.id === 'lit-preface' && existing.body.includes('G       A         D'))){
         existing.title = ls.title;
-        if(!existing.userEdited) existing.body = ls.body;
-        existing.litVersion = 5;
+        if(!existing.userEdited || existing.body.includes('G       A         D')) existing.body = ls.body;
+        existing.litVersion = 6;
         LocalAdapter.set('song:'+existing.id, JSON.stringify(existing));
         if(persist) Store.saveSong(existing).catch(()=>{});
       }
@@ -3155,8 +3247,18 @@ function getFilteredSongsForCurrentView(catOverride){
   syncLiturgicalDialogues(false);
   let songs = state.songs.slice();
   const effectiveCat = catOverride !== undefined ? catOverride : state.filterCat;
-  // (2026-07-13) string match setlist id in getFilteredSongs; prev: s.id===filterId
-  if(state.filterSetlistId && catOverride === undefined){
+  // (2026-07-13) support flag peek in getFilteredSongsForCurrentView; prev: none
+  if(typeof catOverride === 'string' && catOverride.startsWith('flag:')){
+    const fKey = catOverride.slice(5);
+    if(fKey === 'all'){
+      songs = songs.filter(s => getSongFlag(s) !== null);
+    } else {
+      songs = songs.filter(s => {
+        const f = getSongFlag(s);
+        return f && f.key === fKey;
+      });
+    }
+  } else if(state.filterSetlistId && catOverride === undefined){
     const sl = state.setlists.find(s=>String(s.id)===String(state.filterSetlistId));
     if(sl && Array.isArray(sl.items)){
       const ids = sl.items.filter(it=>it.type==='song'&&it.songId).map(it=>it.songId);
@@ -3191,9 +3293,13 @@ function getFilteredSongsForCurrentView(catOverride){
     songs = songs.filter(s=>s.favorite);
   }
   if(state.search.trim() && catOverride === undefined){
-    const q = state.search.toLowerCase();
-    // (2026-07-13) search across title, artist, section & full lyrics body; prev: title/artist only
-    songs = songs.filter(s => s.title.toLowerCase().includes(q) || (s.artist||'').toLowerCase().includes(q) || (s.sectionTitle||'').toLowerCase().includes(q) || (s.body||'').toLowerCase().includes(q));
+    // (2026-07-13) search ignoring commas, dots & punctuation; prev: raw includes
+    const cleanSearchPunct = s => (s || '').toLowerCase().replace(/[^a-z0-9\s]/gi, ' ').replace(/\s+/g, ' ').trim();
+    const qTokens = cleanSearchPunct(state.search).split(' ').filter(Boolean);
+    songs = songs.filter(s => {
+      const combined = cleanSearchPunct(s.title + ' ' + (s.artist||'') + ' ' + (s.sectionTitle||'') + ' ' + (s.body||''));
+      return qTokens.every(tok => combined.includes(tok));
+    });
   }
   return songs;
 }
@@ -3449,18 +3555,24 @@ function renderSongRowHtml(s, secMassPart){
       ${leftControl}
       <div style="flex:1;min-width:0;">
         <div class="song-title" style="display:flex;align-items:center;min-width:0;">${flagPill}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(displayTitle)}</span>${excludedBadge}</div>
-        <!-- (2026-07-13) display effective composer artist without unknown; prev: s.artist||Unknown -->
+        <!-- (2026-07-13) hierarchy formatting with pipe separator; prev: dot join -->
         <div class="song-sub">${(()=>{
           const effArtist = getEffectiveSongArtist(s);
           const keyLabel = transposeKeyLabel(getEffectiveSongKey(s), s.transposeOffset||0);
           const keySub = keyLabel && keyLabel !== '—' ? ('Key ' + escapeHtml(keyLabel)) : (!isSectionDivider(s.title) ? 'Key —' : '');
-          const parts = [];
-          if(effArtist) parts.push(escapeHtml(effArtist));
-          else if(s.artist && s.artist.trim() && s.artist.trim().toLowerCase() !== 'unknown') parts.push(escapeHtml(s.artist.trim()));
-          else if(!isSectionDivider(s.title)) parts.push('Unknown');
-          if(keySub) parts.push(keySub);
-          if(s.categories && s.categories.length) parts.push(escapeHtml(s.categories.join(', ')));
-          return parts.join(' &middot; ');
+          const metaPrefix = [];
+          if(effArtist) metaPrefix.push(escapeHtml(effArtist));
+          else if(s.artist && s.artist.trim() && s.artist.trim().toLowerCase() !== 'unknown') metaPrefix.push(escapeHtml(s.artist.trim()));
+          else if(!isSectionDivider(s.title)) metaPrefix.push('Unknown');
+          if(keySub) metaPrefix.push(keySub);
+          const catStr = s.categories && s.categories.length ? escapeHtml(s.categories.join(', ')) : '';
+          if(metaPrefix.length && catStr) {
+            return metaPrefix.join(' &middot; ') + ' <span style="opacity:0.35;margin:0 4px;">|</span> ' + catStr;
+          } else if(metaPrefix.length) {
+            return metaPrefix.join(' &middot; ');
+          } else {
+            return catStr;
+          }
         })()}</div>
         ${lyricSnippetHtml}
       </div>
@@ -3581,9 +3693,10 @@ function buildSongListRowsHtml(catOverride){
   if(state.loading && !isPeek && (!state.songs || state.songs.length === 0)){
     return renderSkeletonSongListHtml();
   }
+  // (2026-07-13) align & balance action button pills; prev: mismatched sizes
   const favToggleBtn = isPeek ? '' : `
-    <button type="button" class="fav-toggle-pill ${state.favOnly?'is-active':''}" id="btn-toggle-fav-only" title="${state.favOnly?'Show all songs':'Show favorited only'}" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:10.5px;font-weight:700;letter-spacing:0.2px;border-radius:12px;border:1px solid ${state.favOnly?'var(--chord)':'rgba(255,255,255,0.18)'};background:${state.favOnly?'rgba(234,179,8,0.2)':'transparent'};color:${state.favOnly?'var(--chord)':'var(--text-dim)'};cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all 0.15s ease;">
-      <span style="display:flex;align-items:center;font-size:12px;color:${state.favOnly?'var(--chord)':'inherit'};">${iconStar(state.favOnly)}</span>
+    <button type="button" class="fav-toggle-pill ${state.favOnly?'is-active':''}" id="btn-toggle-fav-only" title="${state.favOnly?'Show all songs' : 'Show favorited only'}">
+      <span class="pill-icon-wrap">${iconStar(state.favOnly)}</span>
       <span>${state.favOnly?'Favorites':'All'}</span>
     </button>`;
 
@@ -3599,8 +3712,8 @@ function buildSongListRowsHtml(catOverride){
       const toggle = (isFirstSection && !isPeek) ? favToggleBtn : '';
 
       const editCuePill = (isFirstSection && !isPeek && (state.filterMassPart || sec.massPart)) ? `
-        <button type="button" class="fav-toggle-pill" id="btn-edit-cue-pill" data-edit-mp-cue="${escapeHtml(state.filterMassPart || sec.massPart)}" title="Edit Liturgical Cue" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:10.5px;font-weight:700;letter-spacing:0.2px;border-radius:12px;border:1px solid rgba(255,255,255,0.18);background:transparent;color:var(--text);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all 0.15s ease;">
-          <span style="display:inline-flex;align-items:center;width:11px;height:11px;">${iconEdit()}</span>
+        <button type="button" class="fav-toggle-pill" id="btn-edit-cue-pill" data-edit-mp-cue="${escapeHtml(state.filterMassPart || sec.massPart)}" title="Edit Liturgical Cue">
+          <span class="pill-icon-wrap">${iconEdit()}</span>
           <span>Edit Cue</span>
         </button>` : '';
       const rightControls = (isFirstSection && !isPeek) ? `<div style="display:flex;align-items:center;gap:6px;">${editCuePill}${toggle}</div>` : '';
@@ -3650,8 +3763,8 @@ function buildSongListRowsHtml(catOverride){
           <span class="letter-divider-title ${canPickViewMp ? 'clickable' : ''}" ${canPickViewMp ? `data-open-mp-picker="${escapeHtml(targetViewMp)}" role="button" tabindex="0" title="Find &amp; add songs for ${escapeHtml(targetViewMp)}" style="cursor:pointer;"` : ''}>${escapeHtml(viewTitle)}</span>
           <div style="display:flex;align-items:center;gap:6px;">
             ${(state.filterMassPart && !isPeek) ? `
-              <button type="button" class="fav-toggle-pill" id="btn-edit-cue-pill" data-edit-mp-cue="${escapeHtml(state.filterMassPart)}" title="Edit Liturgical Cue" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:10.5px;font-weight:700;letter-spacing:0.2px;border-radius:12px;border:1px solid rgba(255,255,255,0.18);background:transparent;color:var(--text);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all 0.15s ease;">
-                <span style="display:inline-flex;align-items:center;width:11px;height:11px;">${iconEdit()}</span>
+              <button type="button" class="fav-toggle-pill" id="btn-edit-cue-pill" data-edit-mp-cue="${escapeHtml(state.filterMassPart)}" title="Edit Liturgical Cue">
+                <span class="pill-icon-wrap">${iconEdit()}</span>
                 <span>Edit Cue</span>
               </button>` : ''}
             ${favToggleBtn}
@@ -3718,6 +3831,13 @@ function wireListWrapRows(){
     curWrap.querySelectorAll('.song-row').forEach(el=>{
       wireSongRowInteractions(el, el.dataset.id, el.dataset.sectionMp);
     });
+    // (2026-07-13) sync fab fade state after row rebuild; prev: un-synced
+    const fab = document.getElementById('fab-add');
+    if(fab){
+      const canScroll = curWrap.scrollHeight > curWrap.clientHeight + 60;
+      const nearBottom = (curWrap.scrollTop + curWrap.clientHeight) >= (curWrap.scrollHeight - 80);
+      fab.classList.toggle('is-faded', canScroll && nearBottom);
+    }
   }
 }
 
@@ -3796,12 +3916,19 @@ function renderListView(animateChipScroll){
   // (2026-07-13) fallback to state.lastListScroll when list-wrap was unmounted; prev: 0
   const prevListScroll = existingListWrap ? existingListWrap.scrollTop : (state.lastListScroll || 0);
 
-  // (2026-07-13) topbar inline search & solid colored done button; prev: separate searchrow
+  // (2026-07-13) support folder & flag horizontal swiping; prev: folder only
   const isSearching = state.searchActive || !!(state.search && state.search.trim());
   const canSwipeCats = !isSearching && !state.listEditMode && !state.filterMassPart && !state.filterFlag && !state.filterSetlistId;
   const currentCatIdx = Math.max(0, cats.indexOf(state.filterCat || 'All'));
   const prevCat = canSwipeCats && currentCatIdx > 0 ? cats[currentCatIdx - 1] : null;
   const nextCat = canSwipeCats && currentCatIdx < cats.length - 1 ? cats[currentCatIdx + 1] : null;
+  const flagKeys = ['all', ...SONG_FLAGS.map(f=>f.key)];
+  const canSwipeFlags = !isSearching && !state.listEditMode && !state.filterMassPart && !state.filterSetlistId && !!state.filterFlag;
+  const currentFlagIdx = canSwipeFlags ? Math.max(0, flagKeys.indexOf(state.filterFlag)) : 0;
+  const prevFlag = canSwipeFlags && currentFlagIdx > 0 ? flagKeys[currentFlagIdx - 1] : null;
+  const nextFlag = canSwipeFlags && currentFlagIdx < flagKeys.length - 1 ? flagKeys[currentFlagIdx + 1] : null;
+  const peekPrevHtml = prevCat ? `<div class="list-peek is-prev" id="list-peek-prev">${buildSongListRowsHtml(prevCat)}</div>` : (prevFlag ? `<div class="list-peek is-prev" id="list-peek-prev">${buildSongListRowsHtml('flag:' + prevFlag)}</div>` : '');
+  const peekNextHtml = nextCat ? `<div class="list-peek is-next" id="list-peek-next">${buildSongListRowsHtml(nextCat)}</div>` : (nextFlag ? `<div class="list-peek is-next" id="list-peek-next">${buildSongListRowsHtml('flag:' + nextFlag)}</div>` : '');
   app.innerHTML = `
     <div class="topbar">
       <button class="icon-btn" id="btn-open-sidebar">${iconMenu()}</button>
@@ -3841,9 +3968,10 @@ function renderListView(animateChipScroll){
     <!-- (2026-07-13) list slider container with folder peek; prev: direct list-wrap -->
     <div class="list-slider-container" id="list-slider-container">
       <div class="list-slider-track" id="list-slider-track">
-        ${prevCat ? `<div class="list-peek is-prev" id="list-peek-prev">${buildSongListRowsHtml(prevCat)}</div>` : ''}
+        <!-- (2026-07-13) render folder & flag peeks; prev: folder peek only -->
+        ${peekPrevHtml}
         <div class="list-wrap ${state.listEditMode?'in-edit-mode':''}" id="list-wrap">${rows}</div>
-        ${nextCat ? `<div class="list-peek is-next" id="list-peek-next">${buildSongListRowsHtml(nextCat)}</div>` : ''}
+        ${peekNextHtml}
       </div>
     </div>
     ${!state.modal && state.listEditMode && state.checkedSongIds.length > 0 ? `
@@ -3902,9 +4030,19 @@ function renderListView(animateChipScroll){
         }
       });
     }
+    // (2026-07-13) fade fab when scrolled near bottom; prev: always solid
+    const updateFabNearBottom = () => {
+      const fab = document.getElementById('fab-add');
+      if (!fab) return;
+      const canScroll = initialLw.scrollHeight > initialLw.clientHeight + 60;
+      const nearBottom = (initialLw.scrollTop + initialLw.clientHeight) >= (initialLw.scrollHeight - 80);
+      fab.classList.toggle('is-faded', canScroll && nearBottom);
+    };
     initialLw.addEventListener('scroll', ()=>{
       state.lastListScroll = initialLw.scrollTop;
+      updateFabNearBottom();
     }, { passive: true });
+    updateFabNearBottom();
   }
 
   // (2026-07-13) wire search toggle, live search input & clear buttons; prev: sort row
@@ -4346,28 +4484,34 @@ function renderListView(animateChipScroll){
       render();
     };
   }
+  // (2026-07-13) smooth chip centering & flag swipe navigation; prev: fast offset & cats only
   const newChipRow = document.querySelector('.chiprow');
   if(newChipRow){
-    newChipRow.scrollLeft = prevChipScroll;
     const activeChip = newChipRow.querySelector('.chip.active');
     if(activeChip){
-      const targetLeft = Math.max(0, activeChip.offsetLeft - 12);
-      if(animateChipScroll){
-        requestAnimationFrame(()=>{
-          newChipRow.scrollTo({ left: targetLeft, behavior: 'smooth' });
-        });
+      const targetLeft = Math.max(0, activeChip.offsetLeft - (newChipRow.clientWidth / 2) + (activeChip.offsetWidth / 2));
+      if(animateChipScroll && Math.abs(prevChipScroll - targetLeft) > 5){
+        newChipRow.scrollLeft = prevChipScroll;
+        setTimeout(()=>{
+          if(newChipRow) newChipRow.scrollTo({ left: targetLeft, behavior: 'smooth' });
+        }, 35);
       } else {
         newChipRow.scrollLeft = targetLeft;
       }
+    } else {
+      newChipRow.scrollLeft = prevChipScroll;
     }
   }
   const backChip = document.querySelector('[data-back-to-folders]');
   if(backChip) backChip.onclick = ()=>{ state.filterFlag = null; state.filterMassPart = null; state.filterCat = 'All'; applyFolderTheme('All'); renderListView(); };
 
-  // (2026-07-13) wire horizontal folder category swipe & peek; prev: none
+  // (2026-07-13) wire horizontal swipe for categories & flags; prev: categories only
   const listSliderTrack = document.getElementById('list-slider-track');
   const listContainer = document.getElementById('list-slider-container');
-  if(listSliderTrack && listContainer && canSwipeCats){
+  const canSwipeAny = canSwipeCats || canSwipeFlags;
+  const currentNext = canSwipeFlags ? nextFlag : nextCat;
+  const currentPrev = canSwipeFlags ? prevFlag : prevCat;
+  if(listSliderTrack && listContainer && canSwipeAny){
     let isSwipe = false;
     let startX = 0, startY = 0;
     let dx = 0;
@@ -4403,7 +4547,7 @@ function renderListView(animateChipScroll){
       }
       dx = curDx;
       if(listSliderTrack){
-        const resist = (dx < 0 && !nextCat) || (dx > 0 && !prevCat) ? 0.2 : 0.85;
+        const resist = (dx < 0 && !currentNext) || (dx > 0 && !currentPrev) ? 0.2 : 0.85;
         listSliderTrack.style.transform = `translate3d(${(dx * resist).toFixed(1)}px, 0, 0)`;
       }
     };
@@ -4413,32 +4557,42 @@ function renderListView(animateChipScroll){
       isSwipe = false;
       const dt = Date.now() - startT;
       if(dt < 800 && Math.abs(dx) > 40){
-        if(dx < 0 && nextCat){
+        if(dx < 0 && currentNext){
           if(listSliderTrack){
             listSliderTrack.style.transition = 'transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1)';
             listSliderTrack.style.transform = 'translate3d(-100%, 0, 0)';
           }
           setTimeout(()=>{
-            state.filterFlag = null;
-            state.filterMassPart = null;
-            state.filterCat = nextCat;
-            localStorage.setItem('ui:filterCat', nextCat);
-            applyFolderTheme(nextCat);
-            renderListView(true);
+            if(canSwipeFlags){
+              state.filterFlag = currentNext;
+              renderListView(true);
+            } else {
+              state.filterFlag = null;
+              state.filterMassPart = null;
+              state.filterCat = currentNext;
+              localStorage.setItem('ui:filterCat', currentNext);
+              applyFolderTheme(currentNext);
+              renderListView(true);
+            }
           }, 180);
           return;
-        } else if(dx > 0 && prevCat){
+        } else if(dx > 0 && currentPrev){
           if(listSliderTrack){
             listSliderTrack.style.transition = 'transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1)';
             listSliderTrack.style.transform = 'translate3d(100%, 0, 0)';
           }
           setTimeout(()=>{
-            state.filterFlag = null;
-            state.filterMassPart = null;
-            state.filterCat = prevCat;
-            localStorage.setItem('ui:filterCat', prevCat);
-            applyFolderTheme(prevCat);
-            renderListView(true);
+            if(canSwipeFlags){
+              state.filterFlag = currentPrev;
+              renderListView(true);
+            } else {
+              state.filterFlag = null;
+              state.filterMassPart = null;
+              state.filterCat = currentPrev;
+              localStorage.setItem('ui:filterCat', currentPrev);
+              applyFolderTheme(currentPrev);
+              renderListView(true);
+            }
           }, 180);
           return;
         }
@@ -4711,6 +4865,8 @@ function wireSongRowInteractions(el, id, sectionMassPart){
 
 // (2026-07-13) arm 7s autoscroll on song open; prev: stopped before render
 function openViewer(id, fromSetlistId, preferredMassPart){
+  // (2026-07-13) reset lastViewerSongId so song scrolls to top; prev: kept scroll
+  state.lastViewerSongId = null;
   // (2026-07-13) record current list scroll before switching to viewer; prev: unrecorded
   const lw = document.getElementById('list-wrap');
   if(lw && !fromSetlistId) state.lastListScroll = lw.scrollTop;
@@ -4767,12 +4923,61 @@ function getCueNoteMode(){
 function getCueSemis(){
   return (getCueKeyIdx() - 2 + 12) % 12;
 }
+// (2026-07-13) sticky bottom piano A3-G5 html renderer; prev: none
+function renderStickyPianoHtml(){
+  const preferFlat = getCueAccidentalsPref() === 'flats';
+  const whiteKeys = [
+    { idx: -3, label: 'A3', name: 'A' },
+    { idx: -1, label: 'B3', name: 'B' },
+    { idx: 0, label: 'C4', name: 'C' },
+    { idx: 2, label: 'D4', name: 'D' },
+    { idx: 4, label: 'E4', name: 'E' },
+    { idx: 5, label: 'F4', name: 'F' },
+    { idx: 7, label: 'G4', name: 'G' },
+    { idx: 9, label: 'A4', name: 'A' },
+    { idx: 11, label: 'B4', name: 'B' },
+    { idx: 12, label: 'C5', name: 'C' },
+    { idx: 14, label: 'D5', name: 'D' },
+    { idx: 16, label: 'E5', name: 'E' },
+    { idx: 17, label: 'F5', name: 'F' },
+    { idx: 19, label: 'G5', name: 'G' }
+  ];
+  // (2026-07-13) sticky keys sharps by default with Bb always; prev: A#
+  const blackKeys = [
+    { idx: -2, label: 'Bb3', name: 'Bb', left: '4.84%' },
+    { idx: 1, label: preferFlat ? 'Db4' : 'C#4', name: preferFlat ? 'Db' : 'C#', left: '19.13%' },
+    { idx: 3, label: preferFlat ? 'Eb4' : 'D#4', name: preferFlat ? 'Eb' : 'D#', left: '26.27%' },
+    { idx: 6, label: preferFlat ? 'Gb4' : 'F#4', name: preferFlat ? 'Gb' : 'F#', left: '40.56%' },
+    { idx: 8, label: preferFlat ? 'Ab4' : 'G#4', name: preferFlat ? 'Ab' : 'G#', left: '47.70%' },
+    { idx: 10, label: 'Bb4', name: 'Bb', left: '54.84%' },
+    { idx: 13, label: preferFlat ? 'Db5' : 'C#5', name: preferFlat ? 'Db' : 'C#', left: '69.13%' },
+    { idx: 15, label: preferFlat ? 'Eb5' : 'D#5', name: preferFlat ? 'Eb' : 'D#', left: '76.27%' },
+    { idx: 18, label: preferFlat ? 'Gb5' : 'F#5', name: preferFlat ? 'Gb' : 'F#', left: '90.56%' }
+  ];
+  return `
+    <div class="sticky-piano-tray ${state.showStickyPiano ? 'is-visible' : ''}" id="sticky-piano-tray">
+      <div class="sticky-piano-header">
+        <div class="sticky-piano-title-wrap">
+          <span style="font-size:12px;display:flex;align-items:center;color:var(--accent);">&#9835;</span>
+          <span class="sticky-piano-title">PIANO (A3 &ndash; G5)</span>
+          <span class="sticky-piano-badge" id="sticky-piano-readout">Tap key to play</span>
+        </div>
+        <button type="button" class="icon-btn sticky-piano-close-btn" id="btn-close-sticky-piano" title="Close Piano">&times;</button>
+      </div>
+      <div class="sticky-piano-keyboard">
+        ${whiteKeys.map(k=>`<button type="button" class="sticky-piano-key white-key" data-sticky-note="${k.idx}" data-note-label="${k.label}"><span>${k.name}</span></button>`).join('')}
+        ${blackKeys.map(k=>`<button type="button" class="sticky-piano-key black-key" data-sticky-note="${k.idx}" data-note-label="${k.label}" style="left:${k.left};"><span>${k.name}</span></button>`).join('')}
+      </div>
+    </div>`;
+}
+
 function renderCuePianoFinder(){
   const mode = getCueNoteMode();
   const keyIdx = getCueKeyIdx();
   const activeNoteIdx = mode === '1st' ? (keyIdx + 4) % 12 : keyIdx;
-  // (2026-07-13) spell cue key with sharps instead of flats; prev: preferFlat
-  const keyName = spellNote(keyIdx, false);
+  // (2026-07-13) spell cue key with flats (Bb) by default; prev: sharps (A#)
+  const preferFlat = getCueAccidentalsPref() === 'flats';
+  const keyName = spellNote(keyIdx, preferFlat);
   const whiteNotes = [
     { idx: 0, label: 'C' },
     { idx: 2, label: 'D' },
@@ -4782,37 +4987,16 @@ function renderCuePianoFinder(){
     { idx: 9, label: 'A' },
     { idx: 11, label: 'B' }
   ];
+  // (2026-07-13) black keys sharps by default with index 10 always Bb; prev: A#
   const blackNotes = [
-    { idx: 1, label: 'C#', left: '10.4%' },
-    { idx: 3, label: 'D#', left: '24.7%' },
-    { idx: 6, label: 'F#', left: '53.3%' },
-    { idx: 8, label: 'G#', left: '67.6%' },
-    { idx: 10, label: 'A#', left: '81.9%' }
+    { idx: 1, label: preferFlat ? 'Db' : 'C#', left: '10.4%' },
+    { idx: 3, label: preferFlat ? 'Eb' : 'D#', left: '24.7%' },
+    { idx: 6, label: preferFlat ? 'Gb' : 'F#', left: '53.3%' },
+    { idx: 8, label: preferFlat ? 'Ab' : 'G#', left: '67.6%' },
+    { idx: 10, label: 'Bb', left: '81.9%' }
   ];
-  return `
-    <div class="cue-piano-wrap">
-      <div class="cue-piano-toolbar">
-        <!-- (2026-07-13) circular radio note buttons; prev: select dropdown -->
-        <div class="cue-piano-mode-wrap">
-          <span class="cue-piano-label">Find Priest Key:</span>
-          <div class="cue-note-radio-group">
-            <button type="button" class="cue-note-circle-btn ${(mode||'2nd')==='1st'?'selected':''}" data-note-mode="1st" title="Find by 1st Note">
-              <span class="circle-radio-dot"></span>
-              <span>1st Note</span>
-            </button>
-            <button type="button" class="cue-note-circle-btn ${(mode||'2nd')==='2nd'?'selected':''}" data-note-mode="2nd" title="Find by 2nd Note">
-              <span class="circle-radio-dot"></span>
-              <span>2nd Note</span>
-            </button>
-          </div>
-        </div>
-        <div class="cue-piano-key-badge">Key: <b class="cue-key-readout">${escapeHtml(keyName)}</b></div>
-      </div>
-      <div class="cue-piano-keyboard">
-        ${whiteNotes.map(n=>`<button type="button" class="cue-piano-key white-key ${activeNoteIdx===n.idx?'is-active':''}" data-piano-note="${n.idx}"><span>${n.label}</span></button>`).join('')}
-        ${blackNotes.map(n=>`<button type="button" class="cue-piano-key black-key ${activeNoteIdx===n.idx?'is-active':''}" data-piano-note="${n.idx}" style="left:${n.left};"><span>${n.label}</span></button>`).join('')}
-      </div>
-    </div>`;
+  // (2026-07-13) compact piano template without extra newlines; prev: spaced
+  return `<div class="cue-piano-wrap"><div class="cue-piano-toolbar"><div class="cue-piano-mode-wrap"><span class="cue-piano-label">Find Priest Key:</span><div class="cue-note-radio-group"><button type="button" class="cue-note-circle-btn ${(mode||'2nd')==='1st'?'selected':''}" data-note-mode="1st" title="Find by 1st Note"><span class="circle-radio-dot"></span><span>1st Note</span></button><button type="button" class="cue-note-circle-btn ${(mode||'2nd')==='2nd'?'selected':''}" data-note-mode="2nd" title="Find by 2nd Note"><span class="circle-radio-dot"></span><span>2nd Note</span></button></div></div><div class="cue-piano-key-badge">Key: <b class="cue-key-readout">${escapeHtml(keyName)}</b></div></div><div class="cue-piano-keyboard">${whiteNotes.map(n=>`<button type="button" class="cue-piano-key white-key ${activeNoteIdx===n.idx?'is-active':''}" data-piano-note="${n.idx}"><span>${n.label}</span></button>`).join('')}${blackNotes.map(n=>`<button type="button" class="cue-piano-key black-key ${activeNoteIdx===n.idx?'is-active':''}" data-piano-note="${n.idx}" style="left:${n.left};"><span>${n.label}</span></button>`).join('')}</div></div>`;
 }
 
 // (2026-07-13) trim cue chord offset for direct syllable alignment; prev: untrimmed
@@ -4823,29 +5007,66 @@ function renderCueChordPills(chordStr, cueId){
     return `<div class="cue-chord-row is-editing"><input type="text" class="cue-chord-input" data-cue-id="${escapeHtml(cueId||'')}" value="${escapeHtml(raw)}" spellcheck="false" autocomplete="off"/></div>`;
   }
   if(!raw) return '';
-  const transposed = transposeSpacedChordLine(raw, getCueSemis());
+  const preferFlat = getCueAccidentalsPref() === 'flats';
+  const transposed = transposeSpacedChordLine(raw, getCueSemis(), preferFlat);
   return `<div class="cue-chord-row" data-base-chords="${escapeHtml(raw)}">${renderChordLine('>' + transposed)}</div>`;
 }
 
 // (2026-07-13) custom dropdown component & cue card selector; prev: select
-function renderCustomDropdown({ id, value, options, className = '', style = '', placeholder = 'Select…' }){
+// (2026-07-13) custom dropdown with optional real-time search & custom typing; prev: basic
+// (2026-07-13) typeable main dropdown combobox or trigger select; prev: button trigger
+function renderCustomDropdown({ id, value, options, className = '', style = '', placeholder = 'Select…', searchable = false, editable = false }){
   const normalized = options.map(opt => typeof opt === 'object' ? opt : { value: opt, label: opt });
-  const current = normalized.find(o => String(o.value) === String(value)) || normalized[0] || { value: '', label: placeholder };
+  const current = normalized.find(o => String(o.value) === String(value)) || (editable ? { value: value || '', label: value || placeholder } : (normalized[0] || { value: '', label: placeholder }));
+
+  if(editable){
+    const fullClass = `custom-select is-combobox ${className}`.trim();
+    return `
+      <div class="${fullClass}" data-custom-select="${id}" style="${style}">
+        <div class="custom-combobox-wrap">
+          <input type="text" id="${id}" class="custom-select-trigger custom-combobox-input" value="${escapeHtml(value || '')}" placeholder="${escapeHtml(placeholder)}" autocomplete="off" spellcheck="false"/>
+          <button type="button" class="custom-combobox-toggle" aria-label="Toggle options" tabindex="-1">
+            <svg class="custom-select-chevron" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+        </div>
+        <div class="custom-select-menu" role="listbox">
+          <div class="custom-select-options-wrap" style="overflow-y:auto;max-height:210px;width:100%;box-sizing:border-box;">
+            ${normalized.map(opt => {
+              const isSelected = String(opt.value) === String(value);
+              return `<div class="custom-select-option ${isSelected ? 'selected' : ''}" role="option" data-value="${escapeHtml(opt.value)}" aria-selected="${isSelected}">
+                <span>${escapeHtml(opt.label)}</span>
+                ${isSelected ? `<span class="custom-select-check">${iconCheckSmall()}</span>` : ''}
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  const fullClass = `custom-select ${className} ${searchable ? 'has-search' : ''}`.trim();
+  const searchInputHtml = searchable ? `
+    <div class="custom-select-search-wrap" style="padding:4px;border-bottom:1px solid var(--line);margin-bottom:4px;flex-shrink:0;">
+      <input type="text" class="custom-select-search-input" placeholder="Type custom artist or search..." autocomplete="off" style="width:100%;box-sizing:border-box;padding:7px 10px;font-size:12px;font-family:inherit;background:var(--bg-elev2);border:1px solid var(--line);border-radius:7px;color:var(--text);outline:none;"/>
+    </div>` : '';
+
   return `
-    <div class="custom-select ${className}" data-custom-select="${id}" style="${style}">
+    <div class="${fullClass}" data-custom-select="${id}" style="${style}">
       <input type="hidden" id="${id}" value="${escapeHtml(current.value)}"/>
       <button type="button" class="custom-select-trigger" aria-haspopup="listbox" aria-expanded="false">
         <span class="custom-select-label">${escapeHtml(current.label)}</span>
         <svg class="custom-select-chevron" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
       </button>
       <div class="custom-select-menu" role="listbox">
-        ${normalized.map(opt => {
-          const isSelected = String(opt.value) === String(current.value);
-          return `<div class="custom-select-option ${isSelected ? 'selected' : ''}" role="option" data-value="${escapeHtml(opt.value)}" aria-selected="${isSelected}">
-            <span>${escapeHtml(opt.label)}</span>
-            ${isSelected ? `<span class="custom-select-check">${iconCheckSmall()}</span>` : ''}
-          </div>`;
-        }).join('')}
+        ${searchInputHtml}
+        <div class="custom-select-options-wrap" style="${searchable?'overflow-y:auto;max-height:180px;':''}">
+          ${normalized.map(opt => {
+            const isSelected = String(opt.value) === String(current.value);
+            return `<div class="custom-select-option ${isSelected ? 'selected' : ''}" role="option" data-value="${escapeHtml(opt.value)}" aria-selected="${isSelected}">
+              <span>${escapeHtml(opt.label)}</span>
+              ${isSelected ? `<span class="custom-select-check">${iconCheckSmall()}</span>` : ''}
+            </div>`;
+          }).join('')}
+        </div>
       </div>
     </div>`;
 }
@@ -4855,13 +5076,20 @@ function wireCustomDropdowns(root = document){
     const id = container.dataset.customSelect;
     const trigger = container.querySelector('.custom-select-trigger');
     const menu = container.querySelector('.custom-select-menu');
-    const hiddenInput = container.querySelector('input[type="hidden"]');
+    const optionsWrap = container.querySelector('.custom-select-options-wrap') || menu;
+    if(!trigger || !menu) return;
+
+    const isInputTrigger = trigger.tagName === 'INPUT';
+    const hiddenInput = isInputTrigger ? trigger : container.querySelector('input[type="hidden"]');
     const labelSpan = container.querySelector('.custom-select-label');
-    if(!trigger || !menu || !hiddenInput) return;
+    const toggleBtn = container.querySelector('.custom-combobox-toggle');
+    const searchInput = isInputTrigger ? trigger : container.querySelector('.custom-select-search-input');
+    if(!hiddenInput) return;
 
     const closeMenu = ()=>{
       container.classList.remove('open');
       trigger.setAttribute('aria-expanded', 'false');
+      toggleBtn?.setAttribute('aria-expanded', 'false');
     };
 
     const openMenu = ()=>{
@@ -4869,17 +5097,78 @@ function wireCustomDropdowns(root = document){
         if(c !== container){
           c.classList.remove('open');
           c.querySelector('.custom-select-trigger')?.setAttribute('aria-expanded', 'false');
+          c.querySelector('.custom-combobox-toggle')?.setAttribute('aria-expanded', 'false');
         }
       });
       container.classList.add('open');
       trigger.setAttribute('aria-expanded', 'true');
+      toggleBtn?.setAttribute('aria-expanded', 'true');
+      if(searchInput && !isInputTrigger){
+        searchInput.value = '';
+        searchInput.dispatchEvent(new Event('input'));
+        setTimeout(()=> searchInput.focus(), 80);
+      }
     };
 
-    trigger.onclick = (e)=>{
-      e.stopPropagation();
-      if(container.classList.contains('open')) closeMenu();
-      else openMenu();
-    };
+    if(isInputTrigger){
+      trigger.onfocus = ()=> openMenu();
+      trigger.onclick = (e)=>{ e.stopPropagation(); openMenu(); };
+      if(toggleBtn){
+        toggleBtn.onclick = (e)=>{
+          e.stopPropagation();
+          if(container.classList.contains('open')) closeMenu();
+          else { openMenu(); trigger.focus(); }
+        };
+      }
+    } else {
+      trigger.onclick = (e)=>{
+        e.stopPropagation();
+        if(container.classList.contains('open')) closeMenu();
+        else openMenu();
+      };
+    }
+
+    if(searchInput){
+      if(!isInputTrigger) searchInput.onclick = (e)=> e.stopPropagation();
+      searchInput.oninput = ()=>{
+        if(isInputTrigger && !container.classList.contains('open')) openMenu();
+        const cleanPunct = s => (s || '').toLowerCase().replace(/[^a-z0-9\s]/gi, ' ').replace(/\s+/g, ' ').trim();
+        const rawQ = searchInput.value.trim();
+        const qNorm = cleanPunct(rawQ);
+        const qTokens = qNorm.split(' ').filter(Boolean);
+
+        optionsWrap.querySelectorAll('.custom-select-option:not(.dynamic-custom-opt)').forEach(opt => {
+          const text = opt.querySelector('span')?.textContent || '';
+          const optNorm = cleanPunct(text);
+          const matches = qTokens.length === 0 || qTokens.every(tok => optNorm.includes(tok));
+          opt.style.display = matches ? 'flex' : 'none';
+        });
+        const existingDynamic = optionsWrap.querySelector('.dynamic-custom-opt');
+        if(existingDynamic) existingDynamic.remove();
+        if(rawQ){
+          const exact = Array.from(optionsWrap.querySelectorAll('.custom-select-option:not(.dynamic-custom-opt)')).some(o => cleanPunct(o.dataset.value) === qNorm);
+          if(!exact){
+            const dyn = document.createElement('div');
+            dyn.className = 'custom-select-option dynamic-custom-opt';
+            dyn.dataset.value = rawQ;
+            dyn.innerHTML = `<span>+ Use "${escapeHtml(rawQ)}" (Custom)</span>`;
+            dyn.onclick = (e)=>{
+              e.stopPropagation();
+              const val = dyn.dataset.value;
+              hiddenInput.value = val;
+              if(labelSpan) labelSpan.textContent = val;
+              closeMenu();
+              hiddenInput.dispatchEvent(new Event('input', { bubbles: true }));
+              hiddenInput.dispatchEvent(new Event('change', { bubbles: true }));
+              if(typeof hiddenInput.onchange === 'function'){
+                hiddenInput.onchange({ target: hiddenInput });
+              }
+            };
+            optionsWrap.insertBefore(dyn, optionsWrap.firstChild);
+          }
+        }
+      };
+    }
 
     container.querySelectorAll('.custom-select-option').forEach(opt => {
       opt.onclick = (e)=>{
@@ -4897,6 +5186,7 @@ function wireCustomDropdowns(root = document){
         opt.setAttribute('aria-selected', 'true');
         opt.insertAdjacentHTML('beforeend', `<span class="custom-select-check">${iconCheckSmall()}</span>`);
         closeMenu();
+        hiddenInput.dispatchEvent(new Event('input', { bubbles: true }));
         hiddenInput.dispatchEvent(new Event('change', { bubbles: true }));
         if(typeof hiddenInput.onchange === 'function'){
           hiddenInput.onchange({ target: hiddenInput });
@@ -4906,71 +5196,55 @@ function wireCustomDropdowns(root = document){
   });
 }
 
-function renderMassPartCueCard(song){
+// (2026-07-13) canonical mass part sorting & inline title dropdown; prev: unsorted & squished
+function renderMassPartCueCard(song, isPeek = false){
   // (2026-07-13) render piano pitch finder on liturgical dialogue songs; prev: omitted
   if(song.id && String(song.id).startsWith('lit-')){
     // (2026-07-13) only show piano on dialogue songs with chords; prev: all lit- songs
     const litHasChords = (song.body || '').split('\n').some(l => classifyLine(l) === 'chord' || l.trim().startsWith('>'));
     if(!litHasChords) return '';
     const cleanTitle = cleanSongTitleForDisplay(song.title) || 'Liturgical Dialogue';
+    // (2026-07-13) compact lit piano cue card markup; prev: spaced multi-line template
     if(state.hideCueCard){
-      return `
-        <div class="masspart-cue-card collapsed" id="masspart-cue-card">
-          <div class="masspart-cue-header">
-            <div class="masspart-cue-title">
-              <span class="masspart-cue-star">&#10022;</span>
-              <span class="masspart-cue-title-text">${escapeHtml(cleanTitle)} &bull; Priest Pitch Finder</span>
-            </div>
-            <div class="masspart-cue-actions">
-              <button class="cue-toggle-btn" id="btn-toggle-cue" title="Show Pitch Finder">${iconCueShow()}<span>Show Piano</span></button>
-            </div>
-          </div>
-        </div>`;
+      return `<div class="masspart-cue-card collapsed" ${isPeek ? '' : 'id="masspart-cue-card"'}><div class="masspart-cue-header"><div class="masspart-cue-title"><span class="masspart-cue-star">&#10022;</span><span class="masspart-cue-title-text">${escapeHtml(cleanTitle)} &bull; Priest Pitch Finder</span></div><div class="masspart-cue-actions">${!isPeek ? `<button class="cue-toggle-btn" id="btn-toggle-cue" title="Show Pitch Finder">${iconCueShow()}<span>Show Piano</span></button>` : ''}</div></div></div>`;
     }
-    return `
-      <div class="masspart-cue-card" id="masspart-cue-card">
-        <div class="masspart-cue-header">
-          <div class="masspart-cue-title">
-            <span class="masspart-cue-star">&#10022;</span>
-            <span class="masspart-cue-title-text">${escapeHtml(cleanTitle)} &bull; Priest Pitch Finder</span>
-          </div>
-          <div class="masspart-cue-actions">
-            <button class="cue-toggle-btn" id="btn-toggle-cue" title="Hide Pitch Finder">${iconCueHide()}<span>Hide Piano</span></button>
-          </div>
-        </div>
-        ${renderCuePianoFinder()}
-      </div>`;
+    return `<div class="masspart-cue-card" ${isPeek ? '' : 'id="masspart-cue-card"'}><div class="masspart-cue-header"><div class="masspart-cue-title"><span class="masspart-cue-star">&#10022;</span><span class="masspart-cue-title-text">${escapeHtml(cleanTitle)} &bull; Priest Pitch Finder</span></div><div class="masspart-cue-actions">${!isPeek ? `<button class="cue-toggle-btn" id="btn-toggle-cue" title="Hide Pitch Finder">${iconCueHide()}<span>Hide Piano</span></button>` : ''}</div></div>${renderCuePianoFinder()}</div>`;
   }
-  const parts = song.massParts || [];
-  if(!parts || parts.length === 0) return '';
+  const rawParts = song.massParts || [];
+  if(!rawParts || rawParts.length === 0) return '';
+  const order = (state.massParts && state.massParts.length > 0) ? state.massParts : DEFAULT_MASS_PARTS;
+  const parts = [...rawParts].sort((a,b)=>{
+    const ia = order.indexOf(a), ib = order.indexOf(b);
+    if(ia >= 0 && ib >= 0) return ia - ib;
+    if(ia >= 0) return -1;
+    if(ib >= 0) return 1;
+    return a.localeCompare(b);
+  });
   const currentPart = (state.selectedViewerMassPart && parts.includes(state.selectedViewerMassPart))
     ? state.selectedViewerMassPart
     : parts[0];
   const cue = findMassPartCue(currentPart);
   if(!cue) return '';
 
-  // (2026-07-13) masspart as cue title without badge; prev: cue.title & badge
   const selectorHtml = parts.length > 1 ? renderCustomDropdown({
-    id: 'viewer-masspart-select',
+    id: isPeek ? 'viewer-masspart-select-peek' : 'viewer-masspart-select',
     value: currentPart,
     options: parts.map(p=>({ value: p, label: p })),
     className: 'compact',
-    style: 'display:inline-block;width:auto;min-width:96px;'
+    style: 'display:inline-block;width:auto;min-width:110px;'
   }) : '';
 
-  // (2026-07-13) collapse cue card from song or state; prev: state.hideCueCard
   const isCueHidden = song.hideCueCard !== undefined ? !!song.hideCueCard : !!state.hideCueCard;
   if(isCueHidden){
     return `
-      <div class="masspart-cue-card collapsed" id="masspart-cue-card">
+      <div class="masspart-cue-card collapsed" ${isPeek ? '' : 'id="masspart-cue-card"'}>
         <div class="masspart-cue-header">
           <div class="masspart-cue-title">
             <span class="masspart-cue-star">&#10022;</span>
-            <span class="masspart-cue-title-text">${escapeHtml(currentPart.toUpperCase())}</span>
+            ${parts.length > 1 ? selectorHtml : `<span class="masspart-cue-title-text">${escapeHtml(currentPart.toUpperCase())}</span>`}
           </div>
           <div class="masspart-cue-actions">
-            ${selectorHtml}
-            <button class="cue-toggle-btn" id="btn-toggle-cue" title="Show Liturgical Cues">${iconCueShow()}<span>Show</span></button>
+            ${!isPeek ? `<button class="cue-toggle-btn" id="btn-toggle-cue" title="Show Liturgical Cues">${iconCueShow()}<span>Show</span></button>` : ''}
           </div>
         </div>
       </div>`;
@@ -4981,7 +5255,6 @@ function renderMassPartCueCard(song){
     ? `<button class="cue-toggle-btn ${state.editingCueChords?'is-active':''}" id="btn-edit-cue" title="Adjust chord spacing">${state.editingCueChords ? 'Done' : 'Spacing'}</button>`
     : '';
 
-  // (2026-07-13) group priest, syllable-spaced chords, and response; prev: unspaced chords
   const cueItemsHtml = (cue.cues||[]).map((c, idx)=>{
     const cid = c.id || `${currentPart.toLowerCase()}-${idx}`;
     return `
@@ -4997,7 +5270,6 @@ function renderMassPartCueCard(song){
     </div>`;
   }).join('');
 
-  // (2026-07-13) remove after song prayer from communion & after lamb cue; prev: displayed
   let postSongHtml = '';
   if(cue.postPrayer && currentPart.toLowerCase() !== 'communion'){
     const postCid = cue.postPrayer.id || `${currentPart.toLowerCase()}-post`;
@@ -5013,27 +5285,24 @@ function renderMassPartCueCard(song){
       </div>`;
   }
 
-  // (2026-07-13) place cue piano directly under cue header; prev: at card bottom
   return `
-    <div class="masspart-cue-card" id="masspart-cue-card">
+    <div class="masspart-cue-card" ${isPeek ? '' : 'id="masspart-cue-card"'}>
       <div class="masspart-cue-header">
         <div class="masspart-cue-title">
           <span class="masspart-cue-star">&#10022;</span>
-          <!-- (2026-07-13) show uppercase mass part as title; prev: cue.title -->
-          <span class="masspart-cue-title-text">${escapeHtml(currentPart.toUpperCase())}</span>
+          ${parts.length > 1 ? selectorHtml : `<span class="masspart-cue-title-text">${escapeHtml(currentPart.toUpperCase())}</span>`}
         </div>
         <div class="masspart-cue-actions">
-          ${selectorHtml}
-          <!-- (2026-07-13) edit cue button with class & id; prev: id only -->
+          ${!isPeek ? `
           <button class="cue-toggle-btn btn-open-cue-editor" id="btn-open-cue-editor" title="Edit Liturgical Dialogue & Chords" data-mp="${escapeHtml(currentPart)}">
             <span style="display:inline-flex;align-items:center;width:11px;height:11px;">${iconEdit()}</span>
             <span>Edit Cue</span>
           </button>
           ${editCueBtnHtml}
           <button class="cue-toggle-btn" id="btn-toggle-cue" title="Hide Liturgical Cues">${iconCueHide()}<span>Hide</span></button>
+          ` : ''}
         </div>
       </div>
-      <!-- (2026-07-13) only render piano when cue has response chords; prev: unconditional -->
       ${hasAnyChords ? renderCuePianoFinder() : ''}
       <div class="masspart-cue-body">
         ${cueItemsHtml}
@@ -5183,19 +5452,15 @@ function renderIntroMelodySection(introMelody, isCollapsed, songId){
     if(staff) parsedStaffs.push(staff);
   });
   if(!parsedStaffs.length) return '';
+  // (2026-07-13) compact bottom padding and balanced staff spacing; prev: 12px 14px + 4px
   const staffsHtml = parsedStaffs.map((staffHtml, idx)=>`
-    <div class="intro-staff-block" data-staff-block="${idx}" style="margin-bottom:${idx < parsedStaffs.length - 1 ? '16px' : '4px'};">
-      ${parsedStaffs.length > 1 ? `
-        <div class="intro-staff-label" style="font-size:10px;font-weight:800;color:var(--text-dim);letter-spacing:1px;margin-bottom:4px;text-transform:uppercase;">
-          <span>STAFF ${idx + 1}</span>
-        </div>` : ''}
+    <div class="intro-staff-block" data-staff-block="${idx}" style="margin-bottom:${idx < parsedStaffs.length - 1 ? '14px' : '0px'};">
       ${staffHtml}
     </div>
   `).join('');
   const collapsed = !!isCollapsed;
-  // (2026-07-13) remove inline border to allow theme card outline; prev: inline
   return `
-    <div class="intro-melody-box ${collapsed ? 'is-collapsed' : ''}" data-song-id="${escapeHtml(songId||'')}" style="margin:4px 0 16px 0;padding:${collapsed ? '8px 14px' : '12px 14px'};border-radius:12px;transition:padding 0.2s ease;">
+    <div class="intro-melody-box ${collapsed ? 'is-collapsed' : ''}" data-song-id="${escapeHtml(songId||'')}" style="margin:4px 0 16px 0;padding:${collapsed ? '8px 14px' : '10px 14px 10px'};border-radius:12px;transition:padding 0.2s ease;">
       <div class="intro-melody-header" data-toggle-intro-melody="true" style="font-size:11px;font-weight:800;color:var(--accent);letter-spacing:0.8px;text-transform:uppercase;margin-bottom:${collapsed ? '0' : '10px'};display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;">
         <div class="intro-melody-toggle" style="display:flex;align-items:center;gap:7px;flex:1;cursor:pointer;">
           <svg class="intro-chevron-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.2s ease;transform:${collapsed ? 'rotate(-90deg)' : 'rotate(0deg)'};color:var(--text-dim);"><polyline points="6 9 12 15 18 9"></polyline></svg>
@@ -5229,6 +5494,7 @@ function renderSongSheetContent(s, isPeek){
   // (2026-07-13) compact dialogue cue rendering; prev: pre-wrap newlines
   const rawLines = (body||'').split('\n');
   const renderedLines = [];
+  let prefaceCueRendered = false;
   for(let i = 0; i < rawLines.length; i++){
     const line = rawLines[i];
     const cls = classifyLine(line);
@@ -5255,12 +5521,27 @@ function renderSongSheetContent(s, isPeek){
       renderedLines.push(`<hr class="chart-hr"/>`);
       while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){ i++; }
     } else if(cls === 'section'){
+      // (2026-07-13) preface cue piano placed at preface dialogue; prev: at pag-ampo halad
+      if(s.id === 'lit-preface' && !isPeek && !prefaceCueRendered && /pasiuna\s+nga\s+pag-?ampo|preface\s+dialogue/i.test(line)){
+        prefaceCueRendered = true;
+        while(renderedLines.length > 0 && (renderedLines[renderedLines.length - 1] === '<hr class="chart-hr"/>' || renderedLines[renderedLines.length - 1] === '<div>&nbsp;</div>')){
+          renderedLines.pop();
+        }
+        renderedLines.push(renderMassPartCueCard(s));
+      }
       // (2026-07-13) render homily & creed titles in dialogue; prev: suppressed
       if(!isMisalRomano || /homil|kredo|creed|nagatoo|katilingban|faithful/i.test(line)){
         renderedLines.push(`<div class="section-line" style="${isMisalRomano ? 'margin-top:14px;margin-bottom:8px;font-size:13px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:0.6px;' : ''}">${escapeHtml(line.replace(/^[\[\(]|[\]\)]$/g, ''))}</div>`);
       }
       while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){ i++; }
     } else if(cls === 'priest'){
+      if(s.id === 'lit-preface' && !isPeek && !prefaceCueRendered && /maanaa\s+kaninyo/i.test(line)){
+        prefaceCueRendered = true;
+        while(renderedLines.length > 0 && (renderedLines[renderedLines.length - 1] === '<hr class="chart-hr"/>' || renderedLines[renderedLines.length - 1] === '<div>&nbsp;</div>')){
+          renderedLines.pop();
+        }
+        renderedLines.push(renderMassPartCueCard(s));
+      }
       const pData = extractPriestData(line);
       let nextIdx = i + 1;
       while(nextIdx < rawLines.length && classifyLine(rawLines[nextIdx]) === 'blank') nextIdx++;
@@ -5316,13 +5597,16 @@ function renderSongSheetContent(s, isPeek){
   }
   const lines = renderedLines.join('');
 
-  // (2026-07-13) omit redundant titles/meta for Misal Romano; prev: rendered all
+  // (2026-07-13) render cue on peek respecting visibility; prev: isPeek blanked
   return `
-    ${isPeek ? '' : renderMassPartCueCard(s)}
+    ${(s.id === 'lit-preface') ? '' : renderMassPartCueCard(s, isPeek)}
     ${isMisalRomano ? '' : `
       <div class="chart-title" style="display:flex;align-items:center;gap:6px;">
         ${flagPill}
         <span>${escapeHtml(cleanSongTitleForDisplay(s.title))}</span>
+        <button type="button" class="song-fav-star-btn" data-viewer-fav-id="${s.id}" title="${s.favorite ? 'Remove from favorites' : 'Add to favorites'}">
+          ${iconStar(!!s.favorite)}
+        </button>
       </div>
       <div class="chart-artist">${escapeHtml(getEffectiveSongArtist(s)||s.artist||'')}</div>
       <div class="chart-meta-inline">
@@ -5354,8 +5638,11 @@ function renderViewer(){
   stopActiveMelodyPlayback();
   const song = currentSong();
   if(!song){ state.view='list'; return renderListView(); }
+  const isSameSong = state.lastViewerSongId === song.id;
   const existingChartWrap = document.getElementById('chart-wrap');
-  const prevScrollTop = existingChartWrap ? existingChartWrap.scrollTop : 0;
+  // (2026-07-13) scroll back to top when navigating to next song; prev: kept scroll
+  const prevScrollTop = (isSameSong && existingChartWrap) ? existingChartWrap.scrollTop : 0;
+  state.lastViewerSongId = song.id;
   const existingSidebarList = document.getElementById('viewer-sidebar-list');
   const prevSidebarScroll = existingSidebarList ? existingSidebarList.scrollTop : 0;
   const fontSize = song.viewerFontSize || 15;
@@ -5390,18 +5677,22 @@ function renderViewer(){
   const folderTheme = getFolderTheme(folderTitle);
 
   app.innerHTML = `
+    <!-- (2026-07-13) uncluttered spacious viewer topbar; prev: 9 cramped buttons -->
     <div class="topbar" id="viewer-topbar">
       <button class="icon-btn" id="btn-back">${iconBack()}</button>
       <button class="icon-btn viewer-sidebar-toggle-btn" id="btn-toggle-viewer-sidebar" title="Toggle ${escapeHtml(folderTitle)} song list" style="color:${folderTheme.swatch};">${iconFolder()}</button>
-      <button class="icon-btn" id="btn-prev-song" ${prevSong?'':'disabled'} title="${prevSong?escapeHtml(prevSong.title):'No previous song'}">${iconChevronLeft()}</button>
-      <h1 style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;font-weight:700;display:flex;align-items:center;gap:6px;">
+      <button class="icon-btn viewer-nav-chevron" id="btn-prev-song" ${prevSong?'':'disabled'} title="${prevSong?escapeHtml(prevSong.title):'No previous song'}">${iconChevronLeft()}</button>
+      <h1 style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;font-weight:700;display:flex;align-items:center;gap:6px;">
         ${(()=>{ const vf = getSongFlag(song); return vf ? `<span class="song-flag-pill" style="background-color:${vf.color};"></span>` : ''; })()}
         <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(cleanSongTitleForDisplay(song.title))}</span>
       </h1>
-      <button class="icon-btn" id="btn-next-song" ${nextSong?'':'disabled'} title="${nextSong?escapeHtml(nextSong.title):'No next song'}">${iconChevronRight()}</button>
+      <button class="icon-btn viewer-nav-chevron" id="btn-next-song" ${nextSong?'':'disabled'} title="${nextSong?escapeHtml(nextSong.title):'No next song'}">${iconChevronRight()}</button>
+      <!-- (2026-07-13) header button for sticky piano keyboard; prev: none -->
+      <button class="icon-btn ${state.showStickyPiano?'is-active':''}" id="btn-toggle-sticky-piano" title="Piano Keyboard (A3–G5)" style="${state.showStickyPiano ? 'color:var(--chord);' : ''}">${iconPiano()}</button>
+      <!-- (2026-07-13) speed toggle on right side of piano; prev: after restart -->
       <button class="icon-btn" id="btn-speed-toggle" title="Speed Controls">${iconSpeedArrows()}</button>
       <button class="icon-btn playbar-play" id="btn-playpause" title="Play/Pause">${isActivelyScrolling ? iconPause() : iconPlay()}</button>
-      <button class="icon-btn playbar-restart" id="btn-restart" title="Restart">${iconRestart()}</button>
+      <button class="icon-btn playbar-restart" id="btn-restart" title="Restart to top">${iconRestart()}</button>
       <button class="icon-btn" id="btn-adjust" title="Menu">${iconDots()}</button>
     </div>
     <div class="viewer-body">
@@ -5453,12 +5744,16 @@ function renderViewer(){
         <button class="scroll-square up" id="tri-up">${iconBigTriangleUp()}<span class="scroll-square-label">Faster</span></button>
         <button class="scroll-square down" id="tri-down">${iconBigTriangleDown()}<span class="scroll-square-label">Slower</span></button>
       </div>
+      <!-- (2026-07-13) autoscroll speed controls with restart button; prev: slider only -->
       <div class="speed-slider-wrap hidden" id="speed-slider-wrap">
+        <button class="icon-btn playbar-restart" id="btn-slider-restart" title="Restart to top" style="width:28px;height:28px;padding:3px;color:var(--text);margin-right:2px;flex-shrink:0;">${iconRestart()}</button>
         <span class="speed-slider-icon">${iconSpeedArrows()}</span>
         <input type="range" id="speed-range-slider" min="1" max="100" value="${scrollSpeed}">
         <!-- (2026-07-13) display speed value on speed pill; prev: slider only -->
         <span class="speed-slider-val" id="speed-slider-val">${scrollSpeed}</span>
       </div>
+      <!-- (2026-07-13) sticky piano tray at bottom of viewer; prev: none -->
+      ${renderStickyPianoHtml()}
     </div>
     ${modalHtml()}
   `;
@@ -5648,31 +5943,50 @@ function renderViewer(){
       saveCueChordText(inp.dataset.cueId, e.target.value);
     };
   });
-  // (2026-07-13) wire cue piano keys & 1st/2nd note mode to transpose cue chords; prev: none
+  // (2026-07-13) wire cue piano keys & 1st/2nd note mode with flats preference; prev: sharps
   const syncCuePianoDom = ()=>{
     const mode = getCueNoteMode();
     const keyIdx = getCueKeyIdx();
     const activeNoteIdx = mode === '1st' ? (keyIdx + 4) % 12 : keyIdx;
-    // (2026-07-13) spell cue key and chords with sharps; prev: preferFlat
-    const keyName = spellNote(keyIdx, false);
+    const preferFlat = getCueAccidentalsPref() === 'flats';
+    const keyName = spellNote(keyIdx, preferFlat);
     const semis = getCueSemis();
-    // (2026-07-13) sync circular radio note buttons; prev: select dropdown
     document.querySelectorAll('.cue-note-circle-btn').forEach(btn=>{
       btn.classList.toggle('selected', btn.dataset.noteMode === mode);
     });
     document.querySelectorAll('.cue-key-readout').forEach(el=>{ el.textContent = keyName; });
     document.querySelectorAll('.cue-piano-key').forEach(btn=>{
       btn.classList.toggle('is-active', parseInt(btn.dataset.pianoNote, 10) === activeNoteIdx);
+      if(btn.classList.contains('black-key')){
+        const nIdx = parseInt(btn.dataset.pianoNote, 10);
+        const span = btn.querySelector('span');
+        if(span && !isNaN(nIdx)) span.textContent = spellNote(nIdx, preferFlat);
+      }
     });
     document.querySelectorAll('.cue-chord-row[data-base-chords]').forEach(row=>{
       const base = row.getAttribute('data-base-chords') || '';
-      const transposed = transposeSpacedChordLine(base, semis, false);
+      const transposed = transposeSpacedChordLine(base, semis, preferFlat);
       row.innerHTML = renderChordLine('>' + transposed);
       row.querySelectorAll('.chord-tok').forEach(el=>{
         el.onclick = ()=>{ state.modal = {type:'chord', chord: el.dataset.chord}; renderViewer(); };
       });
     });
   };
+  syncCuePianoDom();
+
+  // (2026-07-13) wire clickable notepad star with favorites toast; prev: none
+  const starFavBtn = document.querySelector(`.song-fav-star-btn[data-viewer-fav-id="${song.id}"]`);
+  if(starFavBtn){
+    starFavBtn.onclick = async (e)=>{
+      e.stopPropagation();
+      song.favorite = !song.favorite;
+      starFavBtn.innerHTML = iconStar(!!song.favorite);
+      starFavBtn.title = song.favorite ? 'Remove from favorites' : 'Add to favorites';
+      await Store.saveSong(song).catch(()=>{});
+      try{ LocalAdapter.save('song:' + song.id, song); }catch(err){}
+      showToast(song.favorite ? 'Added to favorites' : 'Removed from favorites');
+    };
+  }
   document.querySelectorAll('.cue-note-circle-btn').forEach(btn=>{
     btn.onclick = ()=>{
       state.cueNoteMode = btn.dataset.noteMode === '1st' ? '1st' : '2nd';
@@ -5730,9 +6044,9 @@ function renderViewer(){
         setTimeout(()=>{ if(sliderTrack) sliderTrack.style.transition = ''; }, 240);
       }
     };
-    // (2026-07-13) exclude cue card & intro melody box from swipe; prev: unexcluded
+    // (2026-07-13) exclude cue card, sticky piano & melody from swipe; prev: swipe bugs
     const handleSwipeStart = (clientX, clientY, target)=>{
-      if(target.closest('.cue-piano-key, .speed-slider-wrap, .scroll-square, button, select, input, textarea, a, .staff-play-btn, .intro-melody-box, .masspart-cue-card, .cue-toggle-btn')){
+      if(target.closest('.cue-piano-key, .speed-slider-wrap, .scroll-square, button, select, input, textarea, a, .staff-play-btn, .intro-melody-box, .masspart-cue-card, .cue-toggle-btn, .sticky-piano-tray, .sticky-piano-key')){
         return false;
       }
       isSwipeDrag = true;
@@ -5811,17 +6125,17 @@ function renderViewer(){
     }
   };
   document.getElementById('btn-adjust').onclick = ()=>{ state.modal = {type:'adjust', id:song.id}; renderViewer(); };
-  // (2026-07-13) 1.5s restart delay at top; prev: 8000ms
-  document.getElementById('btn-restart').onclick = ()=>{
+  // (2026-07-13) restore restart button click handler; prev: single id
+  document.querySelectorAll('#btn-restart, #btn-slider-restart, .playbar-restart').forEach(btn => { btn.onclick = ()=>{
     chartWrap.scrollTo({top:0, behavior:'smooth'});
     autoscrollFloatPos = 0;
     lastUserScrollAt = 0;
-    autoscrollTopDelayUntil = performance.now() + 1500;
+    autoscrollTopDelayUntil = performance.now() + 2000;
     startAutoscroll(song, false);
     const pb = document.getElementById('btn-playpause');
     if(pb) pb.innerHTML = iconPlay();
-  };
-  // (2026-07-13) play/pause button cleanly toggles autoscroll; prev: delay bug
+  }; });
+  // (2026-07-13) play/pause toggles 2s pause if at top; prev: immediate only
   const playBtn = document.getElementById('btn-playpause');
   if(playBtn){
     playBtn.onclick = ()=>{
@@ -5829,8 +6143,14 @@ function renderViewer(){
         stopAutoscroll();
         playBtn.innerHTML = iconPlay();
       } else {
-        startAutoscroll(song, true);
-        playBtn.innerHTML = iconPause();
+        if(chartWrap && chartWrap.scrollTop <= 5){
+          autoscrollFloatPos = 0;
+          startAutoscroll(song, false);
+          playBtn.innerHTML = iconPlay();
+        } else {
+          startAutoscroll(song, true);
+          playBtn.innerHTML = iconPause();
+        }
       }
     };
   }
@@ -5878,7 +6198,7 @@ function renderViewer(){
   /* Pinch-to-zoom directly on chart-wrap: reflows text incrementally and saves per-song. */
   wirePinchZoom(chartWrap, chartBody, song);
 
-  // (2026-07-13) 1.5s delay when scrolled to top before autoscroll; prev: 8000ms
+  // (2026-07-13) mark user scroll interactions; prev: touchmove/wheel only
   const markUserScroll = ()=>{
     lastUserScrollAt = performance.now();
     const sc = document.getElementById('chart-scroll-content');
@@ -5886,18 +6206,23 @@ function renderViewer(){
   };
   chartWrap.addEventListener('touchmove', markUserScroll, {passive:true});
   chartWrap.addEventListener('wheel', markUserScroll, {passive:true});
-  // (2026-07-13) keep paused when scrolled to top; prev: auto-started on scroll
+  chartWrap.addEventListener('pointerdown', markUserScroll, {passive:true});
+  // (2026-07-13) reliable 2s delay when pulled to top; prev: infinite loop
   chartWrap.addEventListener('scroll', ()=>{
+    if(isProgrammaticAutoscroll) return;
+    const isAutoscrollStep = Math.abs(chartWrap.scrollTop - Math.floor(autoscrollFloatPos)) <= 1 && (performance.now() - lastUserScrollAt > 600);
+    if(isAutoscrollStep) return;
+
     if(chartWrap.scrollTop <= 5){
-      if(state.autoscroll && autoscrollFloatPos > 15){
-        autoscrollTopDelayUntil = performance.now() + 1500;
+      if(state.autoscroll && (autoscrollFloatPos > 15 || (performance.now() - lastUserScrollAt < 600 && lastUserScrollAt > 0))){
+        autoscrollTopDelayUntil = performance.now() + 2000;
         autoscrollFloatPos = 0;
-        lastUserScrollAt = 0;
+        autoscrollIconSynced = false;
         const sc = document.getElementById('chart-scroll-content');
         if(sc) sc.style.transform = 'none';
         const pb = document.getElementById('btn-playpause');
         if(pb) pb.innerHTML = iconPlay();
-        startAutoscroll(song, false);
+        if(!autoscrollRAF) startAutoscroll(song, false);
       }
     }
     if(Math.abs(chartWrap.scrollTop - Math.floor(autoscrollFloatPos)) > 18){
@@ -5910,11 +6235,82 @@ function renderViewer(){
   if(state.autoscroll && !autoscrollRAF){
     startAutoscroll(song, performance.now() >= autoscrollTopDelayUntil);
   }
+
+  // (2026-07-13) wire sticky piano toggle, key audio, and corner triple tap; prev: none
+  const btnToggleStickyPiano = document.getElementById('btn-toggle-sticky-piano');
+  const btnCloseStickyPiano = document.getElementById('btn-close-sticky-piano');
+  const toggleStickyPiano = ()=>{
+    state.showStickyPiano = !state.showStickyPiano;
+    try{ localStorage.setItem('ui:showStickyPiano', state.showStickyPiano ? '1' : '0'); }catch(e){}
+    const tray = document.getElementById('sticky-piano-tray');
+    if(tray) tray.classList.toggle('is-visible', !!state.showStickyPiano);
+    if(btnToggleStickyPiano){
+      btnToggleStickyPiano.classList.toggle('is-active', !!state.showStickyPiano);
+      btnToggleStickyPiano.style.color = state.showStickyPiano ? 'var(--chord)' : '';
+    }
+  };
+  if(btnToggleStickyPiano) btnToggleStickyPiano.onclick = (e)=>{ e.stopPropagation(); toggleStickyPiano(); };
+  if(btnCloseStickyPiano) btnCloseStickyPiano.onclick = (e)=>{ e.stopPropagation(); toggleStickyPiano(); };
+
+  document.querySelectorAll('.sticky-piano-key[data-sticky-note]').forEach(btn=>{
+    let touched = false;
+    const triggerStickyKey = (e)=>{
+      if(e && e.stopPropagation) e.stopPropagation();
+      const noteIdx = parseInt(btn.dataset.stickyNote, 10);
+      if(isNaN(noteIdx)) return;
+      btn.classList.add('is-active');
+      setTimeout(()=>btn.classList.remove('is-active'), 200);
+      const readout = document.getElementById('sticky-piano-readout');
+      if(readout) readout.textContent = btn.dataset.noteLabel || '';
+      playPianoNote(noteIdx, 1.4);
+    };
+    btn.addEventListener('touchstart', (e)=>{
+      touched = true;
+      e.stopPropagation();
+      if(e.cancelable) e.preventDefault();
+      triggerStickyKey(e);
+    }, {passive:false});
+    btn.addEventListener('touchend', (e)=>{
+      e.stopPropagation();
+      if(e.cancelable) e.preventDefault();
+    }, {passive:false});
+    btn.addEventListener('mousedown', (e)=>{
+      e.stopPropagation();
+      if(touched){ touched = false; return; }
+      triggerStickyKey(e);
+    });
+  });
+
+  let cornerTapTimes = [];
+  const handleCornerCheck = (clientX, clientY)=>{
+    const w = window.innerWidth, h = window.innerHeight;
+    if(clientX >= w - 110 && clientY >= h - 110){
+      const now = Date.now();
+      cornerTapTimes.push(now);
+      if(cornerTapTimes.length > 3) cornerTapTimes.shift();
+      if(cornerTapTimes.length === 3 && (cornerTapTimes[2] - cornerTapTimes[0]) < 900){
+        cornerTapTimes = [];
+        toggleStickyPiano();
+      }
+    }
+  };
+  const currentSliderTrack = document.getElementById('viewer-slider-track');
+  if(currentSliderTrack){
+    currentSliderTrack.addEventListener('touchend', (e)=>{
+      if(e.changedTouches && e.changedTouches[0]){
+        handleCornerCheck(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+      }
+    }, { passive: true });
+    currentSliderTrack.addEventListener('click', (e)=>{
+      handleCornerCheck(e.clientX, e.clientY);
+    });
+  }
 }
 
 /* ---------------- AUTOSCROLL (smooth, rAF-based) ---------------- */
-// (2026-07-13) ultra-slow autoscroll support down to 0.4px/sec; prev: min 3.35px/sec
+// (2026-07-13) autoscroll state with programmatic flag; prev: local flags
 let autoscrollRAF = null, autoscrollLastTs = null, autoscrollFloatPos = 0, lastUserScrollAt = 0, autoscrollTopDelayUntil = 0;
+let isProgrammaticAutoscroll = false, autoscrollIconSynced = false;
 function pxPerSecondFromSpeed(speed){
   return 0.4 + (speed/100)*35;
 }
@@ -5932,11 +6328,12 @@ function startAutoscroll(song, immediate){
   if(immediate){
     autoscrollTopDelayUntil = 0;
     lastUserScrollAt = 0;
+    autoscrollIconSynced = true;
   } else {
-    // (2026-07-13) 1.5s initial pause at top before autoscroll starts; prev: 8000ms
-    autoscrollTopDelayUntil = performance.now() + 1500;
+    // (2026-07-13) 2s initial pause at top before autoscroll starts; prev: 1.5s
+    autoscrollTopDelayUntil = performance.now() + 2000;
+    autoscrollIconSynced = false;
   }
-  let iconSynced = !!immediate;
   // (2026-07-13) sub-pixel continuous smooth glide via transform; prev: Math.round scrollTop
   const step = (ts)=>{
     if(!state.autoscroll){
@@ -5970,8 +6367,8 @@ function startAutoscroll(song, immediate){
           autoscrollFloatPos = chart.scrollTop;
           if(scrollContent) scrollContent.style.transform = 'none';
         } else {
-          if(!iconSynced){
-            iconSynced = true;
+          if(!autoscrollIconSynced){
+            autoscrollIconSynced = true;
             const pb = document.getElementById('btn-playpause');
             if(pb) pb.innerHTML = iconPause();
           }
@@ -5979,7 +6376,9 @@ function startAutoscroll(song, immediate){
           if(maxScroll > 0 && autoscrollFloatPos < maxScroll){
             autoscrollFloatPos = Math.min(maxScroll, autoscrollFloatPos + pxPerSecondFromSpeed(speed) * dt);
             const baseScroll = Math.floor(autoscrollFloatPos);
+            isProgrammaticAutoscroll = true;
             chart.scrollTop = baseScroll;
+            isProgrammaticAutoscroll = false;
             const subPx = autoscrollFloatPos - baseScroll;
             if(scrollContent){
               scrollContent.style.transform = `translate3d(0, -${subPx.toFixed(2)}px, 0)`;
@@ -5996,6 +6395,8 @@ function startAutoscroll(song, immediate){
 function stopAutoscroll(){
   state.autoscroll = false;
   autoscrollTopDelayUntil = 0;
+  autoscrollIconSynced = false;
+  isProgrammaticAutoscroll = false;
   const scrollContent = document.getElementById('chart-scroll-content');
   if(scrollContent) scrollContent.style.transform = 'none';
   if(autoscrollRAF){
@@ -6265,20 +6666,48 @@ function renderEditor(){
   const isExisting = !!state.songs.find(s=>s.id===d.id);
   // (2026-07-13) only hide delete for lit dialogues in editor; prev: all Misal Romano
   const isLitDialogue = isUndeletableDialogue(d);
+  // (2026-07-13) dropdown options for artist & composers; prev: plain text input
+  const knownArtists = getAllKnownArtists();
+  const currentArtist = (d.artist || getEffectiveSongArtist(d) || '').trim();
+  const isKnown = knownArtists.includes(currentArtist);
+  const isCustom = !!(currentArtist && !isKnown);
+  const artistOptions = [
+    { value: '', label: 'None / Unknown' },
+    ...knownArtists.map(a => ({ value: a, label: a })),
+    ...(currentArtist && !knownArtists.includes(currentArtist) ? [{ value: currentArtist, label: currentArtist }] : [])
+  ];
   const sectionNames = ['Verse','Chorus','Bridge','Intro','Outro','Pre-Chorus'];
   const container = document.getElementById('editor-overlay') || app;
 
   container.innerHTML = `
     <div class="topbar">
       <button class="icon-btn" id="btn-cancel">${iconBack()}</button>
-      <h1>${isExisting ? 'Edit song' : 'New song'}</h1>
-      ${isExisting && !isLitDialogue ? `<button class="icon-btn" id="btn-delete" style="color:var(--danger)">${iconTrash()}</button>` : ''}
+      <h1 style="flex:1;">${isExisting ? 'Edit song' : 'New song'}</h1>
+      <!-- (2026-07-13) undo and redo buttons on top right left of delete; prev: chord chart -->
+      <div style="display:inline-flex;align-items:center;gap:4px;">
+        <button type="button" class="icon-btn" id="btn-editor-undo" title="Undo (Ctrl+Z)" disabled>
+          ${iconUndo()}
+        </button>
+        <button type="button" class="icon-btn" id="btn-editor-redo" title="Redo (Ctrl+Y)" disabled>
+          ${iconRedo()}
+        </button>
+        ${isExisting && !isLitDialogue ? `<button class="icon-btn" id="btn-delete" style="color:var(--danger)">${iconTrash()}</button>` : ''}
+      </div>
     </div>
     <div class="editor">
-      <!-- (2026-07-13) clean title for editor input; prev: raw title -->
-      <div class="field" id="field-title"><label>Title <span class="req">*</span></label><input id="f-title" value="${escapeHtml(cleanSongTitleForDisplay(d.title))}" placeholder="Song title"/></div>
-      <!-- (2026-07-13) populate inferred composer in editor; prev: d.artist -->
-      <div class="field"><label>Artist</label><input id="f-artist" value="${escapeHtml(d.artist || getEffectiveSongArtist(d))}" placeholder="Artist / writer"/></div>
+      <!-- (2026-07-13) clean title & uppercase input; prev: raw title -->
+      <div class="field" id="field-title"><label>Title <span class="req">*</span></label><input id="f-title" value="${escapeHtml(cleanSongTitleForDisplay(d.title)).toUpperCase()}" placeholder="Song title" style="text-transform:uppercase;"/></div>
+      <!-- (2026-07-13) typeable main dropdown combobox for artist; prev: separate input -->
+      <div class="field" id="field-artist-wrap">
+        <label>Artist</label>
+        ${renderCustomDropdown({
+          id: 'f-artist',
+          value: currentArtist,
+          options: artistOptions,
+          editable: true,
+          placeholder: 'None / Unknown'
+        })}
+      </div>
       <div class="field-row">
         <!-- (2026-07-13) fallback to detected key in editor; prev: d.key -->
         <div class="field"><label>Key</label><input id="f-key" value="${escapeHtml(d.key || getEffectiveSongKey(d))}" placeholder="e.g. G, Bbm"/></div>
@@ -6348,17 +6777,9 @@ function renderEditor(){
         </div>
       </div>
       <div class="field">
-        <!-- (2026-07-13) undo and redo buttons for chord chart editor; prev: none -->
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <!-- (2026-07-13) clean chord chart header; prev: undo/redo buttons in chart header -->
+        <div style="margin-bottom:6px;">
           <label style="margin:0;">Chord chart</label>
-          <div style="display:inline-flex;align-items:center;gap:6px;">
-            <button type="button" class="toolbtn" id="btn-editor-undo" title="Undo (Ctrl+Z)" style="width:28px;height:28px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:7px;background:var(--bg-elev2);border:1px solid var(--line);color:var(--text);cursor:pointer;" disabled>
-              ${iconUndo()}
-            </button>
-            <button type="button" class="toolbtn" id="btn-editor-redo" title="Redo (Ctrl+Y)" style="width:28px;height:28px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:7px;background:var(--bg-elev2);border:1px solid var(--line);color:var(--text);cursor:pointer;" disabled>
-              ${iconRedo()}
-            </button>
-          </div>
         </div>
         <div class="quick-insert-row">
           <button type="button" class="quick-chip divider-chip" id="ins-divider">+ Divider</button>
@@ -6381,6 +6802,7 @@ function renderEditor(){
   const getEditorSnapshot = ()=>{
     return JSON.stringify({
       title: (document.getElementById('f-title')?.value || '').trim(),
+      // (2026-07-13) snapshot typed or selected artist from dropdown; prev: complex
       artist: (document.getElementById('f-artist')?.value || '').trim(),
       key: (document.getElementById('f-key')?.value || '').trim(),
       capo: (document.getElementById('f-capo')?.value || '0').trim(),
@@ -6399,6 +6821,7 @@ function renderEditor(){
   const initialSnapshot = getEditorSnapshot();
   const isEditorDirty = ()=> getEditorSnapshot() !== initialSnapshot;
 
+  // (2026-07-13) persistent unsaved dirty check & back handler; prev: local only
   const attemptClose = ()=>{
     if(isEditorDirty()){
       showConfirmModal({
@@ -6407,6 +6830,7 @@ function renderEditor(){
         confirmText: 'Discard',
         danger: true,
         onConfirm: ()=>{
+          window.handleEditorCancel = null;
           closeEditorOverlay(()=>{
             state.view = state.editorCameFrom === 'viewer' ? 'viewer' : 'list';
             render();
@@ -6415,12 +6839,14 @@ function renderEditor(){
       });
       return;
     }
+    window.handleEditorCancel = null;
     closeEditorOverlay(()=>{
       state.view = state.editorCameFrom === 'viewer' ? 'viewer' : 'list';
       render();
     });
   };
 
+  window.handleEditorCancel = attemptClose;
   document.getElementById('btn-cancel').onclick = attemptClose;
   document.getElementById('btn-cancel2').onclick = attemptClose;
 
@@ -6477,7 +6903,7 @@ function renderEditor(){
       if(prevEl) prevEl.innerHTML = renderIntroMelodySection(d.introMelody);
     };
   }
-  // (2026-07-13) wire custom dropdown for time signature; prev: select
+  // (2026-07-13) wire custom dropdown for time signature & artist; prev: select
   wireCustomDropdowns(container);
   const timeSigEl = document.getElementById('f-timesig');
   if(timeSigEl){
@@ -6510,9 +6936,18 @@ function renderEditor(){
       if(d.massParts.length>0) document.getElementById('mp-toggle-wrap').classList.remove('invalid');
     };
   });
-  document.getElementById('f-title').addEventListener('input', (e)=>{
-    if(e.target.value.trim()) document.getElementById('field-title').classList.remove('invalid');
-  });
+  // (2026-07-13) enforce uppercase on title & wire artist autocomplete; prev: plain input
+  const fTitle = document.getElementById('f-title');
+  if(fTitle){
+    fTitle.addEventListener('input', (e)=>{
+      const start = fTitle.selectionStart;
+      const end = fTitle.selectionEnd;
+      fTitle.value = fTitle.value.toUpperCase();
+      fTitle.setSelectionRange(start, end);
+      if(e.target.value.trim()) document.getElementById('field-title').classList.remove('invalid');
+    });
+  }
+  // (2026-07-13) artist input is directly editable by default; prev: dropdown wiring
   const bodyEl = document.getElementById('f-body');
   // (2026-07-13) wire editor undo/redo history stack; prev: none
   const btnUndo = document.getElementById('btn-editor-undo');
@@ -6691,10 +7126,15 @@ function renderEditor(){
       // (2026-07-13) preserve introMelodyCollapsed & hideCueCard; prev: intro only
       introMelodyCollapsed: !!d.introMelodyCollapsed,
       hideCueCard: !!d.hideCueCard,
-      // (2026-07-13) clean sorting numbers from title on save; prev: raw titleVal
-      title: cleanSongTitleForDisplay(titleVal),
-      // (2026-07-13) fallback to inferred composer on save if blank; prev: blank
-      artist: document.getElementById('f-artist').value.trim() || inferSongArtist(titleVal, document.getElementById('f-body').value) || '',
+      // (2026-07-13) clean title & enforce uppercase; prev: raw titleVal
+      title: cleanSongTitleForDisplay(titleVal).toUpperCase(),
+      // (2026-07-13) read artist value directly from typeable dropdown; prev: complex
+      artist: (function(){
+        const raw = (document.getElementById('f-artist')?.value || '').trim();
+        const finalA = raw || inferSongArtist(titleVal, document.getElementById('f-body').value) || '';
+        if(finalA) registerKnownArtist(finalA);
+        return finalA;
+      })(),
       // (2026-07-13) auto-detect key on save if left blank; prev: blank
       key: document.getElementById('f-key').value.trim() || detectKeyFromBody(document.getElementById('f-body').value) || '',
       capo: +document.getElementById('f-capo').value || 0,
@@ -6706,6 +7146,7 @@ function renderEditor(){
       massParts: d.massParts || [],
       body: document.getElementById('f-body').value,
     };
+    if(song.artist) registerKnownArtist(song.artist);
     const idx = state.songs.findIndex(s=>s.id===song.id);
     if(idx>=0) state.songs[idx] = song; else state.songs.push(song);
     state.currentId = song.id;
@@ -6715,7 +7156,8 @@ function renderEditor(){
       state.isSavingSong = false;
     });
 
-    // (2026-07-13) return to editor origin view on save; prev: state.view = 'viewer'
+    // (2026-07-13) clear back cancel handler on editor save; prev: none
+    window.handleEditorCancel = null;
     closeEditorOverlay(()=>{
       state.view = state.editorCameFrom === 'viewer' ? 'viewer' : 'list';
       render();
@@ -6979,7 +7421,7 @@ function renderFoldersView(){
     const count = state.songs.filter(s=>(s.categories||[]).includes(c)).length;
     const ct = getFolderTheme(c);
     return `
-      <div class="song-row folder-manage-row" data-cat="${escapeHtml(c)}" style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--bg-elev);border:1px solid var(--line);border-radius:14px;margin-bottom:8px;touch-action:pan-y;">
+      <div class="song-row folder-manage-row" data-cat="${escapeHtml(c)}" style="display:flex;align-items:center;gap:12px;padding:13px 14px;background:var(--bg);border-bottom:1px solid var(--line);margin:0;touch-action:pan-y;">
         <span style="display:flex;align-items:center;width:22px;height:22px;color:${ct.swatch};flex-shrink:0;">${iconFolder()}</span>
         <div class="folder-row-clickable" data-open-cat="${escapeHtml(c)}" style="flex:1;min-width:0;cursor:pointer;">
           <div style="display:flex;align-items:center;gap:8px;">
@@ -7164,10 +7606,11 @@ function wireFolderDragSorting(){
 }
 
 
-// (2026-07-13) full settings view & battery keep-screen config; prev: none
+// (2026-07-13) full settings view with accidental preference config; prev: wake lock only
 function renderSettingsView() {
   syncWakeLock();
   const keepScreenPref = (typeof localStorage !== 'undefined' && localStorage.getItem('cbp_keep_screen')) || 'viewer';
+  const cueAccidentalsPref = getCueAccidentalsPref();
   const userDisplay = firebaseUser ? (firebaseUser.displayName || firebaseUser.email || 'Director') : 'Guest';
   const userSub = firebaseUser ? (firebaseUser.email || (firebaseUser.isAnonymous ? 'Guest Account' : '')) : 'Local Storage Mode';
 
@@ -7241,6 +7684,30 @@ function renderSettingsView() {
         </div>
       </div>
 
+      <!-- (2026-07-13) accidental preference settings card; prev: none -->
+      <div class="letter-divider">LITURGICAL CUE ACCIDENTALS</div>
+      <div class="settings-card" style="background:var(--bg-elev);border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:18px;">
+        <div style="font-size:12.5px;color:var(--text-dim);margin-bottom:12px;line-height:1.45;">
+          Choose whether liturgical cue chords and notes display flats (e.g. Bb, Eb) or sharps (e.g. A#, D#).
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <label style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text);cursor:pointer;padding:8px 10px;border-radius:10px;background:var(--bg-elev2);">
+            <input type="radio" name="opt_cue_accidentals" value="flats" ${cueAccidentalsPref==='flats'?'checked':''} style="accent-color:var(--accent);">
+            <div style="flex:1;">
+              <span style="font-weight:700;">Flats (Bb, Eb, Ab) &bull; Default</span>
+              <div style="font-size:11.5px;color:var(--text-dim);">Spells cue notes using flats (e.g. Bb instead of A#). Standard for liturgical music.</div>
+            </div>
+          </label>
+          <label style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text);cursor:pointer;padding:8px 10px;border-radius:10px;background:var(--bg-elev2);">
+            <input type="radio" name="opt_cue_accidentals" value="sharps" ${cueAccidentalsPref==='sharps'?'checked':''} style="accent-color:var(--accent);">
+            <div style="flex:1;">
+              <span style="font-weight:700;">Sharps (A#, D#, G#)</span>
+              <div style="font-size:11.5px;color:var(--text-dim);">Spells cue notes and chords using sharp accidentals.</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
       <!-- Liturgical & Folder Config -->
       <div class="letter-divider">ORGANIZATION & MASS PARTS</div>
       <div class="settings-card" style="background:var(--bg-elev);border:1px solid var(--line);border-radius:18px;padding:8px 16px;margin-bottom:18px;">
@@ -7289,6 +7756,14 @@ function renderSettingsView() {
       try{ localStorage.setItem('cbp_keep_screen', e.target.value); }catch(err){}
       syncWakeLock();
       showToast('Wake lock preference updated');
+    };
+  });
+
+  // (2026-07-13) wire accidental preference change; prev: none
+  document.querySelectorAll('input[name="opt_cue_accidentals"]').forEach(el=>{
+    el.onchange = (e)=>{
+      try{ localStorage.setItem('cbp_cue_accidentals', e.target.value); }catch(err){}
+      showToast(`Cue accidentals set to ${e.target.value === 'flats' ? 'Flats (Bb)' : 'Sharps (A#)'}`);
     };
   });
 
@@ -7865,7 +8340,7 @@ function wireSidebar(){
   if(signInBtn) signInBtn.onclick = ()=>{ closeSidebar(()=>{ state.view='auth'; render(); }); };
 }
 
-// (2026-07-13) modal confirmation helper; prev: browser window.confirm
+// (2026-07-13) overlay modal in editor without re-render; prev: full render()
 function showConfirmModal({ title, message, confirmText, danger = true, onConfirm }){
   state.modal = {
     type: 'confirm',
@@ -7875,6 +8350,14 @@ function showConfirmModal({ title, message, confirmText, danger = true, onConfir
     danger: danger !== false,
     onConfirm
   };
+  if(state.view === 'editor'){
+    document.querySelectorAll('.modal-backdrop, #modal-bg').forEach(el=>el.remove());
+    const mHtml = modalHtml();
+    const overlay = document.getElementById('editor-overlay') || document.body;
+    overlay.insertAdjacentHTML('beforeend', mHtml);
+    wireModal();
+    return;
+  }
   render();
 }
 
@@ -8858,12 +9341,13 @@ function modalHtml(){
   return '';
 }
 
-// (2026-07-13) clean all modal backdrops on close; prev: missed custom classes
+// (2026-07-13) preserve editor state when closing modal; prev: render() wiped
 function closeActiveModal(){
   const closingModal = state.modal;
   state.modal = null;
   state.isSavingSong = false;
   document.querySelectorAll('.modal-backdrop, #modal-bg, .custom-modal-backdrop, .modal').forEach(el=>el.remove());
+  if(state.view === 'editor') return;
   if(state.view === 'list') renderListView();
   else if(state.view === 'viewer') renderViewer();
   else if(state.view === 'setlists') renderSetlistsView();
@@ -10127,15 +10611,17 @@ function wireModal(){
   }
 }
 
-// (2026-07-13) SVG icon helpers (star, music, import, cross); prev: none
+// (2026-07-13) delicate outline star with refined stroke; prev: stroke 2
 function iconStar(filled){
-  if(filled) return `<svg viewBox="0 0 24 24" width="16" height="16" fill="var(--chord)" stroke="var(--chord)" stroke-width="2" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
-  return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--text-dim)" stroke-width="2" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
+  if(filled) return `<svg viewBox="0 0 24 24" width="16" height="16" fill="var(--chord)" stroke="var(--chord)" stroke-width="1.6" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
+  return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--text-dim)" stroke-width="1.6" stroke-linejoin="round" opacity="0.8"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
 }
 // (2026-07-13) add iconUndo and iconRedo SVG functions; prev: none
 function iconUndo(){ return `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>`; }
 function iconRedo(){ return `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v0A5.5 5.5 0 0 0 9.5 20H13"/></svg>`; }
 function iconMusic(){ return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`; }
+// (2026-07-13) piano keyboard icon for header toggle; prev: none
+function iconPiano(){ return `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 6h2v8H7zm4 0h2v8h-2zm4 0h2v8h-2z"/></svg>`; }
 function iconImport(){ return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`; }
 // (2026-07-13) export arrow icon; prev: none
 function iconExport(){ return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`; }
@@ -10397,9 +10883,14 @@ function subscribeRealtimeSync(){
         render();
         return true;
       }
+      // (2026-07-13) check unsaved changes on back in editor; prev: force closed
       if(state.view === 'editor'){
+        if(typeof window.handleEditorCancel === 'function'){
+          window.handleEditorCancel();
+          return true;
+        }
         closeEditorOverlay(()=>{
-          state.view = state.currentId ? 'viewer' : 'list';
+          state.view = state.editorCameFrom === 'viewer' ? 'viewer' : 'list';
           render();
         });
         return true;
@@ -10502,11 +10993,14 @@ window.addEventListener('orientationchange', ()=>{
   }, 100);
 });
 
-// (2026-07-13) capture phase for staff play & note audio; prev: bubble blocked
+// (2026-07-13) capture pointerdown to unlock audio context; prev: staff only
 document.addEventListener('pointerdown', (e)=>{
-  if(e.target.closest('.staff-play-btn, [data-staff-note]')){
+  if(e.target.closest('.staff-play-btn, [data-staff-note], .piano-key, .sticky-piano-key')){
     try{
-      if(!pianoAudioCtx) pianoAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if(!pianoAudioCtx || pianoAudioCtx.state === 'closed'){
+        pianoAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        pianoMasterBus = null;
+      }
       if(pianoAudioCtx.state === 'suspended') pianoAudioCtx.resume();
     }catch(err){}
   }

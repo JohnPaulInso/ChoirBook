@@ -1,0 +1,164 @@
+{
+  "android/app/build.gradle": {
+    "mtime": 1793963752.2419994,
+    "seen": 1793967154.0644467,
+    "ast_hash": "fd3e09ee98396a6683e9f886b37aaf2c",
+    "semantic_hash": "fd3e09ee98396a6683e9f886b37aaf2c"
+  },
+  "android/app/capacitor.build.gradle": {
+    "mtime": 1793966842.451176,
+    "seen": 1793967154.0644531,
+    "ast_hash": "20b1720c7c82ad1d0d50d3c25411c21f",
+    "semantic_hash": "20b1720c7c82ad1d0d50d3c25411c21f"
+  },
+  "android/app/google-services.json": {
+    "mtime": 1793965503.3603477,
+    "seen": 1793967154.0644553,
+    "ast_hash": "71330d7490c40123efb48a235592eb1d",
+    "semantic_hash": "71330d7490c40123efb48a235592eb1d"
+  },
+  "android/app/src/androidTest/java/com/getcapacitor/myapp/ExampleInstrumentedTest.java": {
+    "mtime": 1785512756.0,
+    "seen": 1793634843.9626892,
+    "ast_hash": "fbaf7cc870c663eb52dcf218531c439d",
+    "semantic_hash": "fbaf7cc870c663eb52dcf218531c439d"
+  },
+  "android/app/src/main/java/com/choirbookpro/app/MainActivity.java": {
+    "mtime": 1793963834.1776047,
+    "seen": 1793967154.0644605,
+    "ast_hash": "bb25717cd021ea1eed5638922c809270",
+    "semantic_hash": "bb25717cd021ea1eed5638922c809270"
+  },
+  "android/app/src/test/java/com/getcapacitor/myapp/ExampleUnitTest.java": {
+    "mtime": 1785512756.0,
+    "seen": 1793634843.9626913,
+    "ast_hash": "e91b4501c14da821682fa5c26a16d616",
+    "semantic_hash": "e91b4501c14da821682fa5c26a16d616"
+  },
+  "android/build.gradle": {
+    "mtime": 1785512756.0,
+    "seen": 1793634843.9626923,
+    "ast_hash": "682315a426653617c6a74fc12bef55b6",
+    "semantic_hash": "682315a426653617c6a74fc12bef55b6"
+  },
+  "android/capacitor.settings.gradle": {
+    "mtime": 1793966842.4501722,
+    "seen": 1793967154.0644648,
+    "ast_hash": "1a21328b8ae2ae9af0d02a6c12dddb9d",
+    "semantic_hash": "1a21328b8ae2ae9af0d02a6c12dddb9d"
+  },
+  "android/gradlew": {
+    "mtime": 1785512756.0,
+    "seen": 1793634843.962694,
+    "ast_hash": "794669d78aef1dd5c7d889ef618b311a",
+    "semantic_hash": "794669d78aef1dd5c7d889ef618b311a"
+  },
+  "android/settings.gradle": {
+    "mtime": 1785512756.0,
+    "seen": 1793634843.9626946,
+    "ast_hash": "f6cd925b3f859e23c3d819fe2459e0e4",
+    "semantic_hash": "f6cd925b3f859e23c3d819fe2459e0e4"
+  },
+  "android/variables.gradle": {
+    "mtime": 1785512756.0,
+    "seen": 1793634843.9626954,
+    "ast_hash": "4b3fce8ea2a515a9d2e47e74757172ec",
+    "semantic_hash": "4b3fce8ea2a515a9d2e47e74757172ec"
+  },
+  "capacitor.config.json": {
+    "mtime": 1793964074.3706326,
+    "seen": 1793967154.0644693,
+    "ast_hash": "441dcd40d5756789e8244f0455762154",
+    "semantic_hash": "441dcd40d5756789e8244f0455762154"
+  },
+  "firebase.json": {
+    "mtime": 1793634251.477525,
+    "seen": 1793634843.962697,
+    "ast_hash": "b69762e51fbed65f4f65ba4b2991baf3",
+    "semantic_hash": "b69762e51fbed65f4f65ba4b2991baf3"
+  },
+  "google-services.json": {
+    "mtime": 1785912356.2601886,
+    "seen": 1793634843.9626977,
+    "ast_hash": "2ef3df7caa84875136011501b7cac628",
+    "semantic_hash": "2ef3df7caa84875136011501b7cac628"
+  },
+  "js/app.js": {
+    "mtime": 1793966835.4039476,
+    "seen": 1793967154.0644724,
+    "ast_hash": "99ec8a7b17505e9dcf671a10e6f0fdb1",
+    "semantic_hash": "99ec8a7b17505e9dcf671a10e6f0fdb1"
+  },
+  "js/firebase-config.js": {
+    "mtime": 1793634338.1893795,
+    "seen": 1793634843.9626992,
+    "ast_hash": "647e6edcc0e56f6620eee99e9b600859",
+    "semantic_hash": "647e6edcc0e56f6620eee99e9b600859"
+  },
+  "js/sw.js": {
+    "mtime": 1793646286.3326223,
+    "seen": 1793652033.5090897,
+    "ast_hash": "a3f527aeee33f07f5bbd03d01aea79c1",
+    "semantic_hash": "a3f527aeee33f07f5bbd03d01aea79c1"
+  },
+  "manifest.json": {
+    "mtime": 1784882236.0,
+    "seen": 1793634843.9627008,
+    "ast_hash": "d627d83a7a35f8a4bbe80998c78c1f36",
+    "semantic_hash": "d627d83a7a35f8a4bbe80998c78c1f36"
+  },
+  "package.json": {
+    "mtime": 1793962914.4677255,
+    "seen": 1793967154.0644765,
+    "ast_hash": "5fb5940d4efedc083a38b598cb55a70a",
+    "semantic_hash": "5fb5940d4efedc083a38b598cb55a70a"
+  },
+  "IMPROVEMENTS.md": {
+    "mtime": 1785914073.054296,
+    "seen": 1793707546.7830324,
+    "ast_hash": "7b2e78217b58d846cc3132cb40eb7021",
+    "semantic_hash": "7b2e78217b58d846cc3132cb40eb7021"
+  },
+  "Mass-Flow.md": {
+    "mtime": 1793634641.4043608,
+    "seen": 1793707546.7830336,
+    "ast_hash": "e63663228deeb29709b6273a4da1783f",
+    "semantic_hash": "e63663228deeb29709b6273a4da1783f"
+  },
+  "SETUP_INSTRUCTIONS.md": {
+    "mtime": 1785912608.8718624,
+    "seen": 1793707546.7830346,
+    "ast_hash": "b74b1b2d557b88f38f549b599a2badf7",
+    "semantic_hash": "b74b1b2d557b88f38f549b599a2badf7"
+  },
+  "index.html": {
+    "mtime": 1793963815.6968613,
+    "seen": 1793967154.0644846,
+    "ast_hash": "b2537617b93b5076773181091d4d1528",
+    "semantic_hash": "b2537617b93b5076773181091d4d1528"
+  },
+  "android/app/src/main/java/com/choirbookpro/app/GoogleOneTapPlugin.java": {
+    "mtime": 1793964073.2860813,
+    "seen": 1793967154.0644596,
+    "ast_hash": "fad32c2372c2913a4b390d7055c4c58e",
+    "semantic_hash": "fad32c2372c2913a4b390d7055c4c58e"
+  },
+  "sw.js": {
+    "mtime": 1793891967.094731,
+    "seen": 1793901718.5470843,
+    "ast_hash": "b9be0aa5ca4ecbdb7bd132d9624afd4b",
+    "semantic_hash": "b9be0aa5ca4ecbdb7bd132d9624afd4b"
+  },
+  "DESIGN_PLAN.md": {
+    "mtime": 1793634903.7199605,
+    "seen": 1793707546.783031,
+    "ast_hash": "4adfb34f9014d8e91d9fe3eeb71e5ae3",
+    "semantic_hash": "4adfb34f9014d8e91d9fe3eeb71e5ae3"
+  },
+  "GOOGLE_AUTH_SETUP.md": {
+    "mtime": 1793965414.3694158,
+    "seen": 1793967154.0644798,
+    "ast_hash": "409ea0c9bd326b147581bc56dc736388",
+    "semantic_hash": "409ea0c9bd326b147581bc56dc736388"
+  }
+}
