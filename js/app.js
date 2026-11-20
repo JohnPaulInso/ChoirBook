@@ -1321,24 +1321,23 @@ const PIANO_SAMPLES = [
 ];
 const pianoSampleBuffers = {};
 const pianoSampleOffsets = {};
+// (2026-07-13) pre-baked single-buffer chord cache for zero-lag playback; prev: multi-node
+const pianoChordBufferCache = {};
 let pianoSamplesPreloadStarted = false;
 
-// (2026-07-13) align all piano samples to exact hammer peak onset (25% peak); prev: 14%
+// (2026-07-13) lock all piano samples to 6ms before true peak to kill chord flam; prev: 25% thresh
 function findAudioStartOffset(audioBuffer){
   try{
     const data = audioBuffer.getChannelData(0);
-    const scanLen = Math.min(data.length, Math.floor(audioBuffer.sampleRate * 0.4));
-    let peak = 0;
+    const sr = audioBuffer.sampleRate;
+    const scanLen = Math.min(data.length, Math.floor(sr * 0.35));
+    let peak = 0, peakIdx = 0;
     for(let i = 0; i < scanLen; i++){
       const v = Math.abs(data[i]);
-      if(v > peak) peak = v;
+      if(v > peak){ peak = v; peakIdx = i; }
     }
-    const thresh = Math.max(0.05, peak * 0.25);
-    for(let i = 0; i < scanLen; i++){
-      if(Math.abs(data[i]) >= thresh){
-        return Math.max(0, (i - Math.floor(audioBuffer.sampleRate * 0.004)) / audioBuffer.sampleRate);
-      }
-    }
+    const startIdx = Math.max(0, peakIdx - Math.floor(sr * 0.002));
+    return startIdx / sr;
   }catch(e){}
   return 0;
 }
@@ -1351,6 +1350,7 @@ function ensurePianoAudioBus(){
     pianoMasterBus = null;
     Object.keys(pianoSampleBuffers).forEach(k => delete pianoSampleBuffers[k]);
     Object.keys(pianoSampleOffsets).forEach(k => delete pianoSampleOffsets[k]);
+    Object.keys(pianoChordBufferCache).forEach(k => delete pianoChordBufferCache[k]);
     pianoSamplesPreloadStarted = false;
   }
   if(pianoAudioCtx.state === 'suspended') pianoAudioCtx.resume();
@@ -1393,7 +1393,7 @@ function preloadPianoSamples(){
     fetch(`./audio/piano/${s.file}.mp3`)
       .then(r => r.ok ? r.arrayBuffer() : null)
       .then(buf => buf ? ctx.decodeAudioData(buf) : null)
-      .then(decoded => { if(decoded){ pianoSampleBuffers[s.file] = decoded; pianoSampleOffsets[s.file] = findAudioStartOffset(decoded); } })
+      .then(decoded => { if(decoded){ pianoSampleBuffers[s.file] = decoded; pianoSampleOffsets[s.file] = findAudioStartOffset(decoded); Object.keys(pianoChordBufferCache).forEach(k => delete pianoChordBufferCache[k]); } })
       .catch(()=>{});
   });
 }
@@ -1460,69 +1460,130 @@ function playPianoNote(noteIdx, volumeBoost = 1){
     });
   }catch(e){}
 }
-// (2026-07-13) voiced Salamander chord player with medium sustain; prev: single note only
-let activeChordVoices = [];
+// (2026-07-13) bake each chord into 1 single AudioBuffer for zero-lag playback; prev: multi-node
+let activeChordVoice = null;
 let lastChordTriggerMs = 0;
+
+function bakeChordAudioBuffer(chordStr){
+  if(!pianoAudioCtx) return null;
+  if(pianoChordBufferCache[chordStr]) return pianoChordBufferCache[chordStr];
+  const parsed = parseChordToken(chordStr);
+  if(!parsed) return null;
+  const rootPc = noteIndex(parsed.root, parsed.acc);
+  const intervals = QUALITY_INTERVALS[parsed.quality] !== undefined ? QUALITY_INTERVALS[parsed.quality] : QUALITY_INTERVALS[''];
+  const notes = [];
+  if(parsed.bassRoot){
+    const bassPc = noteIndex(parsed.bassRoot, parsed.bassAcc || '');
+    notes.push(bassPc - 12);
+  }
+  const baseRoot = rootPc >= 8 ? (rootPc - 12) : rootPc;
+  intervals.forEach(iv => {
+    const n = baseRoot + iv;
+    if(!notes.includes(n)) notes.push(n);
+  });
+
+  // Require all needed samples to be decoded before baking
+  const sources = [];
+  for(const noteIdx of notes){
+    let best = PIANO_SAMPLES[0], bestDist = Math.abs(noteIdx - PIANO_SAMPLES[0].semi);
+    for(let j = 1; j < PIANO_SAMPLES.length; j++){
+      const d = Math.abs(noteIdx - PIANO_SAMPLES[j].semi);
+      if(d < bestDist){ best = PIANO_SAMPLES[j]; bestDist = d; }
+    }
+    const buf = pianoSampleBuffers[best.file];
+    if(!buf) return null;
+    sources.push({
+      data: buf.getChannelData(0),
+      start: Math.floor((pianoSampleOffsets[best.file] || 0) * buf.sampleRate),
+      rate: Math.pow(2, (noteIdx - best.semi) / 12) * (buf.sampleRate / pianoAudioCtx.sampleRate)
+    });
+  }
+
+  const sr = pianoAudioCtx.sampleRate;
+  const durSec = 1.9;
+  const totalLen = Math.floor(sr * durSec);
+  const holdLen = Math.floor(sr * 0.9);
+  const fadeLen = Math.max(1, totalLen - holdLen);
+  const outBuf = pianoAudioCtx.createBuffer(1, totalLen, sr);
+  const out = outBuf.getChannelData(0);
+  const scale = 1.0 / Math.max(1, sources.length);
+
+  for(let s = 0; s < sources.length; s++){
+    const src = sources[s];
+    const d = src.data;
+    const dLen = d.length - 1;
+    let pos = src.start;
+    const step = src.rate;
+    for(let i = 0; i < totalLen; i++){
+      const idx = pos | 0;
+      if(idx >= dLen) break;
+      const frac = pos - idx;
+      out[i] += (d[idx] + (d[idx + 1] - d[idx]) * frac) * scale;
+      pos += step;
+    }
+  }
+
+  // Apply smooth sustain tail & clean peak normalization
+  let peak = 0;
+  for(let i = 0; i < totalLen; i++){
+    if(i > holdLen){
+      const tNorm = (i - holdLen) / fadeLen;
+      out[i] *= (1 - tNorm) * (1 - tNorm);
+    }
+    const av = Math.abs(out[i]);
+    if(av > peak) peak = av;
+  }
+  if(peak > 0.01){
+    const norm = Math.min(2.2, 0.88 / peak);
+    for(let i = 0; i < totalLen; i++) out[i] *= norm;
+  }
+  pianoChordBufferCache[chordStr] = outBuf;
+  return outBuf;
+}
+
+function prebakeSongChords(song){
+  if(!song || !pianoAudioCtx) return;
+  const chords = getUniqueSongChordsInOrder(song);
+  let i = 0;
+  const step = ()=>{
+    if(i >= chords.length) return;
+    bakeChordAudioBuffer(chords[i++]);
+    if(i < chords.length) setTimeout(step, 8);
+  };
+  setTimeout(step, 120);
+}
+
 function playPianoChord(chordStr){
   try{
-    // (2026-07-13) guard against accidental double-trigger within 45ms; prev: unguarded
     const nowMs = performance.now();
-    if(nowMs - lastChordTriggerMs < 45) return;
+    if(nowMs - lastChordTriggerMs < 40) return;
     lastChordTriggerMs = nowMs;
-    const parsed = parseChordToken(chordStr);
-    if(!parsed) return;
     ensurePianoAudioBus();
     const now = pianoAudioCtx.currentTime;
-    // Gently fade out previous chord so progressions stay clean
-    activeChordVoices.forEach(v => {
+    if(activeChordVoice){
       try{
-        v.gain.gain.cancelScheduledValues(now);
-        v.gain.gain.setValueAtTime(Math.max(0.001, v.gain.gain.value || 0.4), now);
-        v.gain.gain.exponentialRampToValueAtTime(0.0008, now + 0.045);
-        v.src.stop(now + 0.055);
+        activeChordVoice.gain.gain.cancelScheduledValues(now);
+        activeChordVoice.gain.gain.setValueAtTime(Math.max(0.001, activeChordVoice.gain.gain.value || 0.8), now);
+        activeChordVoice.gain.gain.exponentialRampToValueAtTime(0.0008, now + 0.035);
+        activeChordVoice.src.stop(now + 0.042);
       }catch(e){}
-    });
-    activeChordVoices = [];
-
-    const rootPc = noteIndex(parsed.root, parsed.acc);
-    const intervals = QUALITY_INTERVALS[parsed.quality] !== undefined ? QUALITY_INTERVALS[parsed.quality] : QUALITY_INTERVALS[''];
-    // (2026-07-13) clean closed voicing without doubled root flam; prev: doubled root
-    const notes = [];
-    if(parsed.bassRoot){
-      const bassPc = noteIndex(parsed.bassRoot, parsed.bassAcc || '');
-      notes.push(bassPc - 12);
+      activeChordVoice = null;
     }
-    const baseRoot = rootPc >= 8 ? (rootPc - 12) : rootPc;
-    intervals.forEach(iv => {
-      const n = baseRoot + iv;
-      if(!notes.includes(n)) notes.push(n);
-    });
-    const perNoteGain = Math.min(0.88, 2.2 / Math.max(2, notes.length));
-    // (2026-07-13) zero-latency simultaneous chord attack with trimmed MP3 offset; prev: 14ms strum
-    notes.forEach((noteIdx) => {
-      let best = PIANO_SAMPLES[0], bestDist = Math.abs(noteIdx - PIANO_SAMPLES[0].semi);
-      for(let j = 1; j < PIANO_SAMPLES.length; j++){
-        const d = Math.abs(noteIdx - PIANO_SAMPLES[j].semi);
-        if(d < bestDist){ best = PIANO_SAMPLES[j]; bestDist = d; }
-      }
-      const sampleBuf = pianoSampleBuffers[best.file];
-      if(sampleBuf){
-        const src = pianoAudioCtx.createBufferSource();
-        src.buffer = sampleBuf;
-        src.playbackRate.value = Math.pow(2, (noteIdx - best.semi) / 12);
-        const g = pianoAudioCtx.createGain();
-        g.gain.setValueAtTime(perNoteGain, now);
-        g.gain.setValueAtTime(perNoteGain, now + 0.95);
-        g.gain.exponentialRampToValueAtTime(0.001, now + 1.9);
-        src.connect(g);
-        g.connect(pianoMasterBus);
-        src.start(now, pianoSampleOffsets[best.file] || 0);
-        src.stop(now + 1.95);
-        activeChordVoices.push({ src, gain: g });
-      } else {
-        playPianoNote(noteIdx, 0.72);
-      }
-    });
+    const baked = bakeChordAudioBuffer(chordStr);
+    if(baked){
+      const src = pianoAudioCtx.createBufferSource();
+      src.buffer = baked;
+      const g = pianoAudioCtx.createGain();
+      g.gain.setValueAtTime(1.0, now);
+      src.connect(g);
+      g.connect(pianoMasterBus);
+      src.start(now);
+      activeChordVoice = { src, gain: g };
+      return;
+    }
+    // Fallback only if samples are still downloading
+    const parsed = parseChordToken(chordStr);
+    if(parsed) playPianoNote(noteIndex(parsed.root, parsed.acc), 0.9);
   }catch(e){}
 }
 
@@ -7177,46 +7238,33 @@ function renderViewer(){
   }
 
   // (2026-07-13) fire Tap:Play on touchstart/mousedown for 0ms latency; prev: onclick release
+  // (2026-07-13) fire lyric chord play on pointerdown (0ms delay); prev: onclick
   const wireChartChordClicks = ()=>{
     const chartContent = document.getElementById('chart-scroll-content');
     const chartToks = chartContent ? Array.from(chartContent.querySelectorAll('.chord-tok')) : [];
-    const isDirectPlay = ()=> !!(state.showStickyPiano && state.stickyTrayMode === 'chords' && state.chordTapAction !== 'diagram');
     document.querySelectorAll('.chord-tok').forEach(el => {
-      let playedOnDown = false;
-      const playNow = (e)=>{
+      el.onpointerdown = (e)=>{
         const ch = el.dataset.chord;
         if(!ch) return;
-        if(e && e.stopPropagation) e.stopPropagation();
-        const idx = chartToks.indexOf(el);
-        if(idx >= 0 && typeof window._jumpChordFollowTo === 'function'){
-          window._jumpChordFollowTo(idx, true);
-        } else {
-          playPianoChord(ch);
-          const r = document.getElementById('sticky-piano-readout');
-          if(r) r.textContent = ch;
+        if(state.showStickyPiano && state.stickyTrayMode === 'chords' && state.chordTapAction !== 'diagram'){
+          e.stopPropagation();
+          const idx = chartToks.indexOf(el);
+          if(idx >= 0 && typeof window._jumpChordFollowTo === 'function'){
+            window._jumpChordFollowTo(idx, true);
+          } else {
+            playPianoChord(ch);
+            const r = document.getElementById('sticky-piano-readout');
+            if(r) r.textContent = ch;
+          }
         }
-      };
-      el.ontouchstart = (e)=>{
-        if(!isDirectPlay()) return;
-        playedOnDown = true;
-        playNow(e);
-      };
-      el.onmousedown = (e)=>{
-        if(!isDirectPlay() || e.button !== 0) return;
-        if(playedOnDown){ playedOnDown = false; return; }
-        playedOnDown = true;
-        playNow(e);
       };
       el.onclick = (e)=>{
         const ch = el.dataset.chord;
         if(!ch) return;
-        if(isDirectPlay()){
-          if(e && e.stopPropagation) e.stopPropagation();
-          if(playedOnDown){ playedOnDown = false; return; }
-          playNow(e);
+        if(state.showStickyPiano && state.stickyTrayMode === 'chords' && state.chordTapAction !== 'diagram'){
+          e.stopPropagation();
           return;
         }
-        playedOnDown = false;
         state.modal = { type: 'chord', chord: ch };
         renderViewer();
       };
@@ -7323,14 +7371,12 @@ function renderViewer(){
       }
       qWrap.innerHTML = upcoming.map(u => `<button type="button" class="chord-follow-q-pill" data-follow-jump="${u.idx}">${escapeHtml(u.chord)}</button>`).join('');
       qWrap.querySelectorAll('.chord-follow-q-pill').forEach(qb => {
-        let qTouched = false;
-        const doJump = (e)=>{
-          if(e && e.stopPropagation) e.stopPropagation();
+        qb.onpointerdown = (e)=>{
+          e.stopPropagation();
+          if(e.cancelable) e.preventDefault();
           const idx = parseInt(qb.dataset.followJump, 10);
           if(!isNaN(idx)) jumpChordFollowTo(idx, true);
         };
-        qb.addEventListener('touchstart', (e)=>{ qTouched = true; e.stopPropagation(); if(e.cancelable) e.preventDefault(); doJump(e); }, { passive: false });
-        qb.addEventListener('mousedown', (e)=>{ e.stopPropagation(); if(qTouched){ qTouched = false; return; } doJump(e); });
       });
     }
   };
@@ -7346,18 +7392,23 @@ function renderViewer(){
     const ch = targetEl && targetEl.dataset.chord;
     if(shouldPlay && ch){
       playPianoChord(ch);
-      const readout = document.getElementById('sticky-piano-readout');
-      if(readout) readout.textContent = ch;
     }
-    syncChordFollowUi();
-    // Keep active chord visible above the sticky tray
-    if(targetEl && chartWrap){
-      const wRect = chartWrap.getBoundingClientRect();
-      const eRect = targetEl.getBoundingClientRect();
-      if(eRect.top < wRect.top + 24 || eRect.bottom > wRect.bottom - 120){
-        targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // (2026-07-13) defer UI & scroll updates to next frame so audio fires lag-free; prev: sync DOM
+    requestAnimationFrame(()=>{
+      if(shouldPlay && ch){
+        const readout = document.getElementById('sticky-piano-readout');
+        if(readout) readout.textContent = ch;
       }
-    }
+      syncChordFollowUi();
+  if(state.showStickyPiano && state.stickyTrayMode === 'chords') prebakeSongChords(song);
+      if(targetEl && chartWrap){
+        const wRect = chartWrap.getBoundingClientRect();
+        const eRect = targetEl.getBoundingClientRect();
+        if(eRect.top < wRect.top + 24 || eRect.bottom > wRect.bottom - 120){
+          targetEl.scrollIntoView({ behavior: 'auto', block: 'center' });
+        }
+      }
+    });
   };
   window._jumpChordFollowTo = jumpChordFollowTo;
   window._syncChordFollowUi = syncChordFollowUi;

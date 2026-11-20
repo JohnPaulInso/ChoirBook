@@ -1,9 +1,10 @@
 // (2026-07-13) bump sw shell cache to v49; prev: v48
-// (2026-07-13) bump cache name to v112; prev: v111
-const CACHE_NAME = 'songbook-shell-v112';
+// (2026-07-13) bump cache to v113 & include lyrics-tools.js; prev: v112
+const CACHE_NAME = 'songbook-shell-v113';
 const SHELL_FILES = [
   './index.html',
   './css/style.css',
+  './js/lyrics-tools.js',
   './js/app.js',
   './js/firebase-config.js',
   './manifest.json',
