@@ -5861,13 +5861,17 @@ function pptFullscreenIcon(){
   return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>`;
 }
 
-// (2026-07-13) per-song PPT zoom defaults (2L=80%, others=100%); prev: global
+// (2026-07-13) separate mobile vs tablet zoom buckets saved to Firestore; prev: shared
+function getViewerDeviceBucket(){
+  return (typeof window !== 'undefined' && window.innerWidth >= 768) ? 'tablet' : 'mobile';
+}
 function getDefaultPptZoom(linesCount){
   return String(linesCount) === '2' ? 80 : 100;
 }
 function getPptZoomPercent(song, linesCount){
   const key = String(Math.max(1, Math.min(4, parseInt(linesCount || state.pptLinesPerSlide || 2, 10) || 2)));
-  const raw = song && song.pptZooms && song.pptZooms[key];
+  const bucketKey = getViewerDeviceBucket() + '_' + key;
+  const raw = song && song.pptZooms && (song.pptZooms[bucketKey] !== undefined ? song.pptZooms[bucketKey] : song.pptZooms[key]);
   const val = parseInt(raw, 10);
   return (!isNaN(val) && val >= 40 && val <= 150) ? val : getDefaultPptZoom(key);
 }
@@ -6024,7 +6028,7 @@ function wirePptOverlayEvents(song){
 
   const setPptZoomForCurrentMode = (nextPct)=>{
     const clamped = Math.max(40, Math.min(150, Math.round(nextPct)));
-    const key = String(state.pptLinesPerSlide || 2);
+    const key = getViewerDeviceBucket() + '_' + String(state.pptLinesPerSlide || 2);
     if(!song.pptZooms || typeof song.pptZooms !== 'object') song.pptZooms = {};
     song.pptZooms[key] = clamped;
     const zoomValEl = document.getElementById('ppt-zoom-reset');
@@ -6247,8 +6251,9 @@ function wirePptOverlayEvents(song){
   const nextBtn = document.getElementById('ppt-next-btn');
   if(nextBtn) nextBtn.onclick = (e)=>{ e.stopPropagation(); nextBtn.blur(); goToSlide(state.pptSlideIndex + 1); };
 
-  // (2026-07-13) support touch, mouse drag & trackpad swipe in PPT; prev: touch only
+  // (2026-07-13) add 5%-step pinch zoom + swipe gestures in PPT; prev: swipe only
   let startX = 0, startY = 0, deltaX = 0, isSwiping = false, swipedRecently = false;
+  let isPinching = false, pinchStartDist = 0, pinchStartZoom = 100, lastPinchZoom = 100;
   const markSwiped = ()=>{
     swipedRecently = true;
     setTimeout(()=>{ swipedRecently = false; }, 320);
@@ -6256,6 +6261,16 @@ function wirePptOverlayEvents(song){
 
   overlay.addEventListener('touchstart', (e)=>{
     if(e.target && e.target.closest('button')) return;
+    if(e.touches && e.touches.length === 2){
+      e.stopPropagation();
+      isSwiping = false;
+      isPinching = true;
+      const t0 = e.touches[0], t1 = e.touches[1];
+      pinchStartDist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+      pinchStartZoom = getPptZoomPercent(song, state.pptLinesPerSlide);
+      lastPinchZoom = pinchStartZoom;
+      return;
+    }
     if(!e.touches || e.touches.length !== 1) return;
     e.stopPropagation();
     startX = e.touches[0].clientX;
@@ -6265,6 +6280,19 @@ function wirePptOverlayEvents(song){
   }, { passive: true });
 
   overlay.addEventListener('touchmove', (e)=>{
+    if(isPinching && e.touches && e.touches.length === 2){
+      e.stopPropagation();
+      if(e.cancelable) e.preventDefault();
+      const t0 = e.touches[0], t1 = e.touches[1];
+      const dist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+      const ratio = dist / Math.max(10, pinchStartDist);
+      const snapped = Math.max(40, Math.min(150, Math.round((pinchStartZoom * ratio) / 5) * 5));
+      if(snapped !== lastPinchZoom){
+        lastPinchZoom = snapped;
+        setPptZoomForCurrentMode(snapped);
+      }
+      return;
+    }
     if(!isSwiping || !e.touches || e.touches.length !== 1) return;
     e.stopPropagation();
     const dx = e.touches[0].clientX - startX;
@@ -6276,6 +6304,14 @@ function wirePptOverlayEvents(song){
   }, { passive: false });
 
   overlay.addEventListener('touchend', (e)=>{
+    if(isPinching){
+      e.stopPropagation();
+      if(!e.touches || e.touches.length < 2){
+        isPinching = false;
+        markSwiped();
+      }
+      return;
+    }
     if(!isSwiping) return;
     e.stopPropagation();
     isSwiping = false;
@@ -6364,6 +6400,28 @@ function wirePptOverlayEvents(song){
   window.addEventListener('keydown', window._pptKeyHandler, true);
 }
 
+// (2026-07-13) separate mobile/tablet & chords/lyrics font sizes in DB; prev: device-shared
+function getActiveViewerFontSize(song){
+  if(!song) return 15;
+  const bucket = getViewerDeviceBucket();
+  const mode = state.viewerDisplayMode === 'lyrics' ? 'lyrics' : 'chords';
+  const map = song.viewerFontSizes && typeof song.viewerFontSizes === 'object' ? song.viewerFontSizes : null;
+  const exact = map && map[bucket + '_' + mode];
+  if(typeof exact === 'number' && exact >= 10 && exact <= 48) return exact;
+  if(mode === 'lyrics'){
+    const fallbackChords = map && map[bucket + '_chords'];
+    if(typeof fallbackChords === 'number' && fallbackChords >= 10 && fallbackChords <= 48) return fallbackChords;
+    return song.viewerLyricsFontSize || song.viewerFontSize || 15;
+  }
+  return song.viewerFontSize || 15;
+}
+function setActiveViewerFontSize(song, size){
+  if(!song) return;
+  const bucket = getViewerDeviceBucket();
+  const mode = state.viewerDisplayMode === 'lyrics' ? 'lyrics' : 'chords';
+  if(!song.viewerFontSizes || typeof song.viewerFontSizes !== 'object') song.viewerFontSizes = {};
+  song.viewerFontSizes[bucket + '_' + mode] = size;
+}
 function renderViewer(){
   stopActiveMelodyPlayback();
   const song = currentSong();
@@ -6389,7 +6447,8 @@ function renderViewer(){
   state.lastViewerSongId = song.id;
   const existingSidebarList = document.getElementById('viewer-sidebar-list');
   const prevSidebarScroll = existingSidebarList ? existingSidebarList.scrollTop : 0;
-  const fontSize = song.viewerFontSize || 15;
+  // (2026-07-13) separate saved font size for lyrics vs chords; prev: shared
+  const fontSize = getActiveViewerFontSize(song);
   const scrollSpeed = song.viewerScrollSpeed || 30;
   // (2026-07-13) pause autoscroll when ppt or modal open; prev: modal only
   const isOverlayOpen = !!(state.viewerDisplayMode === 'ppt' || state.modal || document.getElementById('modal-bg') || document.querySelector('.modal-backdrop, .modal, .sidebar-backdrop'));
@@ -7275,11 +7334,12 @@ function wirePinchZoom(chartWrap, chartBody, song){
     return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
   };
 
-  const getCurSize = ()=> parseFloat(chartWrap.style.fontSize) || parseFloat(chartBody ? chartBody.style.fontSize : '') || song.viewerFontSize || 15;
+  const getCurSize = ()=> parseFloat(chartWrap.style.fontSize) || parseFloat(chartBody ? chartBody.style.fontSize : '') || getActiveViewerFontSize(song);
 
   const saveFinalSize = async ()=>{
     const finalSize = Math.round(getCurSize());
-    song.viewerFontSize = finalSize;
+    // (2026-07-13) save pinch font size to active mode; prev: always viewerFontSize
+    setActiveViewerFontSize(song, finalSize);
     await Store.saveSong(song);
     const idx = state.songs.findIndex(s=>s.id===song.id);
     if(idx>=0) state.songs[idx] = song;
@@ -9746,7 +9806,7 @@ function modalHtml(){
             </div>
           </div>
           <div class="field" style="margin-bottom:12px;">
-            <label style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--text-dim);text-transform:uppercase;margin-bottom:6px;display:block;">Text size (${song.viewerFontSize||15}px)</label>
+            <label style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--text-dim);text-transform:uppercase;margin-bottom:6px;display:block;">Text size (${getActiveViewerFontSize(song)}px)</label>
             <div style="display:flex;gap:8px;">
               <button class="toolbtn" style="flex:1;min-height:38px;font-size:14px;font-weight:700;" id="adj-zoom-down">A&minus;</button>
               <button class="toolbtn" style="flex:1;min-height:38px;font-size:14px;font-weight:700;" id="adj-zoom-up">A+</button>
@@ -11002,6 +11062,10 @@ function wireModal(){
         });
         const chartWrap = document.getElementById('chart-wrap');
         const prevTop = chartWrap ? chartWrap.scrollTop : 0;
+        const activeSize = getActiveViewerFontSize(song);
+        if(chartWrap) chartWrap.style.fontSize = activeSize + 'px';
+        const zoomLbl = document.getElementById('adj-zoom-up')?.closest('.field')?.querySelector('label');
+        if(zoomLbl) zoomLbl.textContent = `Text size (${activeSize}px)`;
         const chartContent = document.getElementById('chart-scroll-content');
         if(chartContent) chartContent.innerHTML = renderSongSheetContent(song, false);
         if(chartWrap && prevTop > 0) chartWrap.scrollTop = prevTop;
@@ -11042,8 +11106,9 @@ function wireModal(){
   const adjReset = document.getElementById('adj-reset');
   if(adjReset) adjReset.onclick = (e)=>{ e.preventDefault(); handleTransposeChange(0, true); };
 
+  // (2026-07-13) update active mode font size independently; prev: shared size
   const updateZoomUi = (song)=>{
-    const size = song.viewerFontSize || 15;
+    const size = getActiveViewerFontSize(song);
     const chartWrap = document.getElementById('chart-wrap');
     if(chartWrap) chartWrap.style.fontSize = size + 'px';
     const zoomField = document.getElementById('adj-zoom-up')?.closest('.field');
@@ -11056,7 +11121,7 @@ function wireModal(){
     e.preventDefault();
     const song = getAdjSong();
     if(!song) return;
-    song.viewerFontSize = Math.min(36, (song.viewerFontSize||15)+2);
+    setActiveViewerFontSize(song, Math.min(36, getActiveViewerFontSize(song)+2));
     const idx = state.songs.findIndex(s=>s.id===song.id);
     if(idx>=0) state.songs[idx] = song;
     updateZoomUi(song);
@@ -11066,7 +11131,7 @@ function wireModal(){
     e.preventDefault();
     const song = getAdjSong();
     if(!song) return;
-    song.viewerFontSize = Math.max(10, (song.viewerFontSize||15)-2);
+    setActiveViewerFontSize(song, Math.max(10, getActiveViewerFontSize(song)-2));
     const idx = state.songs.findIndex(s=>s.id===song.id);
     if(idx>=0) state.songs[idx] = song;
     updateZoomUi(song);
