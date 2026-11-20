@@ -1,0 +1,227 @@
+{
+  "nodes": [
+    {
+      "id": "design_plan_architecture_blueprint",
+      "label": "Choir Book Pro Architecture Blueprint",
+      "file_type": "document",
+      "source_file": "C:\\Users\\Lenovo\\Desktop\\Choir Book Pro\\DESIGN_PLAN.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "design_plan_information_architecture",
+      "label": "Information Architecture & Navigation",
+      "file_type": "concept",
+      "source_file": "C:\\Users\\Lenovo\\Desktop\\Choir Book Pro\\DESIGN_PLAN.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "design_plan_offline_first_storage",
+      "label": "Offline-First Storage Engine",
+      "file_type": "concept",
+      "source_file": "C:\\Users\\Lenovo\\Desktop\\Choir Book Pro\\DESIGN_PLAN.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "google_auth_setup_guide",
+      "label": "Google Auth & One-Tap Integration Guide",
+      "file_type": "document",
+      "source_file": "C:\\Users\\Lenovo\\Desktop\\Choir Book Pro\\GOOGLE_AUTH_SETUP.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "improvements_changelog",
+      "label": "Choir Book Pro Improvements & Changelog",
+      "file_type": "document",
+      "source_file": "C:\\Users\\Lenovo\\Desktop\\Choir Book Pro\\IMPROVEMENTS.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "mass_flow_liturgy_structure",
+      "label": "Liturgical Mass Order & Cues Structure",
+      "file_type": "document",
+      "source_file": "C:\\Users\\Lenovo\\Desktop\\Choir Book Pro\\Mass-Flow.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "setup_instructions_dev_guide",
+      "label": "Development & Capacitor Setup Instructions",
+      "file_type": "document",
+      "source_file": "C:\\Users\\Lenovo\\Desktop\\Choir Book Pro\\SETUP_INSTRUCTIONS.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "index_html_app_entrypoint",
+      "label": "My Songbook PWA Entry (index.html)",
+      "file_type": "document",
+      "source_file": "index.html",
+      "source_location": "head/body",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "google_fonts_montserrat",
+      "label": "Google Fonts (Manrope, Montserrat, JetBrains Mono)",
+      "file_type": "document",
+      "source_file": "index.html",
+      "source_location": "head",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "firebase_compat_sdk",
+      "label": "Firebase Compat SDK & Google One Tap GIS",
+      "file_type": "document",
+      "source_file": "index.html",
+      "source_location": "head",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "branding_app_launcher_assets",
+      "label": "App Launcher & Splash Icons",
+      "file_type": "image",
+      "source_file": "icons/icon-192.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "_origin": "semantic"
+    }
+  ],
+  "edges": [
+    {
+      "source": "design_plan_architecture_blueprint",
+      "target": "design_plan_information_architecture",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "C:\\Users\\Lenovo\\Desktop\\Choir Book Pro\\DESIGN_PLAN.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "design_plan_architecture_blueprint",
+      "target": "design_plan_offline_first_storage",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "C:\\Users\\Lenovo\\Desktop\\Choir Book Pro\\DESIGN_PLAN.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "google_auth_setup_guide",
+      "target": "design_plan_architecture_blueprint",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "C:\\Users\\Lenovo\\Desktop\\Choir Book Pro\\GOOGLE_AUTH_SETUP.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "improvements_changelog",
+      "target": "design_plan_architecture_blueprint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "C:\\Users\\Lenovo\\Desktop\\Choir Book Pro\\IMPROVEMENTS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "mass_flow_liturgy_structure",
+      "target": "design_plan_architecture_blueprint",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "C:\\Users\\Lenovo\\Desktop\\Choir Book Pro\\Mass-Flow.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "setup_instructions_dev_guide",
+      "target": "index_html_app_entrypoint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "C:\\Users\\Lenovo\\Desktop\\Choir Book Pro\\SETUP_INSTRUCTIONS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "index_html_app_entrypoint",
+      "target": "google_fonts_montserrat",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "index.html",
+      "source_location": "head",
+      "weight": 1.0
+    },
+    {
+      "source": "index_html_app_entrypoint",
+      "target": "firebase_compat_sdk",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "index.html",
+      "source_location": "head",
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [
+    {
+      "id": "choir_book_documentation_suite",
+      "label": "Choir Book Documentation & Architecture Suite",
+      "nodes": [
+        "design_plan_architecture_blueprint",
+        "google_auth_setup_guide",
+        "improvements_changelog",
+        "mass_flow_liturgy_structure",
+        "setup_instructions_dev_guide"
+      ],
+      "relation": "form",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "C:\\Users\\Lenovo\\Desktop\\Choir Book Pro\\DESIGN_PLAN.md"
+    }
+  ],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

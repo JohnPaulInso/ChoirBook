@@ -1,0 +1,556 @@
+{
+  "communities": {
+    "0": [
+      "js_app",
+      "js_app_acquirepptwakelock",
+      "js_app_buildpptsectionanchors",
+      "js_app_col",
+      "js_app_delete",
+      "js_app_deletesetlist",
+      "js_app_deletesong",
+      "js_app_get",
+      "js_app_getall",
+      "js_app_getallsetlists",
+      "js_app_getallsongs",
+      "js_app_getartists",
+      "js_app_getcategories",
+      "js_app_getcodesortrank",
+      "js_app_getcuechordmap",
+      "js_app_getcuechords",
+      "js_app_getcuechordtext",
+      "js_app_getcustomcues",
+      "js_app_getdefaultpptzoom",
+      "js_app_getdeletedsongkeys",
+      "js_app_getexpandedsetlistitemswithlit",
+      "js_app_getfilteredsongsforcurrentview",
+      "js_app_getfoldercolors",
+      "js_app_getliturgicaldialoguesongs",
+      "js_app_getmassparts",
+      "js_app_getorderedsongsections",
+      "js_app_getpptzoompercent",
+      "js_app_getpptzooms",
+      "js_app_getsetlist",
+      "js_app_getsetlistorder",
+      "js_app_getsong",
+      "js_app_gettrash",
+      "js_app_getupdatedsince",
+      "js_app_getviewersonglist",
+      "js_app_iconchevrondown",
+      "js_app_iconchevronleft",
+      "js_app_iconchevronright",
+      "js_app_iconchevronup",
+      "js_app_iconcopy",
+      "js_app_isseededdefaultsong",
+      "js_app_issongmatchingmasspart",
+      "js_app_list",
+      "js_app_listsetlists",
+      "js_app_listsongs",
+      "js_app_marksongasdeleted",
+      "js_app_matchesanchorpart",
+      "js_app_mode",
+      "js_app_pptblankicon",
+      "js_app_pptfullscreenicon",
+      "js_app_pptthemeicon",
+      "js_app_releasepptwakelock",
+      "js_app_renderpptoverlayhtml",
+      "js_app_save",
+      "js_app_saveartists",
+      "js_app_savecategories",
+      "js_app_savecuechords",
+      "js_app_savecuechordtext",
+      "js_app_savecustomcues",
+      "js_app_savedeletedsongkeys",
+      "js_app_savefoldercolors",
+      "js_app_savemassparts",
+      "js_app_savepptzooms",
+      "js_app_savesetlist",
+      "js_app_savesetlistorder",
+      "js_app_savesong",
+      "js_app_savetrash",
+      "js_app_set",
+      "js_app_syncliturgicaldialogues",
+      "js_app_wirepptoverlayevents"
+    ],
+    "1": [
+      "js_app_autoassignfoldersbytitle",
+      "js_app_autoorganizeallsongsbytitle",
+      "js_app_closeactivemodal",
+      "js_app_currentsetlist",
+      "js_app_deletefromtrashforever",
+      "js_app_downloadgsma",
+      "js_app_emptytrashforever",
+      "js_app_generategsma",
+      "js_app_getfoldertheme",
+      "js_app_iconarrowdown",
+      "js_app_iconarrowup",
+      "js_app_iconback",
+      "js_app_iconclose",
+      "js_app_iconedit",
+      "js_app_iconexport",
+      "js_app_iconeye",
+      "js_app_iconeyeoff",
+      "js_app_iconfolder",
+      "js_app_iconformasspart",
+      "js_app_iconimport",
+      "js_app_iconmenu",
+      "js_app_iconmusic",
+      "js_app_iconpalette",
+      "js_app_iconsearch",
+      "js_app_iconsetlist",
+      "js_app_icontrash",
+      "js_app_istabletordesktophorizontal",
+      "js_app_matchfoldersfromtitle",
+      "js_app_mounteditoroverlay",
+      "js_app_movetotrash",
+      "js_app_newsetlistitemid",
+      "js_app_openeditor",
+      "js_app_profiledropdownhtml",
+      "js_app_renderfoldersview",
+      "js_app_renderlistview",
+      "js_app_rendersetlisteditor",
+      "js_app_rendersetlistsview",
+      "js_app_showconfirmmodal",
+      "js_app_showtoast",
+      "js_app_sidebarhtml",
+      "js_app_startmetronome",
+      "js_app_synccuedraftfrommodal",
+      "js_app_uid",
+      "js_app_wirefolderdragsorting",
+      "js_app_wiremodal",
+      "js_app_wiresetlistdragsorting",
+      "js_app_wiresidebar"
+    ],
+    "2": [
+      "js_app_applyfoldertheme",
+      "js_app_detectkeyfrombody",
+      "js_app_ensurecollectinpsalmcue",
+      "js_app_ensuregreatamenmigration",
+      "js_app_extractchordsfrombody",
+      "js_app_findmasspartcue",
+      "js_app_getcanonicaluserdocid",
+      "js_app_getlastsyncat",
+      "js_app_getmasspartcuekey",
+      "js_app_hydrateinitialstate",
+      "js_app_infermasspartfromgsmatitle",
+      "js_app_isrealchordtoken",
+      "js_app_loadall",
+      "js_app_normalizebodychordlines",
+      "js_app_normalizesetlist",
+      "js_app_normalizesong",
+      "js_app_opencueeditor",
+      "js_app_parsechordtoken",
+      "js_app_parsegsma",
+      "js_app_performusersignout",
+      "js_app_persistmigratedchordsongs",
+      "js_app_render",
+      "js_app_renderauthview",
+      "js_app_rendersettingsview",
+      "js_app_seedifempty",
+      "js_app_selectadapter",
+      "js_app_setlastsyncat",
+      "js_app_setscreenkeepawake",
+      "js_app_settheme",
+      "js_app_subscriberealtimesync",
+      "js_app_syncbundledgsma",
+      "js_app_syncwakelock",
+      "js_app_tokenlookslikechord"
+    ],
+    "3": [
+      "js_app_closeeditoroverlay",
+      "js_app_currentsong",
+      "js_app_ensurepianoaudiobus",
+      "js_app_getcueaccidentalspref",
+      "js_app_getcuekeyidx",
+      "js_app_getcuenotemode",
+      "js_app_getcuesemis",
+      "js_app_handlestaffplayclick",
+      "js_app_handleuniversalback",
+      "js_app_iconbigtriangledown",
+      "js_app_iconbigtriangleup",
+      "js_app_icondots",
+      "js_app_iconpause",
+      "js_app_iconpiano",
+      "js_app_iconplay",
+      "js_app_iconrestart",
+      "js_app_iconspeedarrows",
+      "js_app_openviewer",
+      "js_app_playpianonote",
+      "js_app_preloadpianosamples",
+      "js_app_pxpersecondfromspeed",
+      "js_app_rendercuepianofinder",
+      "js_app_renderpeekslide",
+      "js_app_renderstickypianohtml",
+      "js_app_renderviewer",
+      "js_app_setsongscrollspeed",
+      "js_app_showspeedslidertemporarily",
+      "js_app_startautoscroll",
+      "js_app_stopactivemelodyplayback",
+      "js_app_stopautoscroll",
+      "js_app_stopmetronome",
+      "js_app_wirepinchzoom",
+      "js_app_wirespeedsquare"
+    ],
+    "4": [
+      "capacitor_config",
+      "capacitor_config_config",
+      "package",
+      "package_author",
+      "package_dependencies",
+      "package_dependencies_capacitor_android",
+      "package_dependencies_capacitor_app",
+      "package_dependencies_capacitor_cli",
+      "package_dependencies_capacitor_core",
+      "package_dependencies_capacitor_firebase_authentication",
+      "package_description",
+      "package_keywords",
+      "package_license",
+      "package_main",
+      "package_name",
+      "package_scripts",
+      "package_scripts_build",
+      "package_scripts_sync",
+      "package_scripts_test",
+      "package_version",
+      "ref_capacitor_android",
+      "ref_capacitor_app",
+      "ref_capacitor_cli",
+      "ref_capacitor_core",
+      "ref_capacitor_firebase_authentication"
+    ],
+    "5": [
+      "js_app_buildpptslides",
+      "js_app_classifyline",
+      "js_app_cleansongtitlefordisplay",
+      "js_app_escapehtml",
+      "js_app_extractpriestdata",
+      "js_app_extractresponsedata",
+      "js_app_iconcuehide",
+      "js_app_iconcueshow",
+      "js_app_iconpeoplegroup",
+      "js_app_iconpriestcross",
+      "js_app_ismelodynoteline",
+      "js_app_profileavatarhtml",
+      "js_app_renderbracketline",
+      "js_app_renderchordline",
+      "js_app_rendercuechordpills",
+      "js_app_renderintromelodysection",
+      "js_app_rendermasspartcuecard",
+      "js_app_rendermasspartfootercue",
+      "js_app_rendermelodystaffline",
+      "js_app_renderpriestline",
+      "js_app_renderresponseline",
+      "js_app_rendersongsheetcontent",
+      "js_app_restorefromtrash",
+      "js_app_transposebody"
+    ],
+    "6": [
+      "js_app_buildfretboardsvg",
+      "js_app_buildkeyboardsvg",
+      "js_app_chordtones",
+      "js_app_formatrelativetime",
+      "js_app_geteffectivesongkey",
+      "js_app_getguitarshape",
+      "js_app_getsongflag",
+      "js_app_getsongflagrank",
+      "js_app_iconcheck",
+      "js_app_iconcross",
+      "js_app_iconmetro",
+      "js_app_modalhtml",
+      "js_app_noteindex",
+      "js_app_parsechord",
+      "js_app_shapequality",
+      "js_app_sortsongsarray",
+      "js_app_spellnote",
+      "js_app_transposekeylabel",
+      "js_app_transposespacedchordline",
+      "js_app_transposetoken"
+    ],
+    "7": [
+      "js_app_buildsonglistrowshtml",
+      "js_app_getactivescopekey",
+      "js_app_getcurrentviewsectiontitle",
+      "js_app_geteffectivesongartist",
+      "js_app_icondragbars",
+      "js_app_iconstar",
+      "js_app_infersongartist",
+      "js_app_issectiondivider",
+      "js_app_issongexcluded",
+      "js_app_renderskeletonsonglisthtml",
+      "js_app_rendersongrowhtml",
+      "js_app_togglesongchecked",
+      "js_app_togglesongincludeexclude",
+      "js_app_wirelistwraprows",
+      "js_app_wiresongrowinteractions"
+    ],
+    "8": [
+      "js_app_getallknownartists",
+      "js_app_iconchecksmall",
+      "js_app_iconredo",
+      "js_app_iconundo",
+      "js_app_insertatcursor",
+      "js_app_isundeletabledialogue",
+      "js_app_registerknownartist",
+      "js_app_rendercustomdropdown",
+      "js_app_rendereditor",
+      "js_app_rendereditor_performredo",
+      "js_app_rendereditor_performundo",
+      "js_app_rendereditor_pushhistorystate",
+      "js_app_rendereditor_updateundoredobuttons",
+      "js_app_wirecustomdropdowns"
+    ],
+    "9": [
+      "android_app_src_androidtest_java_com_getcapacitor_myapp_exampleinstrumentedtest",
+      "android_app_src_androidtest_java_com_getcapacitor_myapp_exampleinstrumentedtest_exampleinstrumentedtest",
+      "android_app_src_androidtest_java_com_getcapacitor_myapp_exampleinstrumentedtest_exampleinstrumentedtest_useappcontext",
+      "android_app_src_test_java_com_getcapacitor_myapp_exampleunittest",
+      "android_app_src_test_java_com_getcapacitor_myapp_exampleunittest_exampleunittest",
+      "android_app_src_test_java_com_getcapacitor_myapp_exampleunittest_exampleunittest_addition_iscorrect",
+      "androidx_test_ext_junit_runners_androidjunit4",
+      "assert",
+      "context",
+      "instrumentationregistry",
+      "org_junit_runner_runwith",
+      "org_junit_test"
+    ],
+    "10": [
+      "manifest",
+      "manifest_background_color",
+      "manifest_description",
+      "manifest_display",
+      "manifest_icons",
+      "manifest_name",
+      "manifest_orientation",
+      "manifest_short_name",
+      "manifest_start_url",
+      "manifest_theme_color"
+    ],
+    "11": [
+      "activity",
+      "android_app_src_main_java_com_choirbookpro_app_googleonetapplugin",
+      "android_app_src_main_java_com_choirbookpro_app_googleonetapplugin_googleonetapplugin",
+      "android_app_src_main_java_com_choirbookpro_app_googleonetapplugin_googleonetapplugin_setkeepscreenon",
+      "com_getcapacitor_annotation_capacitorplugin",
+      "com_getcapacitor_plugin",
+      "com_getcapacitor_plugincall",
+      "com_getcapacitor_pluginmethod",
+      "windowmanager"
+    ],
+    "12": [
+      "android_app_src_main_java_com_choirbookpro_app_mainactivity",
+      "android_app_src_main_java_com_choirbookpro_app_mainactivity_mainactivity",
+      "android_app_src_main_java_com_choirbookpro_app_mainactivity_mainactivity_onbackpressed",
+      "android_app_src_main_java_com_choirbookpro_app_mainactivity_mainactivity_oncreate",
+      "android_os_bundle",
+      "appplugin",
+      "com_getcapacitor_bridgeactivity",
+      "override"
+    ],
+    "13": [
+      "design_plan_architecture_blueprint",
+      "design_plan_information_architecture",
+      "design_plan_offline_first_storage",
+      "google_auth_setup_guide",
+      "improvements_changelog",
+      "mass_flow_liturgy_structure"
+    ],
+    "14": [
+      "android_gradlew",
+      "android_gradlew__entry",
+      "android_gradlew_die",
+      "android_gradlew_warn"
+    ],
+    "15": [
+      "firebase_compat_sdk",
+      "google_fonts_montserrat",
+      "index_html_entry"
+    ],
+    "16": [
+      "js_sw",
+      "js_sw_shell_files"
+    ],
+    "17": [
+      "sw",
+      "sw_shell_files"
+    ],
+    "18": [
+      "a"
+    ],
+    "19": [
+      "android_app_build"
+    ],
+    "20": [
+      "android_app_capacitor_build"
+    ],
+    "21": [
+      "android_build"
+    ],
+    "22": [
+      "android_capacitor_settings"
+    ],
+    "23": [
+      "android_settings"
+    ],
+    "24": [
+      "android_variables"
+    ],
+    "25": [
+      "js_firebase_config"
+    ],
+    "26": [
+      "setup_instructions_dev_guide"
+    ]
+  },
+  "cohesion": {
+    "0": 0.05328218243819267,
+    "1": 0.09898242368177614,
+    "2": 0.09848484848484848,
+    "3": 0.08522727272727272,
+    "4": 0.08,
+    "5": 0.17028985507246377,
+    "6": 0.1368421052631579,
+    "7": 0.17142857142857143,
+    "8": 0.1978021978021978,
+    "9": 0.24242424242424243,
+    "10": 0.2,
+    "11": 0.3333333333333333,
+    "12": 0.35714285714285715,
+    "13": 0.3333333333333333,
+    "14": 0.8333333333333334,
+    "15": 0.6666666666666666,
+    "16": 1.0,
+    "17": 1.0,
+    "18": 1.0,
+    "19": 1.0,
+    "20": 1.0,
+    "21": 1.0,
+    "22": 1.0,
+    "23": 1.0,
+    "24": 1.0,
+    "25": 1.0,
+    "26": 1.0
+  },
+  "gods": [
+    {
+      "id": "js_app_renderviewer",
+      "label": "renderViewer()",
+      "degree": 54
+    },
+    {
+      "id": "js_app_wiremodal",
+      "label": "wireModal()",
+      "degree": 45
+    },
+    {
+      "id": "js_app_renderlistview",
+      "label": "renderListView()",
+      "degree": 43
+    },
+    {
+      "id": "js_app_modalhtml",
+      "label": "modalHtml()",
+      "degree": 35
+    },
+    {
+      "id": "js_app_rendereditor",
+      "label": "renderEditor()",
+      "degree": 33
+    },
+    {
+      "id": "js_app_escapehtml",
+      "label": "escapeHtml()",
+      "degree": 31
+    },
+    {
+      "id": "js_app_rendersetlisteditor",
+      "label": "renderSetlistEditor()",
+      "degree": 28
+    },
+    {
+      "id": "js_app_render",
+      "label": "render()",
+      "degree": 23
+    },
+    {
+      "id": "js_app_rendersongsheetcontent",
+      "label": "renderSongSheetContent()",
+      "degree": 23
+    },
+    {
+      "id": "js_app_get",
+      "label": "get()",
+      "degree": 20
+    }
+  ],
+  "surprises": [
+    {
+      "source": "Google Auth & One-Tap Integration Guide",
+      "target": "Choir Book Pro Architecture Blueprint",
+      "source_files": [
+        "GOOGLE_AUTH_SETUP.md",
+        "DESIGN_PLAN.md"
+      ],
+      "confidence": "INFERRED",
+      "relation": "conceptually_related_to",
+      "why": "inferred connection - not explicitly stated in source; peripheral node `Google Auth & One-Tap Integration Guide` unexpectedly reaches hub `Choir Book Pro Architecture Blueprint`"
+    },
+    {
+      "source": "Liturgical Mass Order & Cues Structure",
+      "target": "Choir Book Pro Architecture Blueprint",
+      "source_files": [
+        "Mass-Flow.md",
+        "DESIGN_PLAN.md"
+      ],
+      "confidence": "INFERRED",
+      "relation": "conceptually_related_to",
+      "why": "inferred connection - not explicitly stated in source; peripheral node `Liturgical Mass Order & Cues Structure` unexpectedly reaches hub `Choir Book Pro Architecture Blueprint`"
+    },
+    {
+      "source": "Choir Book Pro Improvements & Changelog",
+      "target": "Choir Book Pro Architecture Blueprint",
+      "source_files": [
+        "IMPROVEMENTS.md",
+        "DESIGN_PLAN.md"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "references",
+      "why": "peripheral node `Choir Book Pro Improvements & Changelog` unexpectedly reaches hub `Choir Book Pro Architecture Blueprint`"
+    }
+  ],
+  "questions": [
+    {
+      "type": "bridge_node",
+      "question": "Why does `renderEditor()` connect `Community 8` to `Community 0`, `Community 1`, `Community 2`, `Community 3`, `Community 5`, `Community 6`, `Community 7`?",
+      "why": "High betweenness centrality (0.019) - this node is a cross-community bridge."
+    },
+    {
+      "type": "isolated_nodes",
+      "question": "What connects `@capacitor-firebase/authentication`, `@capacitor/android`, `@capacitor/app` to the rest of the system?",
+      "why": "12 weakly-connected nodes found - possible documentation gaps or missing edges."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `Community 0` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.05328218243819267 - nodes in this community are weakly interconnected."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `renderViewer()` connect `Community 3` to `Community 0`, `Community 1`, `Community 2`, `Community 5`, `Community 6`, `Community 7`, `Community 8`?",
+      "why": "High betweenness centrality (0.009) - this node is a cross-community bridge."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `Community 1` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.09898242368177614 - nodes in this community are weakly interconnected."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `wireModal()` connect `Community 1` to `Community 0`, `Community 2`, `Community 3`, `Community 5`, `Community 6`, `Community 7`, `Community 8`?",
+      "why": "High betweenness centrality (0.006) - this node is a cross-community bridge."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `Community 2` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.09848484848484848 - nodes in this community are weakly interconnected."
+    }
+  ]
+}

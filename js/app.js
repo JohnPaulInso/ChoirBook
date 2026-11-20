@@ -708,7 +708,10 @@ function classifyLine(line){
   if(isMelodyNoteLine(line)) return 'melody';
   if(line.startsWith('>')) return 'chord';
   if(/^\[.+\]$/.test(trimmed) || /^\(.+\)$/.test(trimmed)) return 'section';
-  if(/^(Intro|Verse|Chorus|Bridge|Outro|Pre-Chorus|Interlude|Ending|Refrain)[\s:0-9IVX]*$/i.test(trimmed)) return 'section';
+  // (2026-07-13) detect Koro/Kuro, Roman numerals I-X & verse markers; prev: English only
+  if(/^(Intro|Introduction|Verse|Chorus|Cho|Koro|Kuro|Coro|Refrain|Ref|Bridge|Outro|Pre-?Chorus|Post-?Chorus|Interlude|Instrumental|Ending|Coda|Tag|Finale|Stanza|Estropa|Berso|Tugon|Tubag|Antiphon|Antipona|Repeat\s+(?:Chorus|Koro|Kuro|Refrain))[\s.:\-0-9IVX]*$/i.test(trimmed)) return 'section';
+  if(/^(?:I|II|III|IV|V|VI|VII|VIII|IX|X)[.:\)]?$/.test(trimmed)) return 'section';
+  if(/^(?:\d{1,2}[.:\)]|[VCB]\d{1,2}[.:\)]?)$/i.test(trimmed)) return 'section';
   // (2026-07-13) treat bracket chord lines as chord type; prev: 'bracket'
   if(/^<.+>$/.test(trimmed) || /^[.<].*<[^>]+>[>.]*$/.test(trimmed) || /^<.*[A-G][b#]?m?.*>$/i.test(trimmed)) return 'chord';
   return 'lyric';
@@ -1306,45 +1309,117 @@ const DEFAULT_MASS_PARTS = ['Entrance','Kyrie','Gloria','Responsorial Psalm','Go
 // (2026-07-13) declare audio context & bus for piano audio; prev: undeclared
 let pianoAudioCtx = null;
 let pianoMasterBus = null;
+// (2026-07-13) real Salamander Grand Piano sampler + loud bus; prev: quiet synth
+const PIANO_SAMPLES = [
+  { semi: -15, file: 'A2' },  { semi: -12, file: 'C3' },
+  { semi: -9,  file: 'Ds3' }, { semi: -6,  file: 'Fs3' },
+  { semi: -3,  file: 'A3' },  { semi: 0,   file: 'C4' },
+  { semi: 3,   file: 'Ds4' }, { semi: 6,   file: 'Fs4' },
+  { semi: 9,   file: 'A4' },  { semi: 12,  file: 'C5' },
+  { semi: 15,  file: 'Ds5' }, { semi: 18,  file: 'Fs5' },
+  { semi: 21,  file: 'A5' },  { semi: 24,  file: 'C6' }
+];
+const pianoSampleBuffers = {};
+let pianoSamplesPreloadStarted = false;
 
-// (2026-07-13) volume boost option for sticky piano playback; prev: fixed peak
+function ensurePianoAudioBus(){
+  if(!pianoAudioCtx || pianoAudioCtx.state === 'closed'){
+    pianoAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    pianoMasterBus = null;
+    Object.keys(pianoSampleBuffers).forEach(k => delete pianoSampleBuffers[k]);
+    pianoSamplesPreloadStarted = false;
+  }
+  if(pianoAudioCtx.state === 'suspended') pianoAudioCtx.resume();
+  if(!pianoMasterBus){
+    // (2026-07-13) clean headroom & peak limiter to prevent distortion; prev: overdriven
+    const inputGain = pianoAudioCtx.createGain();
+    inputGain.gain.value = 1.0;
+    const presenceEq = pianoAudioCtx.createBiquadFilter();
+    presenceEq.type = 'peaking';
+    presenceEq.frequency.value = 1800;
+    presenceEq.Q.value = 0.9;
+    presenceEq.gain.value = 2.5;
+    const brillianceEq = pianoAudioCtx.createBiquadFilter();
+    brillianceEq.type = 'highshelf';
+    brillianceEq.frequency.value = 4500;
+    brillianceEq.gain.value = 1.2;
+    const comp = pianoAudioCtx.createDynamicsCompressor();
+    comp.threshold.value = -8.0;
+    comp.knee.value = 12;
+    comp.ratio.value = 10;
+    comp.attack.value = 0.002;
+    comp.release.value = 0.14;
+    const makeupGain = pianoAudioCtx.createGain();
+    makeupGain.gain.value = 1.15;
+    inputGain.connect(presenceEq);
+    presenceEq.connect(brillianceEq);
+    brillianceEq.connect(comp);
+    comp.connect(makeupGain);
+    makeupGain.connect(pianoAudioCtx.destination);
+    pianoMasterBus = inputGain;
+  }
+  preloadPianoSamples();
+}
+
+function preloadPianoSamples(){
+  if(pianoSamplesPreloadStarted || !pianoAudioCtx) return;
+  pianoSamplesPreloadStarted = true;
+  const ctx = pianoAudioCtx;
+  PIANO_SAMPLES.forEach(s => {
+    fetch(`./audio/piano/${s.file}.mp3`)
+      .then(r => r.ok ? r.arrayBuffer() : null)
+      .then(buf => buf ? ctx.decodeAudioData(buf) : null)
+      .then(decoded => { if(decoded) pianoSampleBuffers[s.file] = decoded; })
+      .catch(()=>{});
+  });
+}
+
 function playPianoNote(noteIdx, volumeBoost = 1){
   try{
-    if(!pianoAudioCtx || pianoAudioCtx.state === 'closed'){
-      pianoAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      pianoMasterBus = null;
-    }
-    if(pianoAudioCtx.state === 'suspended') pianoAudioCtx.resume();
-    if(!pianoMasterBus){
-      const masterGain = pianoAudioCtx.createGain();
-      masterGain.gain.value = 1.05;
-      const comp = pianoAudioCtx.createDynamicsCompressor();
-      comp.threshold.value = -3.0;
-      comp.knee.value = 8;
-      comp.ratio.value = 8;
-      comp.attack.value = 0.003;
-      comp.release.value = 0.20;
-      masterGain.connect(comp);
-      comp.connect(pianoAudioCtx.destination);
-      pianoMasterBus = masterGain;
-    }
+    ensurePianoAudioBus();
     const now = pianoAudioCtx.currentTime;
-    // (2026-07-13) support multi-octave pitch calculation; prev: modulo 12 only
+    const boost = Math.min(Math.max(volumeBoost || 1, 0.5), 1.8);
+
+    // Find nearest Salamander Grand Piano sample
+    let best = PIANO_SAMPLES[0];
+    let bestDist = Math.abs(noteIdx - best.semi);
+    for(let i = 1; i < PIANO_SAMPLES.length; i++){
+      const d = Math.abs(noteIdx - PIANO_SAMPLES[i].semi);
+      if(d < bestDist){ best = PIANO_SAMPLES[i]; bestDist = d; }
+    }
+    const sampleBuf = pianoSampleBuffers[best.file];
+    if(sampleBuf){
+      const src = pianoAudioCtx.createBufferSource();
+      src.buffer = sampleBuf;
+      src.playbackRate.value = Math.pow(2, (noteIdx - best.semi) / 12);
+      // (2026-07-13) tighter sustain & clean gain on piano samples; prev: 3s & 1.65x
+      const peak = 1.15 * Math.min(boost, 1.35);
+      const g = pianoAudioCtx.createGain();
+      g.gain.setValueAtTime(peak, now);
+      g.gain.setValueAtTime(peak, now + 0.35);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 1.15);
+      src.connect(g);
+      g.connect(pianoMasterBus);
+      src.start(now);
+      src.stop(now + 1.2);
+      return;
+    }
+
+    // Loud acoustic synth fallback while samples finish decoding
     const freq = 261.6256 * Math.pow(2, noteIdx / 12);
     const filter = pianoAudioCtx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(freq * 7, now);
-    filter.frequency.exponentialRampToValueAtTime(Math.max(freq * 2.2, 480), now + 1.2);
-    filter.Q.value = 0.9;
+    filter.frequency.setValueAtTime(freq * 9, now);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(freq * 3.0, 900), now + 1.4);
+    filter.Q.value = 0.8;
     filter.connect(pianoMasterBus);
 
-    const boost = Math.min(Math.max(volumeBoost || 1, 0.5), 1.6);
     const partials = [
-      { mult: 1, type: 'sine', peak: 0.75 * boost, decay: 1.8 },
-      { mult: 1, type: 'triangle', peak: 0.24 * boost, decay: 1.2 },
-      { mult: 2, type: 'sine', peak: 0.22 * boost, decay: 0.9 },
-      { mult: 3, type: 'sine', peak: 0.10 * boost, decay: 0.5 },
-      { mult: 4, type: 'sine', peak: 0.04 * boost, decay: 0.3 }
+      { mult: 1, type: 'triangle', peak: 1.15 * boost, decay: 2.0 },
+      { mult: 1, type: 'sine', peak: 0.95 * boost, decay: 2.2 },
+      { mult: 2, type: 'sine', peak: 0.45 * boost, decay: 1.2 },
+      { mult: 3, type: 'sine', peak: 0.22 * boost, decay: 0.7 },
+      { mult: 4, type: 'sine', peak: 0.12 * boost, decay: 0.4 }
     ];
     partials.forEach(p=>{
       const osc = pianoAudioCtx.createOscillator();
@@ -1352,8 +1427,8 @@ function playPianoNote(noteIdx, volumeBoost = 1){
       osc.type = p.type;
       osc.frequency.setValueAtTime(freq * p.mult, now);
       g.gain.setValueAtTime(0.0001, now);
-      g.gain.linearRampToValueAtTime(p.peak, now + 0.005);
-      g.gain.exponentialRampToValueAtTime(0.0005, now + p.decay);
+      g.gain.linearRampToValueAtTime(p.peak, now + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0008, now + p.decay);
       osc.connect(g);
       g.connect(filter);
       osc.start(now);
@@ -1361,6 +1436,16 @@ function playPianoNote(noteIdx, volumeBoost = 1){
     });
   }catch(e){}
 }
+// (2026-07-13) pre-warm Salamander piano samples on first tap; prev: lazy on play
+(function(){
+  const warmPiano = ()=>{
+    try{ ensurePianoAudioBus(); }catch(e){}
+    window.removeEventListener('pointerdown', warmPiano, true);
+    window.removeEventListener('touchstart', warmPiano, true);
+  };
+  window.addEventListener('pointerdown', warmPiano, { capture: true, passive: true });
+  window.addEventListener('touchstart', warmPiano, { capture: true, passive: true });
+})();
 
 // (2026-07-13) default cue chords to sharps with Bb; prev: flats
 function getCueAccidentalsPref(){
@@ -3148,13 +3233,13 @@ async function syncBundledGSMA(){
   if(changed) render();
 }
 
-// (2026-07-13) add profile avatar and dropdown component; prev: none
+// (2026-07-13) add no-referrer & initial fallback for Google avatar; prev: bare img
 function profileAvatarHtml(){
-  if(firebaseUser && firebaseUser.photoURL){
-    return `<img src="${escapeHtml(firebaseUser.photoURL)}" class="profile-avatar" alt="Avatar"/>`;
-  }
   const name = firebaseUser ? (firebaseUser.displayName || firebaseUser.email || 'Choir') : 'Guest';
-  const letter = (name[0] || 'C').toUpperCase();
+  const letter = escapeHtml((name[0] || 'C').toUpperCase());
+  if(firebaseUser && firebaseUser.photoURL){
+    return `<img src="${escapeHtml(firebaseUser.photoURL)}" class="profile-avatar" alt="" referrerpolicy="no-referrer" onerror="this.outerHTML='<div class=&quot;profile-avatar&quot;>${letter}</div>'"/>`;
+  }
   return `<div class="profile-avatar">${letter}</div>`;
 }
 // (2026-07-13) profile dropdown with light mode & app settings; prev: folder order only
@@ -5020,18 +5105,20 @@ function renderCuePianoFinder(){
     { idx: 5, label: 'F' },
     { idx: 7, label: 'G' },
     { idx: 9, label: 'A' },
-    { idx: 11, label: 'B' }
+    { idx: 11, label: 'B' },
+    // (2026-07-13) include top C (C5) on cue piano; prev: C4 to B4 only
+    { idx: 12, label: 'C' }
   ];
-  // (2026-07-13) black keys sharps by default with index 10 always Bb; prev: A#
+  // (2026-07-13) realign black keys for 8 white keys (C4-C5); prev: 7 white keys
   const blackNotes = [
-    { idx: 1, label: preferFlat ? 'Db' : 'C#', left: '10.4%' },
-    { idx: 3, label: preferFlat ? 'Eb' : 'D#', left: '24.7%' },
-    { idx: 6, label: preferFlat ? 'Gb' : 'F#', left: '53.3%' },
-    { idx: 8, label: preferFlat ? 'Ab' : 'G#', left: '67.6%' },
-    { idx: 10, label: 'Bb', left: '81.9%' }
+    { idx: 1, label: preferFlat ? 'Db' : 'C#', left: '8.9%' },
+    { idx: 3, label: preferFlat ? 'Eb' : 'D#', left: '21.4%' },
+    { idx: 6, label: preferFlat ? 'Gb' : 'F#', left: '46.4%' },
+    { idx: 8, label: preferFlat ? 'Ab' : 'G#', left: '58.9%' },
+    { idx: 10, label: 'Bb', left: '71.4%' }
   ];
   // (2026-07-13) compact piano template without extra newlines; prev: spaced
-  return `<div class="cue-piano-wrap"><div class="cue-piano-toolbar"><div class="cue-piano-mode-wrap"><span class="cue-piano-label">Find Priest Key:</span><div class="cue-note-radio-group"><button type="button" class="cue-note-circle-btn ${(mode||'2nd')==='1st'?'selected':''}" data-note-mode="1st" title="Find by 1st Note"><span class="circle-radio-dot"></span><span>1st Note</span></button><button type="button" class="cue-note-circle-btn ${(mode||'2nd')==='2nd'?'selected':''}" data-note-mode="2nd" title="Find by 2nd Note"><span class="circle-radio-dot"></span><span>2nd Note</span></button></div></div><div class="cue-piano-key-badge">Key: <b class="cue-key-readout">${escapeHtml(keyName)}</b></div></div><div class="cue-piano-keyboard">${whiteNotes.map(n=>`<button type="button" class="cue-piano-key white-key ${activeNoteIdx===n.idx?'is-active':''}" data-piano-note="${n.idx}"><span>${n.label}</span></button>`).join('')}${blackNotes.map(n=>`<button type="button" class="cue-piano-key black-key ${activeNoteIdx===n.idx?'is-active':''}" data-piano-note="${n.idx}" style="left:${n.left};"><span>${n.label}</span></button>`).join('')}</div></div>`;
+  return `<div class="cue-piano-wrap"><div class="cue-piano-toolbar"><div class="cue-piano-mode-wrap"><span class="cue-piano-label">Find Priest Key:</span><div class="cue-note-radio-group"><button type="button" class="cue-note-circle-btn ${(mode||'2nd')==='1st'?'selected':''}" data-note-mode="1st" title="Find by 1st Note"><span class="circle-radio-dot"></span><span>1st Note</span></button><button type="button" class="cue-note-circle-btn ${(mode||'2nd')==='2nd'?'selected':''}" data-note-mode="2nd" title="Find by 2nd Note"><span class="circle-radio-dot"></span><span>2nd Note</span></button></div></div><div class="cue-piano-key-badge">Key: <b class="cue-key-readout">${escapeHtml(keyName)}</b></div></div><div class="cue-piano-keyboard">${whiteNotes.map(n=>`<button type="button" class="cue-piano-key white-key ${activeNoteIdx===(n.idx%12)?'is-active':''}" data-piano-note="${n.idx}"><span>${n.label}</span></button>`).join('')}${blackNotes.map(n=>`<button type="button" class="cue-piano-key black-key ${activeNoteIdx===(n.idx%12)?'is-active':''}" data-piano-note="${n.idx}" style="left:${n.left};"><span>${n.label}</span></button>`).join('')}</div></div>`;
 }
 
 // (2026-07-13) trim cue chord offset for direct syllable alignment; prev: untrimmed
@@ -5736,50 +5823,123 @@ function pptThemeIcon(theme){
   return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`;
 }
 
-// (2026-07-13) read clamped per-line-mode PPT zoom scale; prev: fixed 100%
-function getPptZoomPercent(linesCount){
+// (2026-07-13) add PPT wake lock, section jump, blank, preview & clean mode; prev: basic PPT
+function acquirePptWakeLock(){
+  try{
+    if(navigator.wakeLock && typeof navigator.wakeLock.request === 'function' && !window._pptWakeLock){
+      navigator.wakeLock.request('screen').then(lock => {
+        window._pptWakeLock = lock;
+        lock.addEventListener('release', ()=>{ window._pptWakeLock = null; });
+      }).catch(()=>{});
+    }
+  }catch(e){}
+}
+function releasePptWakeLock(){
+  try{
+    if(window._pptWakeLock){
+      window._pptWakeLock.release().catch(()=>{});
+      window._pptWakeLock = null;
+    }
+  }catch(e){}
+}
+function buildPptSectionAnchors(slides){
+  const anchors = [];
+  let lastSec = null;
+  slides.forEach((sl, idx) => {
+    const label = (sl.section || '').trim();
+    if(label && label !== lastSec){
+      anchors.push({ label, index: idx });
+      lastSec = label;
+    }
+  });
+  return anchors;
+}
+function pptBlankIcon(){
+  return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+}
+function pptFullscreenIcon(){
+  return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>`;
+}
+
+// (2026-07-13) per-song PPT zoom defaults (2L=80%, others=100%); prev: global
+function getDefaultPptZoom(linesCount){
+  return String(linesCount) === '2' ? 80 : 100;
+}
+function getPptZoomPercent(song, linesCount){
   const key = String(Math.max(1, Math.min(4, parseInt(linesCount || state.pptLinesPerSlide || 2, 10) || 2)));
-  const raw = state.pptZooms && state.pptZooms[key];
+  const raw = song && song.pptZooms && song.pptZooms[key];
   const val = parseInt(raw, 10);
-  return (!isNaN(val) && val >= 40 && val <= 150) ? val : 100;
+  return (!isNaN(val) && val >= 40 && val <= 150) ? val : getDefaultPptZoom(key);
 }
 
 function renderPptOverlayHtml(song){
   if(state.viewerDisplayMode !== 'ppt' || !song) return '';
   const linesCount = Math.max(1, Math.min(4, parseInt(state.pptLinesPerSlide || 2, 10) || 2));
-  const zoomPct = getPptZoomPercent(linesCount);
+  const zoomPct = getPptZoomPercent(song, linesCount);
   const slides = buildPptSlides(song, linesCount);
   if(state.pptSlideIndex < 0) state.pptSlideIndex = 0;
   if(state.pptSlideIndex >= slides.length) state.pptSlideIndex = slides.length - 1;
   const slide = slides[state.pptSlideIndex];
+  const nextSlide = state.pptSlideIndex < slides.length - 1 ? slides[state.pptSlideIndex + 1] : null;
+  const nextPreviewText = nextSlide && nextSlide.lines && nextSlide.lines[0] ? String(nextSlide.lines[0]).toUpperCase() : '';
+  const anchors = buildPptSectionAnchors(slides);
   const theme = state.pptTheme === 'light' ? 'light' : 'dark';
-  const sectionText = slide.section || cleanSongTitleForDisplay(song.title);
+  const songTitle = cleanSongTitleForDisplay(song.title);
+  const sectionText = slide.section || '';
   const pct = slides.length > 1 ? ((state.pptSlideIndex + 1) / slides.length) * 100 : 100;
+  const songList = getViewerSongList();
+  const currentIndex = songList.findIndex(s => s.id === song.id);
+  const prevSong = currentIndex > 0 ? songList[currentIndex - 1] : null;
+  const nextSong = currentIndex >= 0 && currentIndex < songList.length - 1 ? songList[currentIndex + 1] : null;
+  const canFullscreen = !!(document.documentElement && (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen));
+  const blankCls = state.pptBlanked ? 'is-blanked' : '';
+  const cleanCls = state.pptChromeHidden ? 'is-clean-mode' : '';
   return `
     <!-- Full-screen PPT lyric overlay -->
-    <div class="ppt-presentation-overlay" id="ppt-presentation-overlay" data-ppt-theme="${theme}" data-ppt-lines="${linesCount}">
+    <div class="ppt-presentation-overlay ${blankCls} ${cleanCls}" id="ppt-presentation-overlay" data-ppt-theme="${theme}" data-ppt-lines="${linesCount}">
       <!-- PPT top controls bar -->
       <div class="ppt-topbar">
-        <div class="ppt-section-badge" id="ppt-section-badge">${escapeHtml(sectionText)}</div>
+        <!-- Top-left song switcher -->
+        <div class="ppt-song-nav">
+          <button type="button" class="ppt-song-nav-btn" id="ppt-prev-song" ${prevSong ? '' : 'disabled'} title="${prevSong ? 'Previous: ' + escapeHtml(cleanSongTitleForDisplay(prevSong.title)) : 'No previous song'}">${iconChevronLeft()}</button>
+          <button type="button" class="ppt-song-meta ${anchors.length > 0 ? 'has-sections' : ''}" id="ppt-song-meta-btn" title="${anchors.length > 0 ? 'Tap to jump to section' : escapeHtml(songTitle)}">
+            <span class="ppt-song-title">${escapeHtml(songTitle)}</span>
+            <span class="ppt-section-badge" id="ppt-section-badge">${escapeHtml(sectionText)}${anchors.length > 0 ? ' ▾' : ''}</span>
+          </button>
+          <button type="button" class="ppt-song-nav-btn" id="ppt-next-song" ${nextSong ? '' : 'disabled'} title="${nextSong ? 'Next: ' + escapeHtml(cleanSongTitleForDisplay(nextSong.title)) : 'No next song'}">${iconChevronRight()}</button>
+        </div>
         <div class="ppt-top-controls">
           <!-- Fine-grain PPT zoom controls -->
           <div class="ppt-zoom-picker" id="ppt-zoom-picker" title="Scale text zoom">
             <button type="button" class="ppt-zoom-btn" id="ppt-zoom-down" title="Zoom out (-5%)">&minus;</button>
-            <button type="button" class="ppt-zoom-val" id="ppt-zoom-reset" title="Reset zoom to 100%">${zoomPct}%</button>
+            <button type="button" class="ppt-zoom-val" id="ppt-zoom-reset" title="Reset zoom to default">${zoomPct}%</button>
             <button type="button" class="ppt-zoom-btn" id="ppt-zoom-up" title="Zoom in (+5%)">+</button>
           </div>
           <!-- Slide line count selector -->
           <div class="ppt-lines-picker" id="ppt-lines-picker" title="Lines per slide">
             ${[1, 2, 3, 4].map(n => `<button type="button" class="ppt-lines-btn ${linesCount===n?'is-active':''}" data-ppt-lines="${n}">${n}L</button>`).join('')}
           </div>
+          <button type="button" class="ppt-ctrl-btn ${state.pptBlanked ? 'is-active' : ''}" id="ppt-blank-btn" title="Blank / Blackout screen (B)">
+            ${pptBlankIcon()}
+            <span class="ppt-btn-label">Blank</span>
+          </button>
           <button type="button" class="ppt-ctrl-btn" id="ppt-theme-toggle" title="Toggle Dark/Light Theme">
             ${pptThemeIcon(theme)}
-            <span>${theme === 'dark' ? 'Light' : 'Dark'}</span>
+            <span class="ppt-btn-label">${theme === 'dark' ? 'Light' : 'Dark'}</span>
           </button>
+          ${canFullscreen ? `
+            <button type="button" class="ppt-ctrl-btn ppt-icon-only-btn" id="ppt-fullscreen-btn" title="Fullscreen (F)">
+              ${pptFullscreenIcon()}
+            </button>
+          ` : ''}
           <button type="button" class="ppt-ctrl-btn ppt-exit-btn" id="ppt-exit-btn" title="Exit PPT Mode">
             ${iconClose()}
           </button>
         </div>
+      </div>
+      <!-- Quick section jump bar -->
+      <div class="ppt-section-jump-bar ${state.pptSectionsOpen ? '' : 'hidden'}" id="ppt-section-jump-bar">
+        ${anchors.map(a => `<button type="button" class="ppt-section-pill ${a.label === sectionText ? 'is-active' : ''}" data-ppt-slide-idx="${a.index}">${escapeHtml(a.label)}</button>`).join('')}
       </div>
       <!-- Swipeable PPT lyric stage -->
       <div class="ppt-slide-stage" id="ppt-slide-stage">
@@ -5787,6 +5947,8 @@ function renderPptOverlayHtml(song){
           ${slide.lines.map(l => `<div class="ppt-lyric-line">${escapeHtml(String(l).toUpperCase())}</div>`).join('')}
         </div>
       </div>
+      <!-- Faint next-line cue preview -->
+      <div class="ppt-next-preview ${nextPreviewText ? '' : 'is-empty'}" id="ppt-next-preview">${nextPreviewText ? 'NEXT: ' + escapeHtml(nextPreviewText) : ''}</div>
       <!-- PPT slide counter footer -->
       <div class="ppt-footer">
         <button type="button" class="ppt-nav-btn" id="ppt-prev-btn" ${state.pptSlideIndex <= 0 ? 'disabled' : ''} title="Previous slide">${iconChevronLeft()}</button>
@@ -5801,20 +5963,45 @@ function renderPptOverlayHtml(song){
 
 function wirePptOverlayEvents(song){
   if(window._pptKeyHandler){
-    window.removeEventListener('keydown', window._pptKeyHandler);
+    window.removeEventListener('keydown', window._pptKeyHandler, true);
     window._pptKeyHandler = null;
   }
   if(window._pptResizeHandler){
     window.removeEventListener('resize', window._pptResizeHandler);
     window._pptResizeHandler = null;
   }
-  if(state.viewerDisplayMode !== 'ppt' || !song) return;
+  if(window._pptVisibilityHandler){
+    document.removeEventListener('visibilitychange', window._pptVisibilityHandler);
+    window._pptVisibilityHandler = null;
+  }
+  if(state.viewerDisplayMode !== 'ppt' || !song){
+    releasePptWakeLock();
+    return;
+  }
   const overlay = document.getElementById('ppt-presentation-overlay');
   const stage = document.getElementById('ppt-slide-stage');
   const content = document.getElementById('ppt-slide-content');
   if(!overlay || !stage || !content) return;
 
-  // (2026-07-13) apply per-line-mode zoom scale to auto-fit size; prev: 100% only
+  acquirePptWakeLock();
+  window._pptVisibilityHandler = ()=>{
+    if(document.visibilityState === 'visible' && state.viewerDisplayMode === 'ppt') acquirePptWakeLock();
+  };
+  document.addEventListener('visibilitychange', window._pptVisibilityHandler);
+
+  // (2026-07-13) save per-song PPT zooms, lines & slide index to DB; prev: global
+  let pptSongSaveTimer = null;
+  const persistSongPptState = (immediate = false)=>{
+    const idx = state.songs.findIndex(s => s.id === song.id);
+    if(idx >= 0) state.songs[idx] = song;
+    clearTimeout(pptSongSaveTimer);
+    if(immediate){
+      Store.saveSong(song).catch(()=>{});
+    } else {
+      pptSongSaveTimer = setTimeout(()=>{ Store.saveSong(song).catch(()=>{}); }, 300);
+    }
+  };
+
   const fitPptSlideText = ()=>{
     const availW = Math.max(120, stage.clientWidth - 20);
     const availH = Math.max(100, stage.clientHeight - 12);
@@ -5831,30 +6018,60 @@ function wirePptOverlayEvents(song){
         hi = mid - 1;
       }
     }
-    const zoomPct = getPptZoomPercent(state.pptLinesPerSlide);
+    const zoomPct = getPptZoomPercent(song, state.pptLinesPerSlide);
     content.style.fontSize = Math.max(14, Math.round(best * (zoomPct / 100))) + 'px';
   };
 
-  let pptZoomSaveTimer = null;
   const setPptZoomForCurrentMode = (nextPct)=>{
     const clamped = Math.max(40, Math.min(150, Math.round(nextPct)));
     const key = String(state.pptLinesPerSlide || 2);
-    if(!state.pptZooms || typeof state.pptZooms !== 'object') state.pptZooms = {};
-    state.pptZooms[key] = clamped;
+    if(!song.pptZooms || typeof song.pptZooms !== 'object') song.pptZooms = {};
+    song.pptZooms[key] = clamped;
     const zoomValEl = document.getElementById('ppt-zoom-reset');
     if(zoomValEl) zoomValEl.textContent = clamped + '%';
     fitPptSlideText();
-    try{ localStorage.setItem('meta:pptZooms', JSON.stringify(state.pptZooms)); }catch(e){}
-    clearTimeout(pptZoomSaveTimer);
-    pptZoomSaveTimer = setTimeout(()=>{ Store.savePptZooms(state.pptZooms).catch(()=>{}); }, 300);
+    persistSongPptState(false);
   };
 
   let slides = buildPptSlides(song, state.pptLinesPerSlide);
-  const syncSlideView = ()=>{
+  const rebuildSectionJumpBar = ()=>{
+    const bar = document.getElementById('ppt-section-jump-bar');
+    if(!bar) return;
+    const anchors = buildPptSectionAnchors(slides);
+    const curSec = (slides[state.pptSlideIndex] && slides[state.pptSlideIndex].section) || '';
+    bar.innerHTML = anchors.map(a => `<button type="button" class="ppt-section-pill ${a.label === curSec ? 'is-active' : ''}" data-ppt-slide-idx="${a.index}">${escapeHtml(a.label)}</button>`).join('');
+    bar.querySelectorAll('.ppt-section-pill').forEach(pBtn => {
+      pBtn.onclick = (e)=>{
+        e.stopPropagation();
+        pBtn.blur();
+        const targetIdx = parseInt(pBtn.dataset.pptSlideIdx, 10);
+        if(!isNaN(targetIdx)){
+          state.pptSectionsOpen = false;
+          bar.classList.add('hidden');
+          if(state.pptBlanked){
+            state.pptBlanked = false;
+            overlay.classList.remove('is-blanked');
+            const bBtn = document.getElementById('ppt-blank-btn');
+            if(bBtn) bBtn.classList.remove('is-active');
+          }
+          state.pptSlideIndex = targetIdx;
+          syncSlideView(true);
+        }
+      };
+    });
+  };
+
+  const syncSlideView = (shouldPersist = false)=>{
     if(state.pptSlideIndex < 0) state.pptSlideIndex = 0;
     if(state.pptSlideIndex >= slides.length) state.pptSlideIndex = slides.length - 1;
+    song.pptSlideIndex = state.pptSlideIndex;
+    song.pptLinesPerSlide = state.pptLinesPerSlide;
     const slide = slides[state.pptSlideIndex];
+    const nextSlide = state.pptSlideIndex < slides.length - 1 ? slides[state.pptSlideIndex + 1] : null;
+    const nextPreviewText = nextSlide && nextSlide.lines && nextSlide.lines[0] ? String(nextSlide.lines[0]).toUpperCase() : '';
+    const anchors = buildPptSectionAnchors(slides);
     const sectionEl = document.getElementById('ppt-section-badge');
+    const previewEl = document.getElementById('ppt-next-preview');
     const counterEl = document.getElementById('ppt-slide-counter');
     const fillEl = document.getElementById('ppt-progress-fill');
     const prevBtn = document.getElementById('ppt-prev-btn');
@@ -5862,31 +6079,114 @@ function wirePptOverlayEvents(song){
 
     // (2026-07-13) enforce uppercase lyrics in PPT slides; prev: original case
     content.innerHTML = slide.lines.map(l => `<div class="ppt-lyric-line">${escapeHtml(String(l).toUpperCase())}</div>`).join('');
-    if(sectionEl) sectionEl.textContent = slide.section || cleanSongTitleForDisplay(song.title);
+    if(sectionEl) sectionEl.textContent = (slide.section || '') + (anchors.length > 0 ? ' ▾' : '');
+    if(previewEl){
+      previewEl.textContent = nextPreviewText ? 'NEXT: ' + nextPreviewText : '';
+      previewEl.classList.toggle('is-empty', !nextPreviewText);
+    }
     if(counterEl) counterEl.textContent = `${state.pptSlideIndex + 1} / ${slides.length}`;
     if(fillEl) fillEl.style.width = `${(slides.length > 1 ? ((state.pptSlideIndex + 1) / slides.length) * 100 : 100).toFixed(1)}%`;
     if(prevBtn) prevBtn.disabled = state.pptSlideIndex <= 0;
     if(nextBtn) nextBtn.disabled = state.pptSlideIndex >= slides.length - 1;
+    rebuildSectionJumpBar();
     fitPptSlideText();
+    if(shouldPersist) persistSongPptState(false);
   };
   const goToSlide = (nextIdx)=>{
     if(nextIdx < 0 || nextIdx >= slides.length || nextIdx === state.pptSlideIndex) return;
     state.pptSlideIndex = nextIdx;
-    syncSlideView();
+    syncSlideView(true);
+  };
+
+  const toggleBlank = ()=>{
+    state.pptBlanked = !state.pptBlanked;
+    overlay.classList.toggle('is-blanked', state.pptBlanked);
+    const bBtn = document.getElementById('ppt-blank-btn');
+    if(bBtn) bBtn.classList.toggle('is-active', state.pptBlanked);
+  };
+
+  const toggleCleanMode = ()=>{
+    state.pptChromeHidden = !state.pptChromeHidden;
+    if(state.pptChromeHidden) state.pptSectionsOpen = false;
+    overlay.classList.toggle('is-clean-mode', state.pptChromeHidden);
+    const bar = document.getElementById('ppt-section-jump-bar');
+    if(bar && state.pptChromeHidden) bar.classList.add('hidden');
+    fitPptSlideText();
+  };
+
+  const toggleFullscreen = ()=>{
+    try{
+      const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+      if(isFs){
+        if(document.exitFullscreen) document.exitFullscreen().catch(()=>{});
+        else if(document.webkitExitFullscreen) document.webkitExitFullscreen();
+      } else {
+        const el = document.documentElement;
+        if(el.requestFullscreen) el.requestFullscreen().catch(()=>{});
+        else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      }
+    }catch(e){}
   };
 
   const exitPpt = ()=>{
+    persistSongPptState(true);
+    releasePptWakeLock();
+    state.pptBlanked = false;
+    state.pptChromeHidden = false;
+    state.pptSectionsOpen = false;
+    try{
+      if(document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(()=>{});
+    }catch(e){}
     if(window._pptKeyHandler){
-      window.removeEventListener('keydown', window._pptKeyHandler);
+      window.removeEventListener('keydown', window._pptKeyHandler, true);
       window._pptKeyHandler = null;
     }
     if(window._pptResizeHandler){
       window.removeEventListener('resize', window._pptResizeHandler);
       window._pptResizeHandler = null;
     }
+    if(window._pptVisibilityHandler){
+      document.removeEventListener('visibilitychange', window._pptVisibilityHandler);
+      window._pptVisibilityHandler = null;
+    }
     state.viewerDisplayMode = state.pptReturnMode || 'chords';
     renderViewer();
   };
+
+  const songList = getViewerSongList();
+  const currentIndex = songList.findIndex(s => s.id === song.id);
+  const prevSong = currentIndex > 0 ? songList[currentIndex - 1] : null;
+  const nextSong = currentIndex >= 0 && currentIndex < songList.length - 1 ? songList[currentIndex + 1] : null;
+  const switchPptSong = (targetSong)=>{
+    if(!targetSong) return;
+    song.pptSlideIndex = state.pptSlideIndex;
+    song.pptLinesPerSlide = state.pptLinesPerSlide;
+    persistSongPptState(true);
+    state.pptSectionsOpen = false;
+    state.pptKeepOpenOnSwitch = true;
+    state.currentId = targetSong.id;
+    state.cueKeyIdx = null;
+    renderViewer();
+  };
+  const prevSongBtn = document.getElementById('ppt-prev-song');
+  if(prevSongBtn && prevSong) prevSongBtn.onclick = (e)=>{ e.stopPropagation(); prevSongBtn.blur(); switchPptSong(prevSong); };
+  const nextSongBtn = document.getElementById('ppt-next-song');
+  if(nextSongBtn && nextSong) nextSongBtn.onclick = (e)=>{ e.stopPropagation(); nextSongBtn.blur(); switchPptSong(nextSong); };
+
+  const metaBtn = document.getElementById('ppt-song-meta-btn');
+  if(metaBtn){
+    metaBtn.onclick = (e)=>{
+      e.stopPropagation();
+      metaBtn.blur();
+      const anchors = buildPptSectionAnchors(slides);
+      if(anchors.length === 0) return;
+      state.pptSectionsOpen = !state.pptSectionsOpen;
+      const bar = document.getElementById('ppt-section-jump-bar');
+      if(bar) bar.classList.toggle('hidden', !state.pptSectionsOpen);
+      fitPptSlideText();
+    };
+  }
+  rebuildSectionJumpBar();
 
   fitPptSlideText();
   window._pptResizeHandler = ()=>{ fitPptSlideText(); };
@@ -5896,17 +6196,18 @@ function wirePptOverlayEvents(song){
   }
 
   const zoomDownBtn = document.getElementById('ppt-zoom-down');
-  if(zoomDownBtn) zoomDownBtn.onclick = (e)=>{ e.stopPropagation(); setPptZoomForCurrentMode(getPptZoomPercent(state.pptLinesPerSlide) - 5); };
+  if(zoomDownBtn) zoomDownBtn.onclick = (e)=>{ e.stopPropagation(); zoomDownBtn.blur(); setPptZoomForCurrentMode(getPptZoomPercent(song, state.pptLinesPerSlide) - 5); };
   const zoomUpBtn = document.getElementById('ppt-zoom-up');
-  if(zoomUpBtn) zoomUpBtn.onclick = (e)=>{ e.stopPropagation(); setPptZoomForCurrentMode(getPptZoomPercent(state.pptLinesPerSlide) + 5); };
+  if(zoomUpBtn) zoomUpBtn.onclick = (e)=>{ e.stopPropagation(); zoomUpBtn.blur(); setPptZoomForCurrentMode(getPptZoomPercent(song, state.pptLinesPerSlide) + 5); };
   const zoomResetBtn = document.getElementById('ppt-zoom-reset');
-  if(zoomResetBtn) zoomResetBtn.onclick = (e)=>{ e.stopPropagation(); setPptZoomForCurrentMode(100); };
+  if(zoomResetBtn) zoomResetBtn.onclick = (e)=>{ e.stopPropagation(); zoomResetBtn.blur(); setPptZoomForCurrentMode(getDefaultPptZoom(state.pptLinesPerSlide)); };
 
   const linesPicker = document.getElementById('ppt-lines-picker');
   if(linesPicker){
     linesPicker.querySelectorAll('.ppt-lines-btn').forEach(btn => {
       btn.onclick = (e)=>{
         e.stopPropagation();
+        btn.blur();
         const n = parseInt(btn.dataset.pptLines, 10);
         if(!(n >= 1 && n <= 4) || n === state.pptLinesPerSlide) return;
         state.pptLinesPerSlide = n;
@@ -5915,30 +6216,36 @@ function wirePptOverlayEvents(song){
           b.classList.toggle('is-active', parseInt(b.dataset.pptLines, 10) === n);
         });
         const zoomValEl = document.getElementById('ppt-zoom-reset');
-        if(zoomValEl) zoomValEl.textContent = getPptZoomPercent(n) + '%';
+        if(zoomValEl) zoomValEl.textContent = getPptZoomPercent(song, n) + '%';
         slides = buildPptSlides(song, n);
         state.pptSlideIndex = Math.min(state.pptSlideIndex, slides.length - 1);
-        syncSlideView();
+        syncSlideView(true);
       };
     });
   }
+
+  const blankBtn = document.getElementById('ppt-blank-btn');
+  if(blankBtn) blankBtn.onclick = (e)=>{ e.stopPropagation(); blankBtn.blur(); toggleBlank(); };
+  const fsBtn = document.getElementById('ppt-fullscreen-btn');
+  if(fsBtn) fsBtn.onclick = (e)=>{ e.stopPropagation(); fsBtn.blur(); toggleFullscreen(); };
 
   const themeBtn = document.getElementById('ppt-theme-toggle');
   if(themeBtn){
     themeBtn.onclick = (e)=>{
       e.stopPropagation();
+      themeBtn.blur();
       state.pptTheme = state.pptTheme === 'light' ? 'dark' : 'light';
       try{ localStorage.setItem('cbp_ppt_theme', state.pptTheme); }catch(err){}
       overlay.setAttribute('data-ppt-theme', state.pptTheme);
-      themeBtn.innerHTML = `${pptThemeIcon(state.pptTheme)}<span>${state.pptTheme === 'dark' ? 'Light' : 'Dark'}</span>`;
+      themeBtn.innerHTML = `${pptThemeIcon(state.pptTheme)}<span class="ppt-btn-label">${state.pptTheme === 'dark' ? 'Light' : 'Dark'}</span>`;
     };
   }
   const exitBtn = document.getElementById('ppt-exit-btn');
-  if(exitBtn) exitBtn.onclick = (e)=>{ e.stopPropagation(); exitPpt(); };
+  if(exitBtn) exitBtn.onclick = (e)=>{ e.stopPropagation(); exitBtn.blur(); exitPpt(); };
   const prevBtn = document.getElementById('ppt-prev-btn');
-  if(prevBtn) prevBtn.onclick = (e)=>{ e.stopPropagation(); goToSlide(state.pptSlideIndex - 1); };
+  if(prevBtn) prevBtn.onclick = (e)=>{ e.stopPropagation(); prevBtn.blur(); goToSlide(state.pptSlideIndex - 1); };
   const nextBtn = document.getElementById('ppt-next-btn');
-  if(nextBtn) nextBtn.onclick = (e)=>{ e.stopPropagation(); goToSlide(state.pptSlideIndex + 1); };
+  if(nextBtn) nextBtn.onclick = (e)=>{ e.stopPropagation(); nextBtn.blur(); goToSlide(state.pptSlideIndex + 1); };
 
   // (2026-07-13) support touch, mouse drag & trackpad swipe in PPT; prev: touch only
   let startX = 0, startY = 0, deltaX = 0, isSwiping = false, swipedRecently = false;
@@ -6018,26 +6325,43 @@ function wirePptOverlayEvents(song){
 
   stage.onclick = (e)=>{
     if(swipedRecently) return;
+    if(state.pptBlanked && state.pptChromeHidden){
+      toggleBlank();
+      toggleCleanMode();
+      return;
+    }
     const rect = stage.getBoundingClientRect();
     const xRatio = (e.clientX - rect.left) / Math.max(1, rect.width);
     if(xRatio < 0.3) goToSlide(state.pptSlideIndex - 1);
     else if(xRatio > 0.7) goToSlide(state.pptSlideIndex + 1);
+    else toggleCleanMode();
   };
 
+  // (2026-07-13) add B/F/H hotkeys alongside arrow keys in PPT; prev: arrows only
   window._pptKeyHandler = (e)=>{
     if(state.viewerDisplayMode !== 'ppt') return;
-    if(e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown'){
-      e.preventDefault();
+    const k = e.key;
+    if(k === 'ArrowRight' || k === 'ArrowDown' || k === ' ' || k === 'PageDown'){
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       goToSlide(state.pptSlideIndex + 1);
-    } else if(e.key === 'ArrowLeft' || e.key === 'PageUp'){
-      e.preventDefault();
+    } else if(k === 'ArrowLeft' || k === 'ArrowUp' || k === 'PageUp'){
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       goToSlide(state.pptSlideIndex - 1);
-    } else if(e.key === 'Escape'){
-      e.preventDefault();
+    } else if(k === 'b' || k === 'B'){
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      toggleBlank();
+    } else if(k === 'f' || k === 'F'){
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      toggleFullscreen();
+    } else if(k === 'h' || k === 'H'){
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      toggleCleanMode();
+    } else if(k === 'Escape'){
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       exitPpt();
     }
   };
-  window.addEventListener('keydown', window._pptKeyHandler);
+  window.addEventListener('keydown', window._pptKeyHandler, true);
 }
 
 function renderViewer(){
@@ -6045,11 +6369,18 @@ function renderViewer(){
   const song = currentSong();
   if(!song){ state.view='list'; return renderListView(); }
   const isSameSong = state.lastViewerSongId === song.id;
-  // (2026-07-13) reset display mode on song change; prev: no display mode
+  // (2026-07-13) preserve PPT & restore song slide/lines on PPT switch; prev: reset
   if(!isSameSong){
-    state.viewerDisplayMode = 'chords';
-    state.pptReturnMode = 'chords';
-    state.pptSlideIndex = 0;
+    if(state.pptKeepOpenOnSwitch){
+      state.pptKeepOpenOnSwitch = false;
+      state.viewerDisplayMode = 'ppt';
+      state.pptLinesPerSlide = (song.pptLinesPerSlide >= 1 && song.pptLinesPerSlide <= 4) ? song.pptLinesPerSlide : 2;
+      state.pptSlideIndex = (typeof song.pptSlideIndex === 'number' && song.pptSlideIndex >= 0) ? song.pptSlideIndex : 0;
+    } else {
+      state.viewerDisplayMode = 'chords';
+      state.pptReturnMode = 'chords';
+      state.pptSlideIndex = 0;
+    }
   }
   const existingChartWrap = document.getElementById('chart-wrap');
   // (2026-07-13) restore song scroll when swiping back; prev: reset to 0
@@ -6255,7 +6586,7 @@ function renderViewer(){
   document.getElementById('btn-back').onclick = ()=>{
     stopAutoscroll(); stopMetronome();
     // (2026-07-13) reset display mode & ppt listeners on exit; prev: key only
-    if(window._pptKeyHandler){ window.removeEventListener('keydown', window._pptKeyHandler); window._pptKeyHandler = null; }
+    if(window._pptKeyHandler){ window.removeEventListener('keydown', window._pptKeyHandler, true); window._pptKeyHandler = null; }
     if(window._pptResizeHandler){ window.removeEventListener('resize', window._pptResizeHandler); window._pptResizeHandler = null; }
     state.viewerDisplayMode = 'chords';
     state.pptSlideIndex = 0;
@@ -6392,7 +6723,8 @@ function renderViewer(){
     });
     document.querySelectorAll('.cue-key-readout').forEach(el=>{ el.textContent = keyName; });
     document.querySelectorAll('.cue-piano-key').forEach(btn=>{
-      btn.classList.toggle('is-active', parseInt(btn.dataset.pianoNote, 10) === activeNoteIdx);
+      // (2026-07-13) match pitch class mod 12 for top C5 key; prev: exact idx
+      btn.classList.toggle('is-active', (parseInt(btn.dataset.pianoNote, 10) % 12) === activeNoteIdx);
       if(btn.classList.contains('black-key')){
         const nIdx = parseInt(btn.dataset.pianoNote, 10);
         const span = btn.querySelector('span');
@@ -6435,9 +6767,21 @@ function renderViewer(){
       if(e && e.stopPropagation) e.stopPropagation();
       const noteIdx = parseInt(btn.dataset.pianoNote, 10);
       if(isNaN(noteIdx)) return;
+      // (2026-07-13) skip scroll-to-top on Pasiuna preface piano; prev: forced top
+      state.autoscroll = false;
+      stopAutoscroll();
+      const ppBtn = document.getElementById('btn-playpause');
+      if(ppBtn) ppBtn.innerHTML = iconPlay();
+      const isPasiuna = !!(song && (song.id === 'lit-preface' || /pasiuna/i.test(song.title || '')));
+      if(chartWrap && !isPasiuna){
+        chartWrap.scrollTop = 0;
+        autoscrollFloatPos = 0;
+      }
       playPianoNote(noteIdx);
       const mode = getCueNoteMode();
-      state.cueKeyIdx = mode === '1st' ? (noteIdx - 4 + 12) % 12 : noteIdx;
+      // (2026-07-13) normalize pitch class mod 12 for top C5 key; prev: raw noteIdx
+      const pc = ((noteIdx % 12) + 12) % 12;
+      state.cueKeyIdx = mode === '1st' ? (pc - 4 + 12) % 12 : pc;
       syncCuePianoDom();
     };
     btn.addEventListener('touchstart', (e)=>{
@@ -7079,9 +7423,12 @@ function openEditor(id, cameFrom){
   state.isSavingSong = false;
   document.querySelectorAll('.modal-backdrop, #modal-bg').forEach(el=>el.remove());
   const song = id ? state.songs.find(s=>s.id===id) : null;
+  // (2026-07-13) pre-select active folder & mass part on new song; prev: empty []
+  const defaultCats = (!state.filterMassPart && !state.filterFlag && !state.filterSetlistId && state.filterCat && state.filterCat !== 'All' && state.filterCat !== 'Uncategorized') ? [state.filterCat] : [];
+  const defaultMassParts = state.filterMassPart ? [state.filterMassPart] : [];
   state.editingDraft = song ? {...song, introMelody: song.introMelody || ''} : {
     id: uid(), title:'', artist:'', key:'C', capo:0, tempo:90, timeSig:'4/4', style:'', instrument:'',
-    introMelody: '', categories: [], favorite:false, transposeOffset:0, dateAdded: Date.now(), body:''
+    introMelody: '', categories: defaultCats, massParts: defaultMassParts, favorite:false, transposeOffset:0, dateAdded: Date.now(), body:''
   };
   if(!state.editingDraft.categories){
     state.editingDraft.categories = state.editingDraft.category ? [state.editingDraft.category] : [];
@@ -7218,9 +7565,10 @@ function renderEditor(){
         </div>
       </div>
       <div class="field">
-        <!-- (2026-07-13) clean chord chart header; prev: undo/redo buttons in chart header -->
-        <div style="margin-bottom:6px;">
+        <!-- (2026-07-13) add Upload Img Lyrics OCR button in editor; prev: label only -->
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
           <label style="margin:0;">Chord chart</label>
+          <button type="button" class="quick-chip" id="btn-upload-img-lyrics" style="background:var(--accent);color:#111318;border-color:transparent;font-weight:800;padding:5px 11px;">Upload Img Lyrics</button>
         </div>
         <div class="quick-insert-row">
           <button type="button" class="quick-chip divider-chip" id="ins-divider">+ Divider</button>
@@ -7477,6 +7825,15 @@ function renderEditor(){
 
   updateUndoRedoButtons();
 
+  // (2026-07-13) wire Upload Img Lyrics OCR scanner button; prev: none
+  const uploadImgLyricsBtn = document.getElementById('btn-upload-img-lyrics');
+  if(uploadImgLyricsBtn){
+    uploadImgLyricsBtn.onclick = ()=>{
+      if(typeof window.openLyricsImageScanner === 'function'){
+        window.openLyricsImageScanner(bodyEl);
+      }
+    };
+  }
   document.getElementById('ins-divider').onclick = ()=> insertAtCursor(bodyEl, '\n' + '='.repeat(40) + '\n');
   document.querySelectorAll('[data-ins-section]').forEach(el=>{
     el.onclick = ()=> insertAtCursor(bodyEl, '\n' + el.dataset.insSection + '\n');
@@ -8064,8 +8421,9 @@ function renderSettingsView() {
       
       <!-- Account Card -->
       <div class="settings-section-card" style="display:flex;align-items:center;gap:14px;padding:16px;background:var(--bg-elev);border:1px solid var(--line);border-radius:18px;margin-bottom:18px;">
-        <div style="width:48px;height:48px;border-radius:50%;background:var(--bg-elev2);border:1.5px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:var(--text);flex-shrink:0;">
-          ${firebaseUser && firebaseUser.photoURL ? `<img src="${escapeHtml(firebaseUser.photoURL)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;"/>` : escapeHtml(userDisplay[0]||'C')}
+        <!-- (2026-07-13) add no-referrer & fallback on settings avatar; prev: bare img -->
+        <div style="width:48px;height:48px;border-radius:50%;background:var(--bg-elev2);border:1.5px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:var(--text);flex-shrink:0;overflow:hidden;">
+          ${firebaseUser && firebaseUser.photoURL ? `<img src="${escapeHtml(firebaseUser.photoURL)}" alt="" referrerpolicy="no-referrer" onerror="this.parentNode.textContent='${escapeHtml((userDisplay[0]||'C').toUpperCase())}'" style="width:100%;height:100%;border-radius:50%;object-fit:cover;"/>` : escapeHtml((userDisplay[0]||'C').toUpperCase())}
         </div>
         <div style="flex:1;min-width:0;">
           <div style="font-weight:800;font-size:15px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(userDisplay)}</div>
@@ -9357,6 +9715,15 @@ function modalHtml(){
               <button type="button" class="display-mode-btn ${state.viewerDisplayMode==='chords'?'is-active':''}" id="adj-mode-chords" data-mode="chords">Chords</button>
               <button type="button" class="display-mode-btn ${state.viewerDisplayMode==='lyrics'?'is-active':''}" id="adj-mode-lyrics" data-mode="lyrics">Lyrics</button>
               <button type="button" class="display-mode-btn ${state.viewerDisplayMode==='ppt'?'is-active':''}" id="adj-mode-ppt" data-mode="ppt">PPT</button>
+            </div>
+          </div>
+          <!-- (2026-07-13) add printable PNG/PDF/Word export row in adjustments; prev: none -->
+          <div class="field" style="margin-bottom:12px;">
+            <label style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--text-dim);text-transform:uppercase;margin-bottom:6px;display:block;">Export Printable (${state.viewerDisplayMode==='lyrics'?'Lyrics Only':'Full Chart'})</label>
+            <div style="display:flex;gap:8px;">
+              <button type="button" class="toolbtn" id="adj-export-png" style="flex:1;min-height:36px;font-size:12.5px;font-weight:700;">PNG</button>
+              <button type="button" class="toolbtn" id="adj-export-pdf" style="flex:1;min-height:36px;font-size:12.5px;font-weight:700;">PDF</button>
+              <button type="button" class="toolbtn" id="adj-export-word" style="flex:1;min-height:36px;font-size:12.5px;font-weight:700;">Word</button>
             </div>
           </div>
           <div class="field" style="margin-bottom:12px;">

@@ -6,8 +6,8 @@
     "semantic_hash": "fd3e09ee98396a6683e9f886b37aaf2c"
   },
   "android/app/capacitor.build.gradle": {
-    "mtime": 1794067156.3690956,
-    "seen": 1794067478.1506872,
+    "mtime": 1795156953.9839401,
+    "seen": 1795179703.4523158,
     "ast_hash": "20b1720c7c82ad1d0d50d3c25411c21f",
     "semantic_hash": "20b1720c7c82ad1d0d50d3c25411c21f"
   },
@@ -42,8 +42,8 @@
     "semantic_hash": "682315a426653617c6a74fc12bef55b6"
   },
   "android/capacitor.settings.gradle": {
-    "mtime": 1794067156.3680956,
-    "seen": 1794067478.1512814,
+    "mtime": 1795156953.9829402,
+    "seen": 1795179703.454737,
     "ast_hash": "1a21328b8ae2ae9af0d02a6c12dddb9d",
     "semantic_hash": "1a21328b8ae2ae9af0d02a6c12dddb9d"
   },
@@ -84,10 +84,10 @@
     "semantic_hash": "2ef3df7caa84875136011501b7cac628"
   },
   "js/app.js": {
-    "mtime": 1794066869.886093,
-    "seen": 1794067478.1519203,
-    "ast_hash": "2348bc1b4df97597e76d686768ae0924",
-    "semantic_hash": "2348bc1b4df97597e76d686768ae0924"
+    "mtime": 1795179495.3711748,
+    "seen": 1795179703.4568598,
+    "ast_hash": "29fdf6170729f2687726c7830474d020",
+    "semantic_hash": "29fdf6170729f2687726c7830474d020"
   },
   "js/firebase-config.js": {
     "mtime": 1793634338.1893795,
@@ -108,10 +108,10 @@
     "semantic_hash": "d627d83a7a35f8a4bbe80998c78c1f36"
   },
   "package.json": {
-    "mtime": 1793962914.4677255,
-    "seen": 1793967154.0644765,
-    "ast_hash": "5fb5940d4efedc083a38b598cb55a70a",
-    "semantic_hash": "5fb5940d4efedc083a38b598cb55a70a"
+    "mtime": 1795179154.120042,
+    "seen": 1795179703.4578342,
+    "ast_hash": "9cd922c1e94f9d82baa5c1c4393a5ad9",
+    "semantic_hash": "9cd922c1e94f9d82baa5c1c4393a5ad9"
   },
   "IMPROVEMENTS.md": {
     "mtime": 1785914073.054296,
@@ -132,10 +132,10 @@
     "semantic_hash": "b74b1b2d557b88f38f549b599a2badf7"
   },
   "index.html": {
-    "mtime": 1793963815.6968613,
-    "seen": 1793967154.0644846,
-    "ast_hash": "b2537617b93b5076773181091d4d1528",
-    "semantic_hash": "b2537617b93b5076773181091d4d1528"
+    "mtime": 1795154123.377335,
+    "seen": 1795179703.4591086,
+    "ast_hash": "50cb6c88cb79b6889ba70c26e6b9565e",
+    "semantic_hash": "50cb6c88cb79b6889ba70c26e6b9565e"
   },
   "android/app/src/main/java/com/choirbookpro/app/GoogleOneTapPlugin.java": {
     "mtime": 1793964073.2860813,
@@ -325,9 +325,9 @@
   },
   "icons/icon-192.png": {
     "mtime": 1793648782.1959388,
-    "seen": 1794051189.8597028,
+    "seen": 1795179703.4591124,
     "ast_hash": "90aaf5439ba387d2553080214dab0738",
-    "semantic_hash": ""
+    "semantic_hash": "90aaf5439ba387d2553080214dab0738"
   },
   "icons/icon-512.png": {
     "mtime": 1793648782.158234,
@@ -339,6 +339,96 @@
     "mtime": 1793648782.087094,
     "seen": 1794067478.1530716,
     "ast_hash": "d461d2b26bc63cbfb2dd723de35ca5d0",
-    "semantic_hash": "d461d2b26bc63cbfb2dd723de35ca5d0"
+    "semantic_hash": ""
+  },
+  "a.ps1": {
+    "mtime": 1794068068.9585779,
+    "seen": 1795179703.4516072,
+    "ast_hash": "cf11276eeabdf42b6d7794be1f6bf9ca",
+    "semantic_hash": "cf11276eeabdf42b6d7794be1f6bf9ca"
+  },
+  "audio/piano/A2.mp3": {
+    "mtime": 1795179031.6324513,
+    "seen": 1795179703.459115,
+    "ast_hash": "f30c6031e17463b32c6e8a3a8cf90fb4",
+    "semantic_hash": "f30c6031e17463b32c6e8a3a8cf90fb4"
+  },
+  "audio/piano/A3.mp3": {
+    "mtime": 1795179033.9783287,
+    "seen": 1795179703.4591172,
+    "ast_hash": "d83805c080f80bcee94d817e375d224f",
+    "semantic_hash": "d83805c080f80bcee94d817e375d224f"
+  },
+  "audio/piano/A4.mp3": {
+    "mtime": 1795179036.792812,
+    "seen": 1795179703.4591186,
+    "ast_hash": "ac1793b11eb5472897c57a48897049ac",
+    "semantic_hash": "ac1793b11eb5472897c57a48897049ac"
+  },
+  "audio/piano/A5.mp3": {
+    "mtime": 1795179038.9676468,
+    "seen": 1795179703.4591203,
+    "ast_hash": "07a5bfc6f2d22a1f0ce18831131bc079",
+    "semantic_hash": "07a5bfc6f2d22a1f0ce18831131bc079"
+  },
+  "audio/piano/C3.mp3": {
+    "mtime": 1795179032.2172766,
+    "seen": 1795179703.4591222,
+    "ast_hash": "e2e4c48c62a94d3d3d0cc0b070d0c8bd",
+    "semantic_hash": "e2e4c48c62a94d3d3d0cc0b070d0c8bd"
+  },
+  "audio/piano/C4.mp3": {
+    "mtime": 1795179034.6145523,
+    "seen": 1795179703.4591243,
+    "ast_hash": "2f496ec3fdce5db3d2da548ce21be91d",
+    "semantic_hash": "2f496ec3fdce5db3d2da548ce21be91d"
+  },
+  "audio/piano/C5.mp3": {
+    "mtime": 1795179037.348385,
+    "seen": 1795179703.4591255,
+    "ast_hash": "0d1e316ab0853d4b25ad7009e5e71716",
+    "semantic_hash": "0d1e316ab0853d4b25ad7009e5e71716"
+  },
+  "audio/piano/C6.mp3": {
+    "mtime": 1795179039.4262874,
+    "seen": 1795179703.459128,
+    "ast_hash": "8420f29f45dcb16e70d6e182c4f49154",
+    "semantic_hash": "8420f29f45dcb16e70d6e182c4f49154"
+  },
+  "audio/piano/Ds3.mp3": {
+    "mtime": 1795179032.819299,
+    "seen": 1795179703.4591296,
+    "ast_hash": "84bb9c0a39a515d87d90751ebd355085",
+    "semantic_hash": "84bb9c0a39a515d87d90751ebd355085"
+  },
+  "audio/piano/Ds4.mp3": {
+    "mtime": 1795179035.3378017,
+    "seen": 1795179703.4591312,
+    "ast_hash": "88ae883ad007a298010a5974db74ba53",
+    "semantic_hash": "88ae883ad007a298010a5974db74ba53"
+  },
+  "audio/piano/Ds5.mp3": {
+    "mtime": 1795179037.8913286,
+    "seen": 1795179703.4591327,
+    "ast_hash": "94e49f1403865e6e74b748bc206e32a6",
+    "semantic_hash": "94e49f1403865e6e74b748bc206e32a6"
+  },
+  "audio/piano/Fs3.mp3": {
+    "mtime": 1795179033.4417691,
+    "seen": 1795179703.459135,
+    "ast_hash": "d9e8459da3320131e5a39155c2f86278",
+    "semantic_hash": "d9e8459da3320131e5a39155c2f86278"
+  },
+  "audio/piano/Fs4.mp3": {
+    "mtime": 1795179036.00395,
+    "seen": 1795179703.4591372,
+    "ast_hash": "210c4652fcf4a271a12d91fb3b1b7247",
+    "semantic_hash": "210c4652fcf4a271a12d91fb3b1b7247"
+  },
+  "audio/piano/Fs5.mp3": {
+    "mtime": 1795179038.46402,
+    "seen": 1795179703.4591389,
+    "ast_hash": "3a213fc21fa03d96c5706f5c54353c10",
+    "semantic_hash": "3a213fc21fa03d96c5706f5c54353c10"
   }
 }

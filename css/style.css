@@ -358,13 +358,14 @@ body.theme-light .masspart-cue-card .cue-piano-wrap{border-bottom:none !importan
 .dialogue-cue-item:has(+ .chart-hr),
 .dialogue-cue-item:has(+ hr){border-bottom:none !important;padding-bottom:0 !important;margin-bottom:0 !important;}
 .cue-piano-wrap{display:flex;flex-direction:column;gap:6px;padding:2px 0 14px 0;margin:2px 0 16px 0;border-top:none;border-bottom:1px solid rgba(255,255,255,0.14);}
-.cue-piano-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+/* (2026-07-13) move 1st/2nd note controls right & enlarge tap target; prev: small left */
+.cue-piano-toolbar{display:flex;flex-direction:row-reverse;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;}
 /* (2026-07-13) circular radio note buttons & scroll content; prev: select */
-.cue-piano-mode-wrap{display:flex;align-items:center;gap:6px;}
-.cue-piano-label{font-size:10.5px;font-weight:700;color:var(--text-dim);letter-spacing:0.2px;}
-.cue-note-radio-group{display:inline-flex;align-items:center;gap:5px;}
-.cue-note-circle-btn{display:inline-flex;align-items:center;gap:5px;background:var(--bg-elev2);border:1px solid var(--line);color:var(--text-dim);font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;cursor:pointer;transition:all .12s;font-family:inherit;}
-.circle-radio-dot{width:10px;height:10px;border-radius:50%;border:1.5px solid var(--text-dim);display:inline-block;box-sizing:border-box;transition:all .12s;}
+.cue-piano-mode-wrap{display:flex;align-items:center;gap:8px;}
+.cue-piano-label{font-size:11.5px;font-weight:700;color:var(--text-dim);letter-spacing:0.2px;}
+.cue-note-radio-group{display:inline-flex;align-items:center;gap:6px;}
+.cue-note-circle-btn{display:inline-flex;align-items:center;gap:6px;background:var(--bg-elev2);border:1.5px solid var(--line);color:var(--text-dim);font-size:12px;font-weight:800;min-height:34px;padding:6px 13px;border-radius:17px;cursor:pointer;transition:all .12s;font-family:inherit;touch-action:manipulation;}
+.circle-radio-dot{width:12px;height:12px;border-radius:50%;border:1.5px solid var(--text-dim);display:inline-block;box-sizing:border-box;transition:all .12s;flex-shrink:0;}
 .cue-note-circle-btn.selected{border-color:var(--accent);color:var(--accent);background:rgba(224,142,66,0.12);}
 .cue-note-circle-btn.selected .circle-radio-dot{border-color:var(--accent);background:var(--accent);box-shadow:inset 0 0 0 2px var(--bg-elev2);}
 .chart-scroll-content{width:100%;box-sizing:border-box;will-change:transform;}
@@ -373,7 +374,8 @@ body.theme-light .masspart-cue-card .cue-piano-wrap{border-bottom:none !importan
 .cue-piano-keyboard{position:relative;display:flex;height:48px;gap:2px;user-select:none;-webkit-user-select:none;touch-action:manipulation;}
 .cue-piano-key.white-key{flex:1;height:100%;background:rgba(255,255,255,0.92);border:1px solid rgba(0,0,0,0.45);border-radius:0 0 5px 5px;color:#181b22;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:800;display:flex;align-items:flex-end;justify-content:center;padding-bottom:4px;cursor:pointer;box-shadow:inset 0 -2px 0 rgba(0,0,0,0.18);}
 .cue-piano-key.white-key:active, .cue-piano-key.white-key.is-active{background:var(--chord);color:#111318;border-color:var(--chord);}
-.cue-piano-key.black-key{position:absolute;top:0;width:8.2%;height:62%;background:#181b24;border:1px solid rgba(255,255,255,0.16);border-top:none;border-radius:0 0 4px 4px;color:rgba(255,255,255,0.85);font-family:'JetBrains Mono',monospace;font-size:8.5px;font-weight:800;display:flex;align-items:flex-end;justify-content:center;padding-bottom:3px;cursor:pointer;z-index:2;box-shadow:0 2px 4px rgba(0,0,0,0.5);}
+/* (2026-07-13) adjust black key width for 8-key C4-C5 cue piano; prev: 8.2% */
+.cue-piano-key.black-key{position:absolute;top:0;width:7.2%;height:62%;background:#181b24;border:1px solid rgba(255,255,255,0.16);border-top:none;border-radius:0 0 4px 4px;color:rgba(255,255,255,0.85);font-family:'JetBrains Mono',monospace;font-size:8.5px;font-weight:800;display:flex;align-items:flex-end;justify-content:center;padding-bottom:3px;cursor:pointer;z-index:2;box-shadow:0 2px 4px rgba(0,0,0,0.5);}
 .cue-piano-key.black-key:active, .cue-piano-key.black-key.is-active{background:var(--chord);color:#111318;border-color:var(--chord);}
 /* (2026-07-13) sticky bottom piano tray & keys A3-G5; prev: none */
 .sticky-piano-tray{position:fixed;bottom:0;left:0;right:0;background:rgba(18,20,26,0.96);border-top:1.5px solid rgba(255,255,255,0.16);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);padding:8px 12px calc(8px + env(safe-area-inset-bottom, 0px));z-index:90;transform:translateY(100%);transition:transform .24s cubic-bezier(0.2,0.9,0.3,1);box-shadow:0 -6px 24px rgba(0,0,0,0.6);display:flex;flex-direction:column;gap:6px;}
@@ -1339,13 +1341,14 @@ body.theme-light .dropdown-item:active {
   animation: none !important;
   transition: none !important;
 }
+/* (2026-07-13) pure white & pure black PPT font colors; prev: tinted colors */
 .ppt-presentation-overlay[data-ppt-theme="dark"] {
   background-color: #000000;
-  color: #e2f8ff;
+  color: #ffffff;
 }
 .ppt-presentation-overlay[data-ppt-theme="light"] {
   background-color: #ffffff;
-  color: #0f172a;
+  color: #000000;
 }
 
 /* PPT top controls bar */
@@ -1357,16 +1360,212 @@ body.theme-light .dropdown-item:active {
   padding: calc(14px + env(safe-area-inset-top, 0px)) 16px 10px;
   flex-shrink: 0;
 }
-.ppt-section-badge {
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.8px;
+/* (2026-07-13) make top-left song switcher subtle; prev: bordered circles */
+/* Top-left song switcher */
+.ppt-song-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 46vw;
+  opacity: 0.42;
+}
+.ppt-song-nav:hover,
+.ppt-song-nav:active {
+  opacity: 0.88;
+}
+.ppt-song-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+.ppt-song-nav-btn:disabled {
+  opacity: 0.2;
+  cursor: default;
+}
+.ppt-song-meta {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 2px 6px;
+  border-radius: 8px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.15;
+}
+.ppt-song-meta.has-sections {
+  cursor: pointer;
+}
+.ppt-song-meta.has-sections:active {
+  background: rgba(255, 255, 255, 0.08);
+}
+.ppt-presentation-overlay[data-ppt-theme="light"] .ppt-song-meta.has-sections:active {
+  background: rgba(15, 23, 42, 0.06);
+}
+/* (2026-07-13) style section jump bar, blank, preview & mobile APK; prev: none */
+/* Quick section jump bar */
+.ppt-section-jump-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 16px 8px;
+  overflow-x: auto;
+  flex-shrink: 0;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.ppt-section-jump-bar::-webkit-scrollbar {
+  display: none;
+}
+.ppt-section-jump-bar.hidden {
+  display: none;
+}
+.ppt-section-pill {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.07);
+  color: inherit;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
   text-transform: uppercase;
-  opacity: 0.55;
+  padding: 6px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.ppt-presentation-overlay[data-ppt-theme="light"] .ppt-section-pill {
+  border-color: rgba(15, 23, 42, 0.14);
+  background: rgba(15, 23, 42, 0.06);
+}
+.ppt-section-pill.is-active {
+  background: var(--accent);
+  color: #111318;
+  border-color: transparent;
+}
+.ppt-ctrl-btn.is-active {
+  background: var(--accent) !important;
+  color: #111318 !important;
+  border-color: transparent !important;
+}
+.ppt-icon-only-btn {
+  width: 38px;
+  padding: 0;
+}
+/* (2026-07-13) subtle bottom-right next-line peek; prev: centered bold */
+/* Faint next-line cue preview */
+.ppt-next-preview {
+  position: fixed;
+  right: 14px;
+  bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  max-width: 42vw;
+  text-align: right;
+  font-family: 'Montserrat', 'Manrope', sans-serif;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  opacity: 0.22;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+/* (2026-07-13) keep bottom-right peek visible in clean/fullscreen; prev: hidden */
+.ppt-next-preview.is-empty {
+  display: none;
+}
+/* Blank screen & clean projector mode */
+.ppt-presentation-overlay.is-blanked .ppt-slide-content,
+.ppt-presentation-overlay.is-blanked .ppt-next-preview {
+  visibility: hidden;
+}
+.ppt-presentation-overlay.is-clean-mode .ppt-topbar,
+.ppt-presentation-overlay.is-clean-mode .ppt-section-jump-bar,
+.ppt-presentation-overlay.is-clean-mode .ppt-footer,
+.ppt-presentation-overlay.is-clean-mode .ppt-progress-track {
+  display: none;
+}
+@media (max-width: 680px) {
+  .ppt-topbar {
+    flex-wrap: wrap;
+    padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 6px;
+    gap: 6px;
+  }
+  .ppt-song-nav {
+    max-width: 100%;
+    flex: 1 1 100%;
+  }
+  .ppt-top-controls {
+    width: 100%;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .ppt-zoom-picker,
+  .ppt-lines-picker,
+  .ppt-ctrl-btn {
+    height: 34px;
+  }
+  .ppt-ctrl-btn {
+    padding: 0 9px;
+    font-size: 12px;
+  }
+  .ppt-ctrl-btn .ppt-btn-label {
+    display: none;
+  }
+  .ppt-exit-btn,
+  .ppt-icon-only-btn {
+    width: 34px;
+    padding: 0;
+  }
+  .ppt-zoom-btn {
+    width: 24px;
+    height: 26px;
+  }
+  .ppt-zoom-val {
+    min-width: 34px;
+    height: 26px;
+    font-size: 11px;
+  }
+  .ppt-lines-btn {
+    height: 26px;
+    min-width: 26px;
+    padding: 0 5px;
+    font-size: 11px;
+  }
+}
+.ppt-song-title {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  opacity: 0.85;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 38vw;
+}
+.ppt-section-badge {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  opacity: 0.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ppt-top-controls {
   display: flex;
@@ -1520,41 +1719,24 @@ body.theme-light .dropdown-item:active {
   word-break: break-word;
 }
 
+/* (2026-07-13) hide bottom nav arrows & keep subtle counter; prev: circle buttons */
 /* PPT slide counter footer */
 .ppt-footer {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 18px;
-  padding: 10px 18px calc(16px + env(safe-area-inset-bottom, 0px));
+  padding: 4px 16px calc(10px + env(safe-area-inset-bottom, 0px));
   flex-shrink: 0;
 }
 .ppt-nav-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.07);
-  color: inherit;
-  cursor: pointer;
-}
-.ppt-presentation-overlay[data-ppt-theme="light"] .ppt-nav-btn {
-  border-color: rgba(15, 23, 42, 0.14);
-  background: rgba(15, 23, 42, 0.06);
-}
-.ppt-nav-btn:disabled {
-  opacity: 0.25;
-  cursor: default;
+  display: none;
 }
 .ppt-slide-counter {
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.6px;
-  opacity: 0.6;
-  min-width: 56px;
+  letter-spacing: 0.8px;
+  opacity: 0.26;
+  min-width: 44px;
   text-align: center;
 }
 .ppt-progress-track {

@@ -4,7 +4,7 @@
   "description": "",
   "main": "js/app.js",
   "scripts": {
-    "build": "powershell -Command \"Remove-Item -Recurse -Force www -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Path www -Force; Copy-Item index.html,manifest.json,sw.js,*.gsma www/; Copy-Item -Recurse js,css,icons www/\"",
+    "build": "powershell -Command \"Remove-Item -Recurse -Force www -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Path www -Force; Copy-Item index.html,manifest.json,sw.js,*.gsma www/; Copy-Item -Recurse js,css,icons,audio www/\"",
     "sync": "npm run build && npx cap sync",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
