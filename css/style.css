@@ -1288,3 +1288,287 @@ body.theme-light .dropdown-item:active {
     padding: calc(8px + env(safe-area-inset-top, 0px)) 24px 8px;
   }
 }
+
+/* (2026-07-13) add display mode toggle & PPT presentation styles; prev: none */
+/* Segmented display mode toggle */
+.display-mode-segmented {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  padding: 4px;
+  background: var(--bg-elev2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.display-mode-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  min-height: 36px;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+}
+.display-mode-btn:hover {
+  color: var(--text);
+}
+.display-mode-btn.is-active {
+  background: var(--accent);
+  color: #111318;
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+/* (2026-07-13) remove PPT transitions & style 1-4 line picker; prev: animated */
+/* Full-screen PPT overlay */
+.ppt-presentation-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  user-select: none;
+  -webkit-user-select: none;
+  /* (2026-07-13) prevent browser hijacking horizontal swipes; prev: pan-y */
+  touch-action: none;
+  overscroll-behavior-x: contain;
+  animation: none !important;
+  transition: none !important;
+}
+.ppt-presentation-overlay[data-ppt-theme="dark"] {
+  background-color: #000000;
+  color: #e2f8ff;
+}
+.ppt-presentation-overlay[data-ppt-theme="light"] {
+  background-color: #ffffff;
+  color: #0f172a;
+}
+
+/* PPT top controls bar */
+.ppt-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: calc(14px + env(safe-area-inset-top, 0px)) 16px 10px;
+  flex-shrink: 0;
+}
+.ppt-section-badge {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  opacity: 0.55;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 38vw;
+}
+.ppt-top-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+/* (2026-07-13) style fine-grain PPT zoom controls; prev: none */
+/* Fine-grain PPT zoom controls */
+.ppt-zoom-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 38px;
+  padding: 3px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+}
+.ppt-presentation-overlay[data-ppt-theme="light"] .ppt-zoom-picker {
+  border-color: rgba(15, 23, 42, 0.14);
+  background: rgba(15, 23, 42, 0.06);
+}
+.ppt-zoom-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 800;
+  width: 28px;
+  height: 30px;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ppt-zoom-val {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.78;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 800;
+  min-width: 38px;
+  height: 30px;
+  padding: 0 4px;
+  border-radius: 999px;
+  cursor: pointer;
+  text-align: center;
+}
+/* Slide line count selector */
+.ppt-lines-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 38px;
+  padding: 3px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+}
+.ppt-presentation-overlay[data-ppt-theme="light"] .ppt-lines-picker {
+  border-color: rgba(15, 23, 42, 0.14);
+  background: rgba(15, 23, 42, 0.06);
+}
+.ppt-lines-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.65;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  height: 30px;
+  min-width: 30px;
+  padding: 0 7px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.ppt-lines-btn.is-active {
+  background: var(--accent);
+  color: #111318;
+  opacity: 1;
+}
+.ppt-ctrl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.ppt-presentation-overlay[data-ppt-theme="light"] .ppt-ctrl-btn {
+  border-color: rgba(15, 23, 42, 0.14);
+  background: rgba(15, 23, 42, 0.06);
+}
+.ppt-exit-btn {
+  width: 38px;
+  padding: 0;
+}
+
+/* (2026-07-13) maximize PPT stage area & full-bleed auto-fit text; prev: capped 108px */
+/* Swipeable PPT lyric stage */
+.ppt-slide-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 2.2vw;
+  overflow: hidden;
+  cursor: pointer;
+}
+.ppt-slide-content {
+  width: 100%;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.22em;
+  text-align: center;
+  font-size: 120px;
+}
+.ppt-lyric-line {
+  width: 100%;
+  font-family: 'Montserrat', 'Manrope', sans-serif;
+  font-size: 1em;
+  font-weight: 900;
+  line-height: 1.08;
+  letter-spacing: 0.5px;
+  text-transform: uppercase !important;
+  word-break: break-word;
+}
+
+/* PPT slide counter footer */
+.ppt-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 10px 18px calc(16px + env(safe-area-inset-bottom, 0px));
+  flex-shrink: 0;
+}
+.ppt-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.07);
+  color: inherit;
+  cursor: pointer;
+}
+.ppt-presentation-overlay[data-ppt-theme="light"] .ppt-nav-btn {
+  border-color: rgba(15, 23, 42, 0.14);
+  background: rgba(15, 23, 42, 0.06);
+}
+.ppt-nav-btn:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+.ppt-slide-counter {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  opacity: 0.6;
+  min-width: 56px;
+  text-align: center;
+}
+.ppt-progress-track {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.1);
+}
+.ppt-presentation-overlay[data-ppt-theme="light"] .ppt-progress-track {
+  background: rgba(15, 23, 42, 0.08);
+}
+.ppt-progress-fill {
+  height: 100%;
+  background: var(--accent);
+}

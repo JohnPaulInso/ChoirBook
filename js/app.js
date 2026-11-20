@@ -1104,6 +1104,21 @@ const Store = {
     try{ return JSON.parse(r.value) || {}; }catch(e){ return {}; }
   },
   async saveCustomCues(cues){ await adapter.set('meta:customCues', JSON.stringify(cues || {})); },
+  // (2026-07-13) persist per-line-mode PPT zoom to DB; prev: none
+  async getPptZooms(){
+    const r = await adapter.get('meta:pptZooms');
+    if(!r){
+      const loc = await LocalAdapter.get('meta:pptZooms');
+      if(!loc) return {};
+      try{ return JSON.parse(loc.value) || {}; }catch(e){ return {}; }
+    }
+    try{ return JSON.parse(r.value) || {}; }catch(e){ return {}; }
+  },
+  async savePptZooms(zooms){
+    const raw = JSON.stringify(zooms || {});
+    try{ await LocalAdapter.set('meta:pptZooms', raw); }catch(e){}
+    await adapter.set('meta:pptZooms', raw);
+  },
   // (2026-07-13) persist and fetch account artists & composers; prev: none
   async getArtists(){
     const r = await adapter.get('meta:artists');
@@ -1658,6 +1673,14 @@ const state = {
   // (2026-07-13) default autoscroll to on; prev: autoscroll: false
   autoscroll: true,
   metronomeOn: false,
+  // (2026-07-13) add viewer display mode & ppt theme state; prev: chords only
+  viewerDisplayMode: 'chords',
+  pptReturnMode: 'chords',
+  pptTheme: (function(){ try{ return localStorage.getItem('cbp_ppt_theme') || 'dark'; }catch(e){ return 'dark'; } })(),
+  // (2026-07-13) default PPT to 2L & load per-mode zooms; prev: local lines
+  pptLinesPerSlide: 2,
+  pptZooms: (function(){ try{ const raw = localStorage.getItem('meta:pptZooms'); const parsed = raw ? JSON.parse(raw) : {}; return (parsed && typeof parsed === 'object') ? parsed : {}; }catch(e){ return {}; } })(),
+  pptSlideIndex: 0,
   // (2026-07-13) add viewer cue card and mass part selection state; prev: none
   selectedViewerMassPart: null,
   hideCueCard: false,
@@ -1977,9 +2000,14 @@ async function loadAll(){
       // (2026-07-13) fetch trash bin items from Store; prev: none
       Store.getTrash(),
       Store.getCustomCues(),
-      Store.getArtists()
+      Store.getArtists(),
+      Store.getPptZooms()
     ]);
-    const [rawSongs, cats, parts, rawSetlists, fColors, cChords, remoteTrash, cCues, remoteArtists] = await Promise.race([dataFetch, timeout]);
+    const [rawSongs, cats, parts, rawSetlists, fColors, cChords, remoteTrash, cCues, remoteArtists, remotePptZooms] = await Promise.race([dataFetch, timeout]);
+    if(remotePptZooms && typeof remotePptZooms === 'object' && Object.keys(remotePptZooms).length > 0){
+      state.pptZooms = Object.assign({}, state.pptZooms || {}, remotePptZooms);
+      LocalAdapter.set('meta:pptZooms', JSON.stringify(state.pptZooms));
+    }
     if(Array.isArray(remoteTrash)) state.trash = remoteTrash;
     if(Array.isArray(remoteArtists)){
       state.savedArtists = remoteArtists;
@@ -4040,6 +4068,10 @@ function renderListView(animateChipScroll){
     };
     initialLw.addEventListener('scroll', ()=>{
       state.lastListScroll = initialLw.scrollTop;
+      // (2026-07-13) blur search input on scroll; prev: keyboard stayed open
+      if(document.activeElement && document.activeElement.id === 'search-input'){
+        document.activeElement.blur();
+      }
       updateFabNearBottom();
     }, { passive: true });
     updateFabNearBottom();
@@ -4080,9 +4112,7 @@ function renderListView(animateChipScroll){
         renderListView();
       }
     };
-    if(state.searchActive && !wasSearchFocused){
-      searchInp.focus();
-    }
+    // (2026-07-13) stop auto-focusing search on re-render; prev: forced focus
   }
 
   const clearSearchBtn = document.getElementById('btn-clear-search');
@@ -5496,6 +5526,8 @@ function renderSongSheetContent(s, isPeek){
   const flagPill = flag ? `<span class="song-flag-pill" style="background-color:${flag.color};"></span>` : '';
   const isLit = !!(s && s.id && String(s.id).startsWith('lit-'));
   const isMisalRomano = isLit || /misal\s*romano/i.test(s.artist || '') || /misal\s*romano/i.test(s.title || '') || (s.categories || []).some(c => /misal\s*romano/i.test(c));
+  // (2026-07-13) lyrics mode hides chords and chord lines; prev: always chords
+  const isLyricsMode = !isPeek && state.viewerDisplayMode === 'lyrics';
   // (2026-07-13) compact dialogue cue rendering; prev: pre-wrap newlines
   const rawLines = (body||'').split('\n');
   const renderedLines = [];
@@ -5504,9 +5536,9 @@ function renderSongSheetContent(s, isPeek){
     const line = rawLines[i];
     const cls = classifyLine(line);
     if(cls === 'melody'){
-      renderedLines.push(renderMelodyStaffLine(line));
+      if(!isLyricsMode) renderedLines.push(renderMelodyStaffLine(line));
     } else if(cls === 'bracket'){
-      renderedLines.push(`<div class="lyric-line">${renderBracketLine(line)}</div>`);
+      if(!isLyricsMode) renderedLines.push(`<div class="lyric-line">${renderBracketLine(line)}</div>`);
     } else if(cls === 'divider'){
       // (2026-07-13) suppress duplicate & cue-adjacent dividers; prev: double borders
       while(renderedLines.length > 0 && renderedLines[renderedLines.length - 1] === '<div>&nbsp;</div>'){
@@ -5570,7 +5602,8 @@ function renderSongSheetContent(s, isPeek){
         const mSpaces = chordLine ? chordLine.match(/^>\s*/) : null;
         const leadCount = mSpaces ? (mSpaces[0].length - 1) : 0;
         const alignedChordLine = chordLine ? (leadCount < 8 ? ('>' + ' '.repeat(8 - leadCount) + chordLine.replace(/^>\s*/, '')) : chordLine) : null;
-        const chordHtml = alignedChordLine ? `<div class="cue-chord-row" data-base-chords="${escapeHtml(alignedChordLine.replace(/^>/, ''))}">${renderChordLine(alignedChordLine)}</div>` : '';
+        // (2026-07-13) omit dialogue chord row in lyrics mode; prev: always shown
+        const chordHtml = (!isLyricsMode && alignedChordLine) ? `<div class="cue-chord-row" data-base-chords="${escapeHtml(alignedChordLine.replace(/^>/, ''))}">${renderChordLine(alignedChordLine)}</div>` : '';
         renderedLines.push(`<div class="cue-item dialogue-cue-item"><div class="cue-line cue-priest"><span class="dialogue-badge priest-badge">${iconPriestCross()} ${escapeHtml(pData.role)}</span><span class="cue-text">${escapeHtml(pData.text)}</span></div>${chordHtml}<div class="cue-line cue-response"><span class="dialogue-badge response-badge">${iconPeopleGroup()} ${escapeHtml(rData.role)}</span><span class="cue-text">${escapeHtml(rData.text)}</span></div></div>`);
         while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){ i++; }
       } else {
@@ -5586,26 +5619,35 @@ function renderSongSheetContent(s, isPeek){
         const mSpaces = line.match(/^>\s*/);
         const leadCount = mSpaces ? (mSpaces[0].length - 1) : 0;
         const alignedChordLine = leadCount < 8 ? ('>' + ' '.repeat(8 - leadCount) + line.replace(/^>\s*/, '')) : line;
-        renderedLines.push(`<div class="cue-item dialogue-cue-item"><div class="cue-chord-row">${renderChordLine(alignedChordLine)}</div><div class="cue-line cue-response"><span class="dialogue-badge response-badge">${iconPeopleGroup()} ${escapeHtml(rData.role)}</span><span class="cue-text">${escapeHtml(rData.text)}</span></div></div>`);
+        // (2026-07-13) hide chord row above response in lyrics mode; prev: always shown
+        const chordRowHtml = isLyricsMode ? '' : `<div class="cue-chord-row">${renderChordLine(alignedChordLine)}</div>`;
+        renderedLines.push(`<div class="cue-item dialogue-cue-item">${chordRowHtml}<div class="cue-line cue-response"><span class="dialogue-badge response-badge">${iconPeopleGroup()} ${escapeHtml(rData.role)}</span><span class="cue-text">${escapeHtml(rData.text)}</span></div></div>`);
         while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){ i++; }
       } else {
-        renderedLines.push(`<div class="lyric-line">${renderChordLine(line)}</div>`);
+        // (2026-07-13) omit standalone chord lines in lyrics mode; prev: rendered line
+        if(!isLyricsMode){
+          renderedLines.push(`<div class="lyric-line">${renderChordLine(line)}</div>`);
+        }
       }
     } else if(cls === 'response'){
       const rData = extractResponseData(line);
       renderedLines.push(`<div class="cue-item dialogue-cue-item"><div class="cue-line cue-response"><span class="dialogue-badge response-badge">${iconPeopleGroup()} ${escapeHtml(rData.role)}</span><span class="cue-text">${escapeHtml(rData.text)}</span></div></div>`);
       while(i + 1 < rawLines.length && rawLines[i + 1].trim() === ''){ i++; }
     } else if(cls === 'blank'){
-      if(!isLit) renderedLines.push(`<div>&nbsp;</div>`);
+      // (2026-07-13) collapse duplicate blanks in lyrics mode; prev: kept every blank
+      if(!isLit && (!isLyricsMode || (renderedLines.length > 0 && renderedLines[renderedLines.length - 1] !== '<div>&nbsp;</div>'))){
+        renderedLines.push(`<div>&nbsp;</div>`);
+      }
     } else {
-      renderedLines.push(`<div class="lyric-line">${escapeHtml(line)}</div>`);
+      const cleanLyric = isLyricsMode ? line.replace(/<[^>]+>/g, '') : line;
+      renderedLines.push(`<div class="lyric-line">${escapeHtml(cleanLyric)}</div>`);
     }
   }
   const lines = renderedLines.join('');
 
-  // (2026-07-13) render cue on peek respecting visibility; prev: isPeek blanked
+  // (2026-07-13) hide cue card in lyrics mode; prev: always rendered
   return `
-    ${(s.id === 'lit-preface') ? '' : renderMassPartCueCard(s, isPeek)}
+    ${(s.id === 'lit-preface' || isLyricsMode) ? '' : renderMassPartCueCard(s, isPeek)}
     ${isMisalRomano ? '' : `
       <div class="chart-title" style="display:flex;align-items:center;gap:6px;">
         ${flagPill}
@@ -5640,11 +5682,375 @@ function renderPeekSlide(s, isNext, fontSize){
     </div>`;
 }
 
+// (2026-07-13) support 1-4 lines per slide & zero transitions; prev: 2 lines animated
+function buildPptSlides(song, linesPerSlide){
+  const maxLines = Math.max(1, Math.min(4, parseInt(linesPerSlide || state.pptLinesPerSlide || 2, 10) || 2));
+  const rawLines = ((song && song.body) || '').split('\n');
+  const slides = [];
+  let currentSection = '';
+  let group = [];
+  const flushGroup = ()=>{
+    if(group.length > 0){
+      slides.push({ section: currentSection, lines: group.slice() });
+      group = [];
+    }
+  };
+  for(let i = 0; i < rawLines.length; i++){
+    const line = rawLines[i];
+    const cls = classifyLine(line);
+    if(cls === 'section'){
+      flushGroup();
+      currentSection = line.replace(/^[\[\(]|[\]\)]$/g, '').replace(/:+\s*$/, '').trim();
+    } else if(cls === 'chord' || cls === 'bracket' || cls === 'melody'){
+      continue;
+    } else if(cls === 'divider' || cls === 'blank'){
+      flushGroup();
+    } else if(cls === 'priest'){
+      flushGroup();
+      const p = extractPriestData(line);
+      const t = (p.text || '').trim();
+      if(t) slides.push({ section: currentSection || p.role, lines: [t] });
+    } else if(cls === 'response'){
+      flushGroup();
+      const r = extractResponseData(line);
+      const t = (r.text || '').trim();
+      if(t) slides.push({ section: currentSection || r.role, lines: [t] });
+    } else {
+      const clean = line.replace(/<[^>]+>/g, '').trim();
+      if(!clean) continue;
+      group.push(clean);
+      if(group.length >= maxLines) flushGroup();
+    }
+  }
+  flushGroup();
+  if(slides.length === 0){
+    slides.push({ section: '', lines: [cleanSongTitleForDisplay(song && song.title) || 'No lyrics'] });
+  }
+  return slides;
+}
+
+function pptThemeIcon(theme){
+  if(theme === 'light'){
+    return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
+  }
+  return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`;
+}
+
+// (2026-07-13) read clamped per-line-mode PPT zoom scale; prev: fixed 100%
+function getPptZoomPercent(linesCount){
+  const key = String(Math.max(1, Math.min(4, parseInt(linesCount || state.pptLinesPerSlide || 2, 10) || 2)));
+  const raw = state.pptZooms && state.pptZooms[key];
+  const val = parseInt(raw, 10);
+  return (!isNaN(val) && val >= 40 && val <= 150) ? val : 100;
+}
+
+function renderPptOverlayHtml(song){
+  if(state.viewerDisplayMode !== 'ppt' || !song) return '';
+  const linesCount = Math.max(1, Math.min(4, parseInt(state.pptLinesPerSlide || 2, 10) || 2));
+  const zoomPct = getPptZoomPercent(linesCount);
+  const slides = buildPptSlides(song, linesCount);
+  if(state.pptSlideIndex < 0) state.pptSlideIndex = 0;
+  if(state.pptSlideIndex >= slides.length) state.pptSlideIndex = slides.length - 1;
+  const slide = slides[state.pptSlideIndex];
+  const theme = state.pptTheme === 'light' ? 'light' : 'dark';
+  const sectionText = slide.section || cleanSongTitleForDisplay(song.title);
+  const pct = slides.length > 1 ? ((state.pptSlideIndex + 1) / slides.length) * 100 : 100;
+  return `
+    <!-- Full-screen PPT lyric overlay -->
+    <div class="ppt-presentation-overlay" id="ppt-presentation-overlay" data-ppt-theme="${theme}" data-ppt-lines="${linesCount}">
+      <!-- PPT top controls bar -->
+      <div class="ppt-topbar">
+        <div class="ppt-section-badge" id="ppt-section-badge">${escapeHtml(sectionText)}</div>
+        <div class="ppt-top-controls">
+          <!-- Fine-grain PPT zoom controls -->
+          <div class="ppt-zoom-picker" id="ppt-zoom-picker" title="Scale text zoom">
+            <button type="button" class="ppt-zoom-btn" id="ppt-zoom-down" title="Zoom out (-5%)">&minus;</button>
+            <button type="button" class="ppt-zoom-val" id="ppt-zoom-reset" title="Reset zoom to 100%">${zoomPct}%</button>
+            <button type="button" class="ppt-zoom-btn" id="ppt-zoom-up" title="Zoom in (+5%)">+</button>
+          </div>
+          <!-- Slide line count selector -->
+          <div class="ppt-lines-picker" id="ppt-lines-picker" title="Lines per slide">
+            ${[1, 2, 3, 4].map(n => `<button type="button" class="ppt-lines-btn ${linesCount===n?'is-active':''}" data-ppt-lines="${n}">${n}L</button>`).join('')}
+          </div>
+          <button type="button" class="ppt-ctrl-btn" id="ppt-theme-toggle" title="Toggle Dark/Light Theme">
+            ${pptThemeIcon(theme)}
+            <span>${theme === 'dark' ? 'Light' : 'Dark'}</span>
+          </button>
+          <button type="button" class="ppt-ctrl-btn ppt-exit-btn" id="ppt-exit-btn" title="Exit PPT Mode">
+            ${iconClose()}
+          </button>
+        </div>
+      </div>
+      <!-- Swipeable PPT lyric stage -->
+      <div class="ppt-slide-stage" id="ppt-slide-stage">
+        <div class="ppt-slide-content" id="ppt-slide-content">
+          ${slide.lines.map(l => `<div class="ppt-lyric-line">${escapeHtml(String(l).toUpperCase())}</div>`).join('')}
+        </div>
+      </div>
+      <!-- PPT slide counter footer -->
+      <div class="ppt-footer">
+        <button type="button" class="ppt-nav-btn" id="ppt-prev-btn" ${state.pptSlideIndex <= 0 ? 'disabled' : ''} title="Previous slide">${iconChevronLeft()}</button>
+        <span class="ppt-slide-counter" id="ppt-slide-counter">${state.pptSlideIndex + 1} / ${slides.length}</span>
+        <button type="button" class="ppt-nav-btn" id="ppt-next-btn" ${state.pptSlideIndex >= slides.length - 1 ? 'disabled' : ''} title="Next slide">${iconChevronRight()}</button>
+      </div>
+      <div class="ppt-progress-track">
+        <div class="ppt-progress-fill" id="ppt-progress-fill" style="width:${pct.toFixed(1)}%;"></div>
+      </div>
+    </div>`;
+}
+
+function wirePptOverlayEvents(song){
+  if(window._pptKeyHandler){
+    window.removeEventListener('keydown', window._pptKeyHandler);
+    window._pptKeyHandler = null;
+  }
+  if(window._pptResizeHandler){
+    window.removeEventListener('resize', window._pptResizeHandler);
+    window._pptResizeHandler = null;
+  }
+  if(state.viewerDisplayMode !== 'ppt' || !song) return;
+  const overlay = document.getElementById('ppt-presentation-overlay');
+  const stage = document.getElementById('ppt-slide-stage');
+  const content = document.getElementById('ppt-slide-content');
+  if(!overlay || !stage || !content) return;
+
+  // (2026-07-13) apply per-line-mode zoom scale to auto-fit size; prev: 100% only
+  const fitPptSlideText = ()=>{
+    const availW = Math.max(120, stage.clientWidth - 20);
+    const availH = Math.max(100, stage.clientHeight - 12);
+    let lo = 20;
+    let hi = Math.max(40, Math.min(300, Math.floor(availH * 0.85)));
+    let best = lo;
+    while(lo <= hi){
+      const mid = (lo + hi) >> 1;
+      content.style.fontSize = mid + 'px';
+      if(content.scrollHeight <= availH && content.scrollWidth <= availW){
+        best = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    const zoomPct = getPptZoomPercent(state.pptLinesPerSlide);
+    content.style.fontSize = Math.max(14, Math.round(best * (zoomPct / 100))) + 'px';
+  };
+
+  let pptZoomSaveTimer = null;
+  const setPptZoomForCurrentMode = (nextPct)=>{
+    const clamped = Math.max(40, Math.min(150, Math.round(nextPct)));
+    const key = String(state.pptLinesPerSlide || 2);
+    if(!state.pptZooms || typeof state.pptZooms !== 'object') state.pptZooms = {};
+    state.pptZooms[key] = clamped;
+    const zoomValEl = document.getElementById('ppt-zoom-reset');
+    if(zoomValEl) zoomValEl.textContent = clamped + '%';
+    fitPptSlideText();
+    try{ localStorage.setItem('meta:pptZooms', JSON.stringify(state.pptZooms)); }catch(e){}
+    clearTimeout(pptZoomSaveTimer);
+    pptZoomSaveTimer = setTimeout(()=>{ Store.savePptZooms(state.pptZooms).catch(()=>{}); }, 300);
+  };
+
+  let slides = buildPptSlides(song, state.pptLinesPerSlide);
+  const syncSlideView = ()=>{
+    if(state.pptSlideIndex < 0) state.pptSlideIndex = 0;
+    if(state.pptSlideIndex >= slides.length) state.pptSlideIndex = slides.length - 1;
+    const slide = slides[state.pptSlideIndex];
+    const sectionEl = document.getElementById('ppt-section-badge');
+    const counterEl = document.getElementById('ppt-slide-counter');
+    const fillEl = document.getElementById('ppt-progress-fill');
+    const prevBtn = document.getElementById('ppt-prev-btn');
+    const nextBtn = document.getElementById('ppt-next-btn');
+
+    // (2026-07-13) enforce uppercase lyrics in PPT slides; prev: original case
+    content.innerHTML = slide.lines.map(l => `<div class="ppt-lyric-line">${escapeHtml(String(l).toUpperCase())}</div>`).join('');
+    if(sectionEl) sectionEl.textContent = slide.section || cleanSongTitleForDisplay(song.title);
+    if(counterEl) counterEl.textContent = `${state.pptSlideIndex + 1} / ${slides.length}`;
+    if(fillEl) fillEl.style.width = `${(slides.length > 1 ? ((state.pptSlideIndex + 1) / slides.length) * 100 : 100).toFixed(1)}%`;
+    if(prevBtn) prevBtn.disabled = state.pptSlideIndex <= 0;
+    if(nextBtn) nextBtn.disabled = state.pptSlideIndex >= slides.length - 1;
+    fitPptSlideText();
+  };
+  const goToSlide = (nextIdx)=>{
+    if(nextIdx < 0 || nextIdx >= slides.length || nextIdx === state.pptSlideIndex) return;
+    state.pptSlideIndex = nextIdx;
+    syncSlideView();
+  };
+
+  const exitPpt = ()=>{
+    if(window._pptKeyHandler){
+      window.removeEventListener('keydown', window._pptKeyHandler);
+      window._pptKeyHandler = null;
+    }
+    if(window._pptResizeHandler){
+      window.removeEventListener('resize', window._pptResizeHandler);
+      window._pptResizeHandler = null;
+    }
+    state.viewerDisplayMode = state.pptReturnMode || 'chords';
+    renderViewer();
+  };
+
+  fitPptSlideText();
+  window._pptResizeHandler = ()=>{ fitPptSlideText(); };
+  window.addEventListener('resize', window._pptResizeHandler);
+  if(document.fonts && document.fonts.ready){
+    document.fonts.ready.then(()=>{ if(state.viewerDisplayMode === 'ppt') fitPptSlideText(); }).catch(()=>{});
+  }
+
+  const zoomDownBtn = document.getElementById('ppt-zoom-down');
+  if(zoomDownBtn) zoomDownBtn.onclick = (e)=>{ e.stopPropagation(); setPptZoomForCurrentMode(getPptZoomPercent(state.pptLinesPerSlide) - 5); };
+  const zoomUpBtn = document.getElementById('ppt-zoom-up');
+  if(zoomUpBtn) zoomUpBtn.onclick = (e)=>{ e.stopPropagation(); setPptZoomForCurrentMode(getPptZoomPercent(state.pptLinesPerSlide) + 5); };
+  const zoomResetBtn = document.getElementById('ppt-zoom-reset');
+  if(zoomResetBtn) zoomResetBtn.onclick = (e)=>{ e.stopPropagation(); setPptZoomForCurrentMode(100); };
+
+  const linesPicker = document.getElementById('ppt-lines-picker');
+  if(linesPicker){
+    linesPicker.querySelectorAll('.ppt-lines-btn').forEach(btn => {
+      btn.onclick = (e)=>{
+        e.stopPropagation();
+        const n = parseInt(btn.dataset.pptLines, 10);
+        if(!(n >= 1 && n <= 4) || n === state.pptLinesPerSlide) return;
+        state.pptLinesPerSlide = n;
+        overlay.setAttribute('data-ppt-lines', String(n));
+        linesPicker.querySelectorAll('.ppt-lines-btn').forEach(b => {
+          b.classList.toggle('is-active', parseInt(b.dataset.pptLines, 10) === n);
+        });
+        const zoomValEl = document.getElementById('ppt-zoom-reset');
+        if(zoomValEl) zoomValEl.textContent = getPptZoomPercent(n) + '%';
+        slides = buildPptSlides(song, n);
+        state.pptSlideIndex = Math.min(state.pptSlideIndex, slides.length - 1);
+        syncSlideView();
+      };
+    });
+  }
+
+  const themeBtn = document.getElementById('ppt-theme-toggle');
+  if(themeBtn){
+    themeBtn.onclick = (e)=>{
+      e.stopPropagation();
+      state.pptTheme = state.pptTheme === 'light' ? 'dark' : 'light';
+      try{ localStorage.setItem('cbp_ppt_theme', state.pptTheme); }catch(err){}
+      overlay.setAttribute('data-ppt-theme', state.pptTheme);
+      themeBtn.innerHTML = `${pptThemeIcon(state.pptTheme)}<span>${state.pptTheme === 'dark' ? 'Light' : 'Dark'}</span>`;
+    };
+  }
+  const exitBtn = document.getElementById('ppt-exit-btn');
+  if(exitBtn) exitBtn.onclick = (e)=>{ e.stopPropagation(); exitPpt(); };
+  const prevBtn = document.getElementById('ppt-prev-btn');
+  if(prevBtn) prevBtn.onclick = (e)=>{ e.stopPropagation(); goToSlide(state.pptSlideIndex - 1); };
+  const nextBtn = document.getElementById('ppt-next-btn');
+  if(nextBtn) nextBtn.onclick = (e)=>{ e.stopPropagation(); goToSlide(state.pptSlideIndex + 1); };
+
+  // (2026-07-13) support touch, mouse drag & trackpad swipe in PPT; prev: touch only
+  let startX = 0, startY = 0, deltaX = 0, isSwiping = false, swipedRecently = false;
+  const markSwiped = ()=>{
+    swipedRecently = true;
+    setTimeout(()=>{ swipedRecently = false; }, 320);
+  };
+
+  overlay.addEventListener('touchstart', (e)=>{
+    if(e.target && e.target.closest('button')) return;
+    if(!e.touches || e.touches.length !== 1) return;
+    e.stopPropagation();
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    deltaX = 0;
+    isSwiping = true;
+  }, { passive: true });
+
+  overlay.addEventListener('touchmove', (e)=>{
+    if(!isSwiping || !e.touches || e.touches.length !== 1) return;
+    e.stopPropagation();
+    const dx = e.touches[0].clientX - startX;
+    const dy = e.touches[0].clientY - startY;
+    if(Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 6){
+      deltaX = dx;
+      if(e.cancelable) e.preventDefault();
+    }
+  }, { passive: false });
+
+  overlay.addEventListener('touchend', (e)=>{
+    if(!isSwiping) return;
+    e.stopPropagation();
+    isSwiping = false;
+    const endX = (e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0].clientX : (startX + deltaX);
+    const endY = (e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0].clientY : startY;
+    const finalDx = endX - startX;
+    const finalDy = endY - startY;
+    if(Math.abs(finalDx) > Math.abs(finalDy) && Math.abs(finalDx) >= 35){
+      markSwiped();
+      if(finalDx < 0) goToSlide(state.pptSlideIndex + 1);
+      else goToSlide(state.pptSlideIndex - 1);
+    }
+    deltaX = 0;
+  }, { passive: true });
+
+  let mouseStartX = 0, mouseStartY = 0, isMouseDragging = false;
+  stage.addEventListener('pointerdown', (e)=>{
+    if(e.pointerType === 'touch' || e.button !== 0) return;
+    mouseStartX = e.clientX;
+    mouseStartY = e.clientY;
+    isMouseDragging = true;
+  });
+  stage.addEventListener('pointerup', (e)=>{
+    if(!isMouseDragging || e.pointerType === 'touch') return;
+    isMouseDragging = false;
+    const dx = e.clientX - mouseStartX;
+    const dy = e.clientY - mouseStartY;
+    if(Math.abs(dx) > Math.abs(dy) && Math.abs(dx) >= 40){
+      markSwiped();
+      if(dx < 0) goToSlide(state.pptSlideIndex + 1);
+      else goToSlide(state.pptSlideIndex - 1);
+    }
+  });
+  stage.addEventListener('pointercancel', ()=>{ isMouseDragging = false; });
+
+  let lastWheelSwipeAt = 0;
+  overlay.addEventListener('wheel', (e)=>{
+    if(Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 25){
+      e.preventDefault();
+      const now = Date.now();
+      if(now - lastWheelSwipeAt < 260) return;
+      lastWheelSwipeAt = now;
+      if(e.deltaX > 0) goToSlide(state.pptSlideIndex + 1);
+      else goToSlide(state.pptSlideIndex - 1);
+    }
+  }, { passive: false });
+
+  stage.onclick = (e)=>{
+    if(swipedRecently) return;
+    const rect = stage.getBoundingClientRect();
+    const xRatio = (e.clientX - rect.left) / Math.max(1, rect.width);
+    if(xRatio < 0.3) goToSlide(state.pptSlideIndex - 1);
+    else if(xRatio > 0.7) goToSlide(state.pptSlideIndex + 1);
+  };
+
+  window._pptKeyHandler = (e)=>{
+    if(state.viewerDisplayMode !== 'ppt') return;
+    if(e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown'){
+      e.preventDefault();
+      goToSlide(state.pptSlideIndex + 1);
+    } else if(e.key === 'ArrowLeft' || e.key === 'PageUp'){
+      e.preventDefault();
+      goToSlide(state.pptSlideIndex - 1);
+    } else if(e.key === 'Escape'){
+      e.preventDefault();
+      exitPpt();
+    }
+  };
+  window.addEventListener('keydown', window._pptKeyHandler);
+}
+
 function renderViewer(){
   stopActiveMelodyPlayback();
   const song = currentSong();
   if(!song){ state.view='list'; return renderListView(); }
   const isSameSong = state.lastViewerSongId === song.id;
+  // (2026-07-13) reset display mode on song change; prev: no display mode
+  if(!isSameSong){
+    state.viewerDisplayMode = 'chords';
+    state.pptReturnMode = 'chords';
+    state.pptSlideIndex = 0;
+  }
   const existingChartWrap = document.getElementById('chart-wrap');
   // (2026-07-13) restore song scroll when swiping back; prev: reset to 0
   const savedScroll = (state.songScrollPositions && state.songScrollPositions[song.id] != null) ? state.songScrollPositions[song.id] : 0;
@@ -5654,8 +6060,8 @@ function renderViewer(){
   const prevSidebarScroll = existingSidebarList ? existingSidebarList.scrollTop : 0;
   const fontSize = song.viewerFontSize || 15;
   const scrollSpeed = song.viewerScrollSpeed || 30;
-  // (2026-07-13) mark inactive when modal/overlay open; prev: checked delay only
-  const isOverlayOpen = !!(state.modal || document.getElementById('modal-bg') || document.querySelector('.modal-backdrop, .modal, .sidebar-backdrop'));
+  // (2026-07-13) pause autoscroll when ppt or modal open; prev: modal only
+  const isOverlayOpen = !!(state.viewerDisplayMode === 'ppt' || state.modal || document.getElementById('modal-bg') || document.querySelector('.modal-backdrop, .modal, .sidebar-backdrop'));
   const isActivelyScrolling = state.autoscroll && !isOverlayOpen && performance.now() >= autoscrollTopDelayUntil;
 
   const beatsPerBar = parseInt((song.timeSig||'4/4').split('/')[0]) || 4;
@@ -5763,6 +6169,8 @@ function renderViewer(){
       ${renderStickyPianoHtml()}
     </div>
     ${modalHtml()}
+    <!-- (2026-07-13) mount full-screen PPT overlay in viewer; prev: none -->
+    ${renderPptOverlayHtml(song)}
   `;
 
   const chartWrap = document.getElementById('chart-wrap');
@@ -5834,12 +6242,23 @@ function renderViewer(){
 
   // (2026-07-13) preserve sidebar scroll & remove autojump; prev: scrollIntoView
   const newSidebarList = document.getElementById('viewer-sidebar-list');
-  if(newSidebarList && prevSidebarScroll > 0){
-    newSidebarList.scrollTop = prevSidebarScroll;
+  if(newSidebarList){
+    if(prevSidebarScroll > 0) newSidebarList.scrollTop = prevSidebarScroll;
+    // (2026-07-13) blur sidebar search when scrolling list; prev: stayed focused
+    newSidebarList.addEventListener('scroll', ()=>{
+      if(document.activeElement && document.activeElement.id === 'viewer-sidebar-search'){
+        document.activeElement.blur();
+      }
+    }, { passive: true });
   }
 
   document.getElementById('btn-back').onclick = ()=>{
     stopAutoscroll(); stopMetronome();
+    // (2026-07-13) reset display mode & ppt listeners on exit; prev: key only
+    if(window._pptKeyHandler){ window.removeEventListener('keydown', window._pptKeyHandler); window._pptKeyHandler = null; }
+    if(window._pptResizeHandler){ window.removeEventListener('resize', window._pptResizeHandler); window._pptResizeHandler = null; }
+    state.viewerDisplayMode = 'chords';
+    state.pptSlideIndex = 0;
     if(state.cameFromSetlistId){
       state.currentSetlistId = state.cameFromSetlistId;
       state.cameFromSetlistId = null;
@@ -6325,6 +6744,8 @@ function renderViewer(){
       handleCornerCheck(e.clientX, e.clientY);
     });
   }
+  // (2026-07-13) bind PPT overlay swipe & button events; prev: none
+  wirePptOverlayEvents(song);
 }
 
 /* ---------------- AUTOSCROLL (smooth, rAF-based) ---------------- */
@@ -8929,6 +9350,15 @@ function modalHtml(){
               <button class="btn btn-danger" id="adj-delete" style="flex:1;min-height:40px;font-size:13px;font-weight:700;">Delete Song</button>
             `}
           </div>
+          <!-- (2026-07-13) add Chords/Lyrics/PPT mode toggle in adjustments; prev: none -->
+          <div class="field" style="margin-bottom:12px;">
+            <label style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--text-dim);text-transform:uppercase;margin-bottom:6px;display:block;">Display Mode</label>
+            <div class="display-mode-segmented" id="adj-display-mode-group">
+              <button type="button" class="display-mode-btn ${state.viewerDisplayMode==='chords'?'is-active':''}" id="adj-mode-chords" data-mode="chords">Chords</button>
+              <button type="button" class="display-mode-btn ${state.viewerDisplayMode==='lyrics'?'is-active':''}" id="adj-mode-lyrics" data-mode="lyrics">Lyrics</button>
+              <button type="button" class="display-mode-btn ${state.viewerDisplayMode==='ppt'?'is-active':''}" id="adj-mode-ppt" data-mode="ppt">PPT</button>
+            </div>
+          </div>
           <div class="field" style="margin-bottom:12px;">
             <label style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--text-dim);text-transform:uppercase;margin-bottom:6px;display:block;">Metronome (${song.tempo||90} BPM)</label>
             <div style="display:flex;align-items:center;gap:10px;">
@@ -10177,6 +10607,39 @@ function wireModal(){
         }
       });
     };
+  }
+  // (2026-07-13) wire display mode toggles in adjustments modal; prev: none
+  const adjModeGroup = document.getElementById('adj-display-mode-group');
+  if(adjModeGroup){
+    adjModeGroup.querySelectorAll('.display-mode-btn').forEach(btn => {
+      btn.onclick = (e)=>{
+        e.preventDefault();
+        const mode = btn.dataset.mode;
+        const song = getAdjSong();
+        if(!song || !mode) return;
+        if(mode === 'ppt'){
+          state.pptReturnMode = state.viewerDisplayMode === 'lyrics' ? 'lyrics' : 'chords';
+          state.viewerDisplayMode = 'ppt';
+          // (2026-07-13) default to 2L mode when opening PPT; prev: kept last mode
+          state.pptLinesPerSlide = 2;
+          state.pptSlideIndex = 0;
+          stopAutoscroll();
+          // (2026-07-13) open PPT instantly without modal transition; prev: closeActiveModal
+          state.modal = null;
+          renderViewer();
+          return;
+        }
+        state.viewerDisplayMode = mode;
+        adjModeGroup.querySelectorAll('.display-mode-btn').forEach(b => {
+          b.classList.toggle('is-active', b.dataset.mode === mode);
+        });
+        const chartWrap = document.getElementById('chart-wrap');
+        const prevTop = chartWrap ? chartWrap.scrollTop : 0;
+        const chartContent = document.getElementById('chart-scroll-content');
+        if(chartContent) chartContent.innerHTML = renderSongSheetContent(song, false);
+        if(chartWrap && prevTop > 0) chartWrap.scrollTop = prevTop;
+      };
+    });
   }
   // (2026-07-13) instant transpose without modal reload; prev: awaited save & render
   let saveAdjSongDebounce = null;
