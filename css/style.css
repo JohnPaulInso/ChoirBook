@@ -393,6 +393,46 @@ body.theme-light .masspart-cue-card .cue-piano-wrap{border-bottom:none !importan
 body.theme-light .sticky-piano-tray{background:rgba(241,245,249,0.96);border-top-color:#cbd5e1;}
 body.theme-light .sticky-piano-key.white-key{background:#ffffff;border-color:#94a3b8;color:#0f172a;}
 body.theme-light .sticky-piano-key.black-key{background:#1e293b;border-color:#0f172a;color:#ffffff;}
+/* (2026-07-13) style sticky tray mode toggle & chord player pads; prev: piano only */
+/* Tray mode toggle pills */
+.sticky-tray-mode-group{display:inline-flex;align-items:center;gap:2px;padding:2px;border-radius:10px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);}
+.sticky-tray-mode-btn{appearance:none;border:none;background:transparent;color:var(--text-dim);font-family:inherit;font-size:10.5px;font-weight:800;letter-spacing:0.4px;text-transform:uppercase;padding:4px 9px;border-radius:8px;cursor:pointer;white-space:nowrap;}
+.sticky-tray-mode-btn.is-active{background:var(--accent);color:#111318;}
+body.theme-light .sticky-tray-mode-group{background:rgba(15,23,42,0.06);border-color:rgba(15,23,42,0.14);}
+/* Scrollable square chord pads */
+.chord-player-pads{display:flex;align-items:center;gap:8px;overflow-x:auto;padding:2px 0 4px;min-height:62px;user-select:none;-webkit-user-select:none;-webkit-overflow-scrolling:touch;touch-action:pan-x;scrollbar-width:none;}
+.chord-player-pads::-webkit-scrollbar{display:none;}
+.chord-player-pad{appearance:none;flex:0 0 auto;width:58px;height:58px;border-radius:12px;border:1.5px solid rgba(255,255,255,0.16);background:var(--bg-elev2);color:var(--chord);font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;text-align:center;padding:4px;cursor:pointer;box-shadow:0 3px 8px rgba(0,0,0,0.35);touch-action:manipulation;}
+.chord-player-pad:active,.chord-player-pad.is-active{background:var(--chord);color:#111318;border-color:var(--chord);transform:scale(0.95);}
+.chord-player-empty{font-size:12px;color:var(--text-dim);font-weight:600;padding:8px 4px;}
+body.theme-light .chord-player-pad{background:#ffffff;border-color:#cbd5e1;color:#b45309;box-shadow:0 2px 6px rgba(15,23,42,0.08);}
+body.theme-light .chord-player-pad:active,body.theme-light .chord-player-pad.is-active{background:var(--chord);color:#111318;border-color:var(--chord);}
+/* (2026-07-13) style Follow-Song chord stepper, tap toggle & chart highlight; prev: pads only */
+/* Chord player sub-controls */
+.chord-sub-controls{display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap;}
+.chord-tap-mode-btn{appearance:none;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.07);color:var(--text-dim);font-family:inherit;font-size:10px;font-weight:800;letter-spacing:0.3px;text-transform:uppercase;padding:4px 8px;border-radius:8px;cursor:pointer;white-space:nowrap;}
+.chord-tap-mode-btn.is-diagram{border-color:var(--accent);color:var(--accent);background:rgba(224,142,66,0.12);}
+body.theme-light .chord-tap-mode-btn{background:rgba(15,23,42,0.06);border-color:rgba(15,23,42,0.14);}
+/* Follow-song step player bar */
+.chord-follow-bar{display:flex;align-items:center;gap:8px;min-height:62px;padding:2px 0 4px;user-select:none;-webkit-user-select:none;}
+.chord-follow-util-btn{appearance:none;flex:0 0 auto;width:46px;height:56px;border-radius:12px;border:1.5px solid rgba(255,255,255,0.14);background:var(--bg-elev2);color:var(--text);font-size:16px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;}
+.chord-follow-util-btn:active{background:var(--accent);color:#111318;border-color:var(--accent);}
+.chord-follow-util-btn:disabled{opacity:0.28;cursor:default;}
+/* (2026-07-13) style CURRENT beat-tap & NEXT chord buttons in Follow bar; prev: single next */
+.chord-follow-cur-btn{appearance:none;flex:0 0 auto;min-width:104px;height:56px;padding:4px 14px;border-radius:14px;border:2px solid var(--chord);background:rgba(234,179,8,0.2);color:var(--chord);font-family:'JetBrains Mono',monospace;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.05;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,0.35);touch-action:manipulation;}
+.chord-follow-cur-btn:active,.chord-follow-cur-btn.is-active{background:var(--chord);color:#111318;transform:scale(0.96);}
+.chord-follow-next-btn{appearance:none;flex:0 0 auto;min-width:96px;height:56px;padding:4px 14px;border-radius:14px;border:1.5px solid var(--accent);background:rgba(96,165,250,0.14);color:var(--text);font-family:'JetBrains Mono',monospace;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.05;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,0.28);touch-action:manipulation;}
+.chord-follow-next-btn:active,.chord-follow-next-btn.is-active{background:var(--accent);color:#111318;transform:scale(0.96);}
+.chord-follow-next-lbl{font-family:inherit;font-size:9px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;opacity:0.75;}
+.chord-follow-next-chord{font-size:19px;font-weight:900;margin-top:1px;}
+.chord-follow-queue{flex:1;display:flex;align-items:center;gap:6px;overflow-x:auto;scrollbar-width:none;min-width:0;}
+.chord-follow-queue::-webkit-scrollbar{display:none;}
+.chord-follow-q-pill{appearance:none;flex:0 0 auto;min-width:46px;height:44px;padding:0 10px;border-radius:10px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:var(--text-dim);font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;}
+.chord-follow-q-pill:active{background:var(--chord);color:#111318;}
+body.theme-light .chord-follow-util-btn,body.theme-light .chord-follow-q-pill{background:#ffffff;border-color:#cbd5e1;color:#0f172a;}
+body.theme-light .chord-follow-next-btn{background:rgba(234,179,8,0.2);color:#92400e;border-color:#d97706;}
+/* Active follow chord highlight on sheet */
+.chord-tok.is-chord-cursor{background:var(--chord);color:#111318 !important;border-radius:5px;padding:0 4px;box-shadow:0 0 0 2px rgba(234,179,8,0.35);}
 .masspart-cue-body{display:flex;flex-direction:column;gap:10px;font-size:12.5px;line-height:1.45;}
 .cue-item{background:transparent;border:none;padding:0 0 8px 0;border-bottom:1px solid rgba(255,255,255,0.04);display:flex;flex-direction:column;gap:5px;}
 .cue-item:last-child{padding-bottom:0;border-bottom:none;}

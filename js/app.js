@@ -1320,13 +1320,37 @@ const PIANO_SAMPLES = [
   { semi: 21,  file: 'A5' },  { semi: 24,  file: 'C6' }
 ];
 const pianoSampleBuffers = {};
+const pianoSampleOffsets = {};
 let pianoSamplesPreloadStarted = false;
+
+// (2026-07-13) align all piano samples to exact hammer peak onset (25% peak); prev: 14%
+function findAudioStartOffset(audioBuffer){
+  try{
+    const data = audioBuffer.getChannelData(0);
+    const scanLen = Math.min(data.length, Math.floor(audioBuffer.sampleRate * 0.4));
+    let peak = 0;
+    for(let i = 0; i < scanLen; i++){
+      const v = Math.abs(data[i]);
+      if(v > peak) peak = v;
+    }
+    const thresh = Math.max(0.05, peak * 0.25);
+    for(let i = 0; i < scanLen; i++){
+      if(Math.abs(data[i]) >= thresh){
+        return Math.max(0, (i - Math.floor(audioBuffer.sampleRate * 0.004)) / audioBuffer.sampleRate);
+      }
+    }
+  }catch(e){}
+  return 0;
+}
 
 function ensurePianoAudioBus(){
   if(!pianoAudioCtx || pianoAudioCtx.state === 'closed'){
-    pianoAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    try{ pianoAudioCtx = new Ctx({ latencyHint: 'interactive' }); }
+    catch(e){ pianoAudioCtx = new Ctx(); }
     pianoMasterBus = null;
     Object.keys(pianoSampleBuffers).forEach(k => delete pianoSampleBuffers[k]);
+    Object.keys(pianoSampleOffsets).forEach(k => delete pianoSampleOffsets[k]);
     pianoSamplesPreloadStarted = false;
   }
   if(pianoAudioCtx.state === 'suspended') pianoAudioCtx.resume();
@@ -1369,7 +1393,7 @@ function preloadPianoSamples(){
     fetch(`./audio/piano/${s.file}.mp3`)
       .then(r => r.ok ? r.arrayBuffer() : null)
       .then(buf => buf ? ctx.decodeAudioData(buf) : null)
-      .then(decoded => { if(decoded) pianoSampleBuffers[s.file] = decoded; })
+      .then(decoded => { if(decoded){ pianoSampleBuffers[s.file] = decoded; pianoSampleOffsets[s.file] = findAudioStartOffset(decoded); } })
       .catch(()=>{});
   });
 }
@@ -1400,7 +1424,7 @@ function playPianoNote(noteIdx, volumeBoost = 1){
       g.gain.exponentialRampToValueAtTime(0.001, now + 1.15);
       src.connect(g);
       g.connect(pianoMasterBus);
-      src.start(now);
+      src.start(now, pianoSampleOffsets[best.file] || 0);
       src.stop(now + 1.2);
       return;
     }
@@ -1436,6 +1460,72 @@ function playPianoNote(noteIdx, volumeBoost = 1){
     });
   }catch(e){}
 }
+// (2026-07-13) voiced Salamander chord player with medium sustain; prev: single note only
+let activeChordVoices = [];
+let lastChordTriggerMs = 0;
+function playPianoChord(chordStr){
+  try{
+    // (2026-07-13) guard against accidental double-trigger within 45ms; prev: unguarded
+    const nowMs = performance.now();
+    if(nowMs - lastChordTriggerMs < 45) return;
+    lastChordTriggerMs = nowMs;
+    const parsed = parseChordToken(chordStr);
+    if(!parsed) return;
+    ensurePianoAudioBus();
+    const now = pianoAudioCtx.currentTime;
+    // Gently fade out previous chord so progressions stay clean
+    activeChordVoices.forEach(v => {
+      try{
+        v.gain.gain.cancelScheduledValues(now);
+        v.gain.gain.setValueAtTime(Math.max(0.001, v.gain.gain.value || 0.4), now);
+        v.gain.gain.exponentialRampToValueAtTime(0.0008, now + 0.045);
+        v.src.stop(now + 0.055);
+      }catch(e){}
+    });
+    activeChordVoices = [];
+
+    const rootPc = noteIndex(parsed.root, parsed.acc);
+    const intervals = QUALITY_INTERVALS[parsed.quality] !== undefined ? QUALITY_INTERVALS[parsed.quality] : QUALITY_INTERVALS[''];
+    // (2026-07-13) clean closed voicing without doubled root flam; prev: doubled root
+    const notes = [];
+    if(parsed.bassRoot){
+      const bassPc = noteIndex(parsed.bassRoot, parsed.bassAcc || '');
+      notes.push(bassPc - 12);
+    }
+    const baseRoot = rootPc >= 8 ? (rootPc - 12) : rootPc;
+    intervals.forEach(iv => {
+      const n = baseRoot + iv;
+      if(!notes.includes(n)) notes.push(n);
+    });
+    const perNoteGain = Math.min(0.88, 2.2 / Math.max(2, notes.length));
+    // (2026-07-13) zero-latency simultaneous chord attack with trimmed MP3 offset; prev: 14ms strum
+    notes.forEach((noteIdx) => {
+      let best = PIANO_SAMPLES[0], bestDist = Math.abs(noteIdx - PIANO_SAMPLES[0].semi);
+      for(let j = 1; j < PIANO_SAMPLES.length; j++){
+        const d = Math.abs(noteIdx - PIANO_SAMPLES[j].semi);
+        if(d < bestDist){ best = PIANO_SAMPLES[j]; bestDist = d; }
+      }
+      const sampleBuf = pianoSampleBuffers[best.file];
+      if(sampleBuf){
+        const src = pianoAudioCtx.createBufferSource();
+        src.buffer = sampleBuf;
+        src.playbackRate.value = Math.pow(2, (noteIdx - best.semi) / 12);
+        const g = pianoAudioCtx.createGain();
+        g.gain.setValueAtTime(perNoteGain, now);
+        g.gain.setValueAtTime(perNoteGain, now + 0.95);
+        g.gain.exponentialRampToValueAtTime(0.001, now + 1.9);
+        src.connect(g);
+        g.connect(pianoMasterBus);
+        src.start(now, pianoSampleOffsets[best.file] || 0);
+        src.stop(now + 1.95);
+        activeChordVoices.push({ src, gain: g });
+      } else {
+        playPianoNote(noteIdx, 0.72);
+      }
+    });
+  }catch(e){}
+}
+
 // (2026-07-13) pre-warm Salamander piano samples on first tap; prev: lazy on play
 (function(){
   const warmPiano = ()=>{
@@ -1751,6 +1841,13 @@ const state = {
   viewerSidebarCollapsed: (function(){ try{ return localStorage.getItem('cbp_viewer_sidebar_collapsed') === 'true'; }catch(e){ return false; } })(),
   // (2026-07-13) persistent sticky piano visibility state; prev: none
   showStickyPiano: (function(){ try{ return localStorage.getItem('ui:showStickyPiano') === '1'; }catch(e){ return false; } })(),
+  // (2026-07-13) sticky tray mode, follow/pads & tap action; prev: piano only
+  stickyTrayMode: (function(){ try{ return localStorage.getItem('ui:stickyTrayMode') === 'chords' ? 'chords' : 'piano'; }catch(e){ return 'piano'; } })(),
+  chordPlayerView: (function(){ try{ return localStorage.getItem('ui:chordPlayerView') === 'pads' ? 'pads' : 'follow'; }catch(e){ return 'follow'; } })(),
+  chordTapAction: (function(){ try{ return localStorage.getItem('ui:chordTapAction') === 'diagram' ? 'diagram' : 'play'; }catch(e){ return 'play'; } })(),
+  chordFollowIndex: 0,
+  // (2026-07-13) persist per-song chord follow index across song switches; prev: reset -1
+  chordFollowPositions: (function(){ try{ const r = localStorage.getItem('ui:chordFollowPositions'); const o = r ? JSON.parse(r) : {}; return (o && typeof o === 'object') ? o : {}; }catch(e){ return {}; } })(),
   currentId: null,
   editingDraft: null,
   // (2026-07-13) track editor source view to return correctly; prev: forced viewer
@@ -5044,7 +5141,38 @@ function getCueSemis(){
   return (getCueKeyIdx() - 2 + 12) % 12;
 }
 // (2026-07-13) sticky bottom piano A3-G5 html renderer; prev: none
-function renderStickyPianoHtml(){
+// (2026-07-13) sort unique song chords chromatically C-B grouped by root; prev: song order
+function getUniqueSongChordsInOrder(song){
+  if(!song || !song.body) return [];
+  const offset = song.transposeOffset || 0;
+  const effKey = getEffectiveSongKey(song);
+  const preferFlat = FLAT_KEYS.has(transposeKeyLabel(effKey, offset));
+  const body = offset ? transposeBody(song.body, offset, preferFlat) : song.body;
+  const parsedList = extractChordsFromBody(body);
+  const seen = new Set();
+  const items = [];
+  for(const c of parsedList){
+    const label = c.root + (c.acc || '') + (c.quality || '') + (c.bassRoot ? ('/' + c.bassRoot + (c.bassAcc || '')) : '');
+    if(!seen.has(label)){
+      seen.add(label);
+      const pc = noteIndex(c.root, c.acc || '');
+      const q = c.quality || '';
+      const qRank = q === '' ? 0 : (q === 'm' ? 1 : (q === '7' ? 2 : (q === 'm7' ? 3 : (q === 'maj7' ? 4 : 5))));
+      const hasSlash = c.bassRoot ? 1 : 0;
+      items.push({ label, pc, qRank, hasSlash, q });
+    }
+  }
+  items.sort((a, b) => (a.pc - b.pc) || (a.hasSlash - b.hasSlash) || (a.qRank - b.qRank) || a.q.localeCompare(b.q) || a.label.localeCompare(b.label));
+  return items.map(it => it.label);
+}
+function renderChordPlayerPadsHtml(song){
+  const chords = getUniqueSongChordsInOrder(song);
+  if(chords.length === 0){
+    return '<div class="chord-player-empty">No chords detected in this song.</div>';
+  }
+  return chords.map(ch => `<button type="button" class="chord-player-pad" data-chord-pad="${escapeHtml(ch)}">${escapeHtml(ch)}</button>`).join('');
+}
+function renderStickyPianoHtml(song){
   const preferFlat = getCueAccidentalsPref() === 'flats';
   const whiteKeys = [
     { idx: -3, label: 'A3', name: 'A' },
@@ -5077,16 +5205,42 @@ function renderStickyPianoHtml(){
   return `
     <div class="sticky-piano-tray ${state.showStickyPiano ? 'is-visible' : ''}" id="sticky-piano-tray">
       <div class="sticky-piano-header">
-        <div class="sticky-piano-title-wrap">
-          <span style="font-size:12px;display:flex;align-items:center;color:var(--accent);">&#9835;</span>
-          <span class="sticky-piano-title">PIANO (A3 &ndash; G5)</span>
-          <span class="sticky-piano-badge" id="sticky-piano-readout">Tap key to play</span>
+        <div class="sticky-piano-title-wrap" style="flex-wrap:wrap;">
+          <div class="sticky-tray-mode-group" id="sticky-tray-mode-group">
+            <button type="button" class="sticky-tray-mode-btn ${state.stickyTrayMode!=='chords'?'is-active':''}" data-tray-mode="piano">Piano (A3&ndash;G5)</button>
+            <button type="button" class="sticky-tray-mode-btn ${state.stickyTrayMode==='chords'?'is-active':''}" data-tray-mode="chords">Chord Player</button>
+          </div>
+          <!-- Chord player sub-controls -->
+          <div class="chord-sub-controls" id="chord-sub-controls" style="display:${state.stickyTrayMode==='chords'?'inline-flex':'none'};">
+            <div class="sticky-tray-mode-group" id="chord-view-mode-group">
+              <button type="button" class="sticky-tray-mode-btn ${state.chordPlayerView!=='pads'?'is-active':''}" data-cp-view="follow">Follow</button>
+              <button type="button" class="sticky-tray-mode-btn ${state.chordPlayerView==='pads'?'is-active':''}" data-cp-view="pads">All Chords</button>
+            </div>
+            <button type="button" class="chord-tap-mode-btn ${state.chordTapAction==='diagram'?'is-diagram':''}" id="btn-chord-tap-mode" title="Toggle tapping chords on lyrics between Play Audio and Show Diagram">${state.chordTapAction==='diagram'?'Tap: Diagram':'Tap: Play'}</button>
+          </div>
+          <span class="sticky-piano-badge" id="sticky-piano-readout">${state.stickyTrayMode==='chords'?'Ready':'Tap key'}</span>
         </div>
-        <button type="button" class="icon-btn sticky-piano-close-btn" id="btn-close-sticky-piano" title="Close Piano">&times;</button>
+        <button type="button" class="icon-btn sticky-piano-close-btn" id="btn-close-sticky-piano" title="Close">&times;</button>
       </div>
-      <div class="sticky-piano-keyboard">
+      <div class="sticky-piano-keyboard" id="sticky-piano-keyboard" style="display:${state.stickyTrayMode==='chords'?'none':'flex'};">
         ${whiteKeys.map(k=>`<button type="button" class="sticky-piano-key white-key" data-sticky-note="${k.idx}" data-note-label="${k.label}"><span>${k.name}</span></button>`).join('')}
         ${blackKeys.map(k=>`<button type="button" class="sticky-piano-key black-key" data-sticky-note="${k.idx}" data-note-label="${k.label}" style="left:${k.left};"><span>${k.name}</span></button>`).join('')}
+      </div>
+      <!-- Follow-song step player bar -->
+      <div class="chord-follow-bar" id="chord-follow-bar" style="display:${(state.stickyTrayMode==='chords' && state.chordPlayerView!=='pads')?'flex':'none'};">
+        <button type="button" class="chord-follow-util-btn" id="chord-follow-prev" title="Previous chord">&#8592;</button>
+        <button type="button" class="chord-follow-cur-btn" id="chord-follow-current" title="Play current chord (tap as many beats as needed)">
+          <span class="chord-follow-next-lbl">CURRENT</span>
+          <span class="chord-follow-next-chord" id="chord-follow-cur-label">&mdash;</span>
+        </button>
+        <button type="button" class="chord-follow-next-btn" id="chord-follow-next" title="Advance and play next chord">
+          <span class="chord-follow-next-lbl">NEXT &#8594;</span>
+          <span class="chord-follow-next-chord" id="chord-follow-next-label">&mdash;</span>
+        </button>
+        <div class="chord-follow-queue" id="chord-follow-queue"></div>
+      </div>
+      <div class="chord-player-pads" id="chord-player-pads" style="display:${(state.stickyTrayMode==='chords' && state.chordPlayerView==='pads')?'flex':'none'};">
+        ${renderChordPlayerPadsHtml(song)}
       </div>
     </div>`;
 }
@@ -6429,6 +6583,9 @@ function renderViewer(){
   const isSameSong = state.lastViewerSongId === song.id;
   // (2026-07-13) preserve PPT & restore song slide/lines on PPT switch; prev: reset
   if(!isSameSong){
+    // (2026-07-13) restore per-song chord player follow position; prev: reset -1
+    const savedFollowIdx = state.chordFollowPositions && state.chordFollowPositions[song.id];
+    state.chordFollowIndex = (typeof savedFollowIdx === 'number' && savedFollowIdx >= 0) ? savedFollowIdx : 0;
     if(state.pptKeepOpenOnSwitch){
       state.pptKeepOpenOnSwitch = false;
       state.viewerDisplayMode = 'ppt';
@@ -6556,7 +6713,7 @@ function renderViewer(){
         <span class="speed-slider-val" id="speed-slider-val">${scrollSpeed}</span>
       </div>
       <!-- (2026-07-13) sticky piano tray at bottom of viewer; prev: none -->
-      ${renderStickyPianoHtml()}
+      ${renderStickyPianoHtml(song)}
     </div>
     ${modalHtml()}
     <!-- (2026-07-13) mount full-screen PPT overlay in viewer; prev: none -->
@@ -7019,9 +7176,54 @@ function renderViewer(){
     };
   }
 
-  document.querySelectorAll('.chord-tok').forEach(el=>{
-    el.onclick = ()=>{ state.modal = {type:'chord', chord: el.dataset.chord}; renderViewer(); };
-  });
+  // (2026-07-13) fire Tap:Play on touchstart/mousedown for 0ms latency; prev: onclick release
+  const wireChartChordClicks = ()=>{
+    const chartContent = document.getElementById('chart-scroll-content');
+    const chartToks = chartContent ? Array.from(chartContent.querySelectorAll('.chord-tok')) : [];
+    const isDirectPlay = ()=> !!(state.showStickyPiano && state.stickyTrayMode === 'chords' && state.chordTapAction !== 'diagram');
+    document.querySelectorAll('.chord-tok').forEach(el => {
+      let playedOnDown = false;
+      const playNow = (e)=>{
+        const ch = el.dataset.chord;
+        if(!ch) return;
+        if(e && e.stopPropagation) e.stopPropagation();
+        const idx = chartToks.indexOf(el);
+        if(idx >= 0 && typeof window._jumpChordFollowTo === 'function'){
+          window._jumpChordFollowTo(idx, true);
+        } else {
+          playPianoChord(ch);
+          const r = document.getElementById('sticky-piano-readout');
+          if(r) r.textContent = ch;
+        }
+      };
+      el.ontouchstart = (e)=>{
+        if(!isDirectPlay()) return;
+        playedOnDown = true;
+        playNow(e);
+      };
+      el.onmousedown = (e)=>{
+        if(!isDirectPlay() || e.button !== 0) return;
+        if(playedOnDown){ playedOnDown = false; return; }
+        playedOnDown = true;
+        playNow(e);
+      };
+      el.onclick = (e)=>{
+        const ch = el.dataset.chord;
+        if(!ch) return;
+        if(isDirectPlay()){
+          if(e && e.stopPropagation) e.stopPropagation();
+          if(playedOnDown){ playedOnDown = false; return; }
+          playNow(e);
+          return;
+        }
+        playedOnDown = false;
+        state.modal = { type: 'chord', chord: ch };
+        renderViewer();
+      };
+    });
+  };
+  wireChartChordClicks();
+  window._wireChartChordClicks = wireChartChordClicks;
   document.querySelectorAll('[data-staff-note]').forEach(el=>{
     el.onclick = ()=>{
       const raw = el.dataset.staffNote || '';
@@ -7081,7 +7283,117 @@ function renderViewer(){
   // (2026-07-13) wire sticky piano toggle, key audio, and corner triple tap; prev: none
   const btnToggleStickyPiano = document.getElementById('btn-toggle-sticky-piano');
   const btnCloseStickyPiano = document.getElementById('btn-close-sticky-piano');
-  const toggleStickyPiano = ()=>{
+  // (2026-07-13) wire Follow-Song stepper, All Chords pads & Tap Play/Diagram; prev: pads only
+  const getChartChordTokens = ()=>{
+    const cc = document.getElementById('chart-scroll-content');
+    return cc ? Array.from(cc.querySelectorAll('.chord-tok')) : [];
+  };
+  // (2026-07-13) keep CURRENT chord playable on beat until NEXT is tapped; prev: auto-advance
+  const syncChordFollowUi = ()=>{
+    const toks = getChartChordTokens();
+    if(toks.length > 0 && state.chordFollowIndex < 0) state.chordFollowIndex = 0;
+    if(toks.length > 0 && state.chordFollowIndex >= toks.length) state.chordFollowIndex = toks.length - 1;
+    const curIdx = state.chordFollowIndex;
+    toks.forEach((el, i) => el.classList.toggle('is-chord-cursor', state.showStickyPiano && state.stickyTrayMode === 'chords' && i === curIdx));
+    const nextIdx = curIdx + 1;
+    const curLbl = document.getElementById('chord-follow-cur-label');
+    const nextLbl = document.getElementById('chord-follow-next-label');
+    const prevBtn = document.getElementById('chord-follow-prev');
+    const curBtn = document.getElementById('chord-follow-current');
+    const nextBtn = document.getElementById('chord-follow-next');
+    const qWrap = document.getElementById('chord-follow-queue');
+    if(curLbl){
+      curLbl.textContent = toks.length > 0 ? (toks[curIdx].dataset.chord || '—') : 'NONE';
+    }
+    if(nextLbl){
+      if(toks.length === 0) nextLbl.textContent = '—';
+      else if(nextIdx < toks.length) nextLbl.textContent = toks[nextIdx].dataset.chord || '—';
+      else nextLbl.textContent = toks[0].dataset.chord + ' ↺';
+    }
+    if(prevBtn) prevBtn.disabled = toks.length === 0 || curIdx <= 0;
+    if(curBtn) curBtn.disabled = toks.length === 0;
+    if(nextBtn) nextBtn.disabled = toks.length === 0;
+    if(qWrap){
+      const upcoming = [];
+      for(let k = 2; k <= 5; k++){
+        const idx = curIdx + k;
+        if(idx >= 0 && idx < toks.length){
+          upcoming.push({ idx, chord: toks[idx].dataset.chord });
+        }
+      }
+      qWrap.innerHTML = upcoming.map(u => `<button type="button" class="chord-follow-q-pill" data-follow-jump="${u.idx}">${escapeHtml(u.chord)}</button>`).join('');
+      qWrap.querySelectorAll('.chord-follow-q-pill').forEach(qb => {
+        let qTouched = false;
+        const doJump = (e)=>{
+          if(e && e.stopPropagation) e.stopPropagation();
+          const idx = parseInt(qb.dataset.followJump, 10);
+          if(!isNaN(idx)) jumpChordFollowTo(idx, true);
+        };
+        qb.addEventListener('touchstart', (e)=>{ qTouched = true; e.stopPropagation(); if(e.cancelable) e.preventDefault(); doJump(e); }, { passive: false });
+        qb.addEventListener('mousedown', (e)=>{ e.stopPropagation(); if(qTouched){ qTouched = false; return; } doJump(e); });
+      });
+    }
+  };
+  const jumpChordFollowTo = (idx, shouldPlay)=>{
+    const toks = getChartChordTokens();
+    if(toks.length === 0) return;
+    const clamped = ((idx % toks.length) + toks.length) % toks.length;
+    state.chordFollowIndex = clamped;
+    if(!state.chordFollowPositions || typeof state.chordFollowPositions !== 'object') state.chordFollowPositions = {};
+    state.chordFollowPositions[song.id] = clamped;
+    try{ localStorage.setItem('ui:chordFollowPositions', JSON.stringify(state.chordFollowPositions)); }catch(e){}
+    const targetEl = toks[clamped];
+    const ch = targetEl && targetEl.dataset.chord;
+    if(shouldPlay && ch){
+      playPianoChord(ch);
+      const readout = document.getElementById('sticky-piano-readout');
+      if(readout) readout.textContent = ch;
+    }
+    syncChordFollowUi();
+    // Keep active chord visible above the sticky tray
+    if(targetEl && chartWrap){
+      const wRect = chartWrap.getBoundingClientRect();
+      const eRect = targetEl.getBoundingClientRect();
+      if(eRect.top < wRect.top + 24 || eRect.bottom > wRect.bottom - 120){
+        targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  };
+  window._jumpChordFollowTo = jumpChordFollowTo;
+  window._syncChordFollowUi = syncChordFollowUi;
+
+  const syncStickyTrayPanels = ()=>{
+    const isChords = state.stickyTrayMode === 'chords';
+    const isPads = state.chordPlayerView === 'pads';
+    const kb = document.getElementById('sticky-piano-keyboard');
+    const cp = document.getElementById('chord-player-pads');
+    const fb = document.getElementById('chord-follow-bar');
+    const sub = document.getElementById('chord-sub-controls');
+    if(kb) kb.style.display = isChords ? 'none' : 'flex';
+    if(sub) sub.style.display = isChords ? 'inline-flex' : 'none';
+    if(fb) fb.style.display = (isChords && !isPads) ? 'flex' : 'none';
+    if(cp) cp.style.display = (isChords && isPads) ? 'flex' : 'none';
+    document.querySelectorAll('.sticky-tray-mode-btn[data-tray-mode]').forEach(b => {
+      b.classList.toggle('is-active', b.dataset.trayMode === state.stickyTrayMode);
+    });
+    document.querySelectorAll('.sticky-tray-mode-btn[data-cp-view]').forEach(b => {
+      b.classList.toggle('is-active', b.dataset.cpView === state.chordPlayerView);
+    });
+    syncChordFollowUi();
+  };
+  const setStickyTrayMode = (mode)=>{
+    state.stickyTrayMode = mode === 'chords' ? 'chords' : 'piano';
+    try{ localStorage.setItem('ui:stickyTrayMode', state.stickyTrayMode); }catch(e){}
+    const readout = document.getElementById('sticky-piano-readout');
+    if(readout) readout.textContent = state.stickyTrayMode === 'chords' ? 'Ready' : 'Tap key';
+    syncStickyTrayPanels();
+  };
+  const toggleStickyPiano = (targetMode)=>{
+    if(targetMode && state.showStickyPiano && state.stickyTrayMode !== targetMode){
+      setStickyTrayMode(targetMode);
+      return;
+    }
+    if(targetMode) setStickyTrayMode(targetMode);
     state.showStickyPiano = !state.showStickyPiano;
     try{ localStorage.setItem('ui:showStickyPiano', state.showStickyPiano ? '1' : '0'); }catch(e){}
     const tray = document.getElementById('sticky-piano-tray');
@@ -7093,6 +7405,68 @@ function renderViewer(){
   };
   if(btnToggleStickyPiano) btnToggleStickyPiano.onclick = (e)=>{ e.stopPropagation(); toggleStickyPiano(); };
   if(btnCloseStickyPiano) btnCloseStickyPiano.onclick = (e)=>{ e.stopPropagation(); toggleStickyPiano(); };
+  document.querySelectorAll('.sticky-tray-mode-btn[data-tray-mode]').forEach(b => {
+    b.onclick = (e)=>{ e.stopPropagation(); setStickyTrayMode(b.dataset.trayMode); };
+  });
+  // (2026-07-13) use single onpointerdown to prevent duplicate chord hits; prev: touch+mouse
+  const wireChordPlayerPads = ()=>{
+    document.querySelectorAll('.chord-player-pad[data-chord-pad]').forEach(pad => {
+      pad.onpointerdown = (e)=>{
+        e.stopPropagation();
+        if(e.cancelable) e.preventDefault();
+        const ch = pad.dataset.chordPad;
+        if(!ch) return;
+        pad.classList.add('is-active');
+        setTimeout(()=>pad.classList.remove('is-active'), 200);
+        const readout = document.getElementById('sticky-piano-readout');
+        if(readout) readout.textContent = ch;
+        playPianoChord(ch);
+      };
+    });
+  };
+  wireChordPlayerPads();
+  window._wireChordPlayerPads = wireChordPlayerPads;
+  document.querySelectorAll('.sticky-tray-mode-btn[data-cp-view]').forEach(b => {
+    b.onclick = (e)=>{
+      e.stopPropagation();
+      state.chordPlayerView = b.dataset.cpView === 'pads' ? 'pads' : 'follow';
+      try{ localStorage.setItem('ui:chordPlayerView', state.chordPlayerView); }catch(err){}
+      syncStickyTrayPanels();
+    };
+  });
+  const btnTapMode = document.getElementById('btn-chord-tap-mode');
+  if(btnTapMode){
+    btnTapMode.onclick = (e)=>{
+      e.stopPropagation();
+      state.chordTapAction = state.chordTapAction === 'diagram' ? 'play' : 'diagram';
+      try{ localStorage.setItem('ui:chordTapAction', state.chordTapAction); }catch(err){}
+      btnTapMode.textContent = state.chordTapAction === 'diagram' ? 'Tap: Diagram' : 'Tap: Play';
+      btnTapMode.classList.toggle('is-diagram', state.chordTapAction === 'diagram');
+    };
+  }
+  const wireInstantPress = (el, fn)=>{
+    if(!el) return;
+    el.onpointerdown = (e)=>{
+      e.stopPropagation();
+      if(e.cancelable) e.preventDefault();
+      fn(e);
+    };
+  };
+  const followCurBtn = document.getElementById('chord-follow-current');
+  wireInstantPress(followCurBtn, ()=>{
+    if(followCurBtn){ followCurBtn.classList.add('is-active'); setTimeout(()=>followCurBtn.classList.remove('is-active'), 160); }
+    const idx = Math.max(0, state.chordFollowIndex);
+    jumpChordFollowTo(idx, true);
+  });
+  const followNextBtn = document.getElementById('chord-follow-next');
+  wireInstantPress(followNextBtn, ()=>{
+    if(followNextBtn){ followNextBtn.classList.add('is-active'); setTimeout(()=>followNextBtn.classList.remove('is-active'), 160); }
+    jumpChordFollowTo(state.chordFollowIndex + 1, true);
+  });
+  wireInstantPress(document.getElementById('chord-follow-prev'), ()=>{
+    if(state.chordFollowIndex > 0) jumpChordFollowTo(state.chordFollowIndex - 1, true);
+  });
+  syncChordFollowUi();
 
   document.querySelectorAll('.sticky-piano-key[data-sticky-note]').forEach(btn=>{
     let touched = false;
@@ -7123,27 +7497,42 @@ function renderViewer(){
     });
   });
 
+  // (2026-07-13) double-tap chart corners relative to track (works with sidebar); prev: 3-tap window
   let cornerTapTimes = [];
+  let leftCornerTapTimes = [];
+  let lastCornerTouchAt = 0;
   const handleCornerCheck = (clientX, clientY)=>{
-    const w = window.innerWidth, h = window.innerHeight;
-    if(clientX >= w - 110 && clientY >= h - 110){
+    const track = document.getElementById('viewer-slider-track');
+    const rect = track ? track.getBoundingClientRect() : { left: 0, right: window.innerWidth, bottom: window.innerHeight };
+    if(clientY < rect.bottom - 130) return;
+    if(clientX >= rect.right - 130){
       const now = Date.now();
       cornerTapTimes.push(now);
-      if(cornerTapTimes.length > 3) cornerTapTimes.shift();
-      if(cornerTapTimes.length === 3 && (cornerTapTimes[2] - cornerTapTimes[0]) < 900){
+      if(cornerTapTimes.length > 2) cornerTapTimes.shift();
+      if(cornerTapTimes.length === 2 && (cornerTapTimes[1] - cornerTapTimes[0]) < 600){
         cornerTapTimes = [];
-        toggleStickyPiano();
+        toggleStickyPiano('piano');
+      }
+    } else if(clientX <= rect.left + 130){
+      const now = Date.now();
+      leftCornerTapTimes.push(now);
+      if(leftCornerTapTimes.length > 2) leftCornerTapTimes.shift();
+      if(leftCornerTapTimes.length === 2 && (leftCornerTapTimes[1] - leftCornerTapTimes[0]) < 600){
+        leftCornerTapTimes = [];
+        toggleStickyPiano('chords');
       }
     }
   };
   const currentSliderTrack = document.getElementById('viewer-slider-track');
   if(currentSliderTrack){
     currentSliderTrack.addEventListener('touchend', (e)=>{
+      lastCornerTouchAt = Date.now();
       if(e.changedTouches && e.changedTouches[0]){
         handleCornerCheck(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
       }
     }, { passive: true });
     currentSliderTrack.addEventListener('click', (e)=>{
+      if(Date.now() - lastCornerTouchAt < 450) return;
       handleCornerCheck(e.clientX, e.clientY);
     });
   }
@@ -7639,6 +8028,16 @@ function renderEditor(){
         <textarea id="f-body" placeholder="Put the chord line directly above its lyric line, e.g.&#10;G          C      G&#10;Amazing grace, how sweet the sound">${escapeHtml(d.body)}</textarea>
         <div class="hint">Type <b>--</b> or <b>==</b> then space/enter for a divider. Wrap chords like <b>&gt; G D Em</b> for yellow inline chords.</div>
       </div>
+      <!-- (2026-07-13) move printable PNG/PDF/Word export into Edit Details; prev: Adjustments -->
+      <div class="field" style="margin-top:6px;">
+        <label>Export Printable Song</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button type="button" class="btn btn-secondary" id="ed-export-png" style="flex:1;min-height:38px;font-size:12.5px;font-weight:700;">PNG (Full)</button>
+          <button type="button" class="btn btn-secondary" id="ed-export-png-lyrics" style="flex:1;min-height:38px;font-size:12.5px;font-weight:700;">PNG (Lyrics)</button>
+          <button type="button" class="btn btn-secondary" id="ed-export-pdf" style="flex:1;min-height:38px;font-size:12.5px;font-weight:700;">PDF</button>
+          <button type="button" class="btn btn-secondary" id="ed-export-word" style="flex:1;min-height:38px;font-size:12.5px;font-weight:700;">Word</button>
+        </div>
+      </div>
     </div>
     <div class="save-bar">
       <button class="btn btn-secondary" id="btn-cancel2">Cancel</button>
@@ -7885,7 +8284,7 @@ function renderEditor(){
 
   updateUndoRedoButtons();
 
-  // (2026-07-13) wire Upload Img Lyrics OCR scanner button; prev: none
+  // (2026-07-13) wire Upload Img Lyrics OCR & printable exports in editor; prev: Adjustments
   const uploadImgLyricsBtn = document.getElementById('btn-upload-img-lyrics');
   if(uploadImgLyricsBtn){
     uploadImgLyricsBtn.onclick = ()=>{
@@ -7894,6 +8293,21 @@ function renderEditor(){
       }
     };
   }
+  const getLiveEditorExportSong = ()=>({
+    ...d,
+    title: (document.getElementById('f-title')?.value || d.title || 'Untitled Song').trim(),
+    artist: (document.getElementById('f-artist')?.value || d.artist || '').trim(),
+    key: (document.getElementById('f-key')?.value || d.key || '').trim(),
+    body: bodyEl ? bodyEl.value : (d.body || '')
+  });
+  const edExportPng = document.getElementById('ed-export-png');
+  if(edExportPng) edExportPng.onclick = ()=>{ if(typeof window.exportSongAsPng === 'function') window.exportSongAsPng(getLiveEditorExportSong(), { lyricsOnly: false }); };
+  const edExportPngLy = document.getElementById('ed-export-png-lyrics');
+  if(edExportPngLy) edExportPngLy.onclick = ()=>{ if(typeof window.exportSongAsPng === 'function') window.exportSongAsPng(getLiveEditorExportSong(), { lyricsOnly: true }); };
+  const edExportPdf = document.getElementById('ed-export-pdf');
+  if(edExportPdf) edExportPdf.onclick = ()=>{ if(typeof window.exportSongAsPdf === 'function') window.exportSongAsPdf(getLiveEditorExportSong(), { lyricsOnly: false }); };
+  const edExportWord = document.getElementById('ed-export-word');
+  if(edExportWord) edExportWord.onclick = ()=>{ if(typeof window.exportSongAsWord === 'function') window.exportSongAsWord(getLiveEditorExportSong(), { lyricsOnly: false }); };
   document.getElementById('ins-divider').onclick = ()=> insertAtCursor(bodyEl, '\n' + '='.repeat(40) + '\n');
   document.querySelectorAll('[data-ins-section]').forEach(el=>{
     el.onclick = ()=> insertAtCursor(bodyEl, '\n' + el.dataset.insSection + '\n');
@@ -9777,15 +10191,6 @@ function modalHtml(){
               <button type="button" class="display-mode-btn ${state.viewerDisplayMode==='ppt'?'is-active':''}" id="adj-mode-ppt" data-mode="ppt">PPT</button>
             </div>
           </div>
-          <!-- (2026-07-13) add printable PNG/PDF/Word export row in adjustments; prev: none -->
-          <div class="field" style="margin-bottom:12px;">
-            <label style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--text-dim);text-transform:uppercase;margin-bottom:6px;display:block;">Export Printable (${state.viewerDisplayMode==='lyrics'?'Lyrics Only':'Full Chart'})</label>
-            <div style="display:flex;gap:8px;">
-              <button type="button" class="toolbtn" id="adj-export-png" style="flex:1;min-height:36px;font-size:12.5px;font-weight:700;">PNG</button>
-              <button type="button" class="toolbtn" id="adj-export-pdf" style="flex:1;min-height:36px;font-size:12.5px;font-weight:700;">PDF</button>
-              <button type="button" class="toolbtn" id="adj-export-word" style="flex:1;min-height:36px;font-size:12.5px;font-weight:700;">Word</button>
-            </div>
-          </div>
           <div class="field" style="margin-bottom:12px;">
             <label style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--text-dim);text-transform:uppercase;margin-bottom:6px;display:block;">Metronome (${song.tempo||90} BPM)</label>
             <div style="display:flex;align-items:center;gap:10px;">
@@ -11089,6 +11494,13 @@ function wireModal(){
     const chartContent = document.getElementById('chart-scroll-content');
     if(chartContent) chartContent.innerHTML = renderSongSheetContent(song, false);
     if(chartWrap && prevTop > 0) chartWrap.scrollTop = prevTop;
+    const cpPads = document.getElementById('chord-player-pads');
+    if(cpPads){
+      cpPads.innerHTML = renderChordPlayerPadsHtml(song);
+      if(typeof window._wireChordPlayerPads === 'function') window._wireChordPlayerPads();
+    }
+    if(typeof window._wireChartChordClicks === 'function') window._wireChartChordClicks();
+    if(typeof window._syncChordFollowUi === 'function') window._syncChordFollowUi();
     scheduleSaveAdjSong(song);
   };
   const handleTransposeChange = (delta, isReset = false)=>{
