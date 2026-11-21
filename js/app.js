@@ -1002,18 +1002,66 @@ const FirestoreAdapter = {
       return LocalAdapter.getAll(prefix);
     }
   },
+  // (2026-07-13) queue offline writes & flush when online; prev: direct set
   async set(key, value){
     LocalAdapter.set(key, value);
-    try{ await this._col().doc(key).set({value, updatedAt: Date.now()}); }
-    catch(e){ console.error('Firestore set failed', e); }
+    markOfflineDirtyKey(key);
+    if(typeof navigator !== 'undefined' && navigator.onLine === false) return {key, value};
+    try{
+      await this._col().doc(key).set({value, updatedAt: Date.now()});
+      clearOfflineDirtyKey(key);
+    }catch(e){ console.error('Firestore set failed', e); }
     return {key, value};
   },
   async delete(key){
     LocalAdapter.delete(key);
+    clearOfflineDirtyKey(key);
     try{ await this._col().doc(key).delete(); }catch(e){}
     return {key, deleted:true};
   }
 };
+
+// (2026-07-13) track offline dirty keys for cloud flush on reconnect; prev: none
+function getOfflineDirtyMap(){
+  try{ return JSON.parse(localStorage.getItem('cbp_offline_dirty') || '{}') || {}; }catch(e){ return {}; }
+}
+function markOfflineDirtyKey(key){
+  try{
+    const m = getOfflineDirtyMap();
+    m[key] = Date.now();
+    localStorage.setItem('cbp_offline_dirty', JSON.stringify(m));
+  }catch(e){}
+}
+function clearOfflineDirtyKey(key){
+  try{
+    const m = getOfflineDirtyMap();
+    if(m[key]){
+      delete m[key];
+      localStorage.setItem('cbp_offline_dirty', JSON.stringify(m));
+    }
+  }catch(e){}
+}
+async function flushOfflineDirtyQueue(){
+  if(!FIREBASE_READY || !firebaseUser) return;
+  if(typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  const m = getOfflineDirtyMap();
+  const keys = Object.keys(m);
+  if(keys.length === 0) return;
+  for(const k of keys){
+    const val = localStorage.getItem(k);
+    if(val !== null){
+      try{
+        await FirestoreAdapter._col().doc(k).set({ value: val, updatedAt: m[k] || Date.now() });
+        clearOfflineDirtyKey(k);
+      }catch(e){}
+    } else {
+      clearOfflineDirtyKey(k);
+    }
+  }
+}
+if(typeof window !== 'undefined'){
+  window.addEventListener('online', ()=>{ flushOfflineDirtyQueue().catch(()=>{}); });
+}
 
 let adapter = HAS_CLAUDE_STORAGE ? ClaudeAdapter : LocalAdapter;
 function selectAdapter(){
@@ -1048,7 +1096,9 @@ const Store = {
     }
     return songs;
   },
+  // (2026-07-13) mark song dirty for offline-to-cloud flush; prev: adapter only
   async saveSong(song){
+    if(adapter === LocalAdapter) markOfflineDirtyKey('song:'+song.id);
     await adapter.set('song:'+song.id, JSON.stringify(song));
   },
   async deleteSong(id){ await adapter.delete('song:'+id); },
@@ -1924,6 +1974,10 @@ const state = {
   pptLinesPerSlide: 2,
   pptZooms: (function(){ try{ const raw = localStorage.getItem('meta:pptZooms'); const parsed = raw ? JSON.parse(raw) : {}; return (parsed && typeof parsed === 'object') ? parsed : {}; }catch(e){ return {}; } })(),
   pptSlideIndex: 0,
+  // (2026-07-13) state for Psalm slots and split panel; prev: none
+  psalmActiveSlot: 0,
+  psalmMiniSlideIndex: 0,
+  psalmEditing: false,
   // (2026-07-13) add viewer cue card and mass part selection state; prev: none
   selectedViewerMassPart: null,
   hideCueCard: false,
@@ -2202,8 +2256,10 @@ async function loadAll(){
     }
   }catch(e){ state.loading = true; render(); }
 
-  // (2026-07-13) incremental timestamp sync for cloud data; prev: download all
+  // (2026-07-13) flush offline queue & keep dirty local songs; prev: overwrite
   try{
+    if(typeof navigator !== 'undefined' && navigator.onLine === false) return;
+    await flushOfflineDirtyQueue();
     const lastSync = getLastSyncAt();
     if(lastSync > 0 && state.songs && state.songs.length > 0 && FirestoreAdapter.getUpdatedSince){
       const updatedDocs = await FirestoreAdapter.getUpdatedSince(lastSync);
@@ -5143,7 +5199,8 @@ function openViewer(id, fromSetlistId, preferredMassPart){
     if(!state.songScrollPositions) state.songScrollPositions = {};
     state.songScrollPositions[state.currentId] = existingChartWrap.scrollTop;
   }
-  if(state.view !== 'viewer'){
+  const wasInViewer = (state.view === 'viewer');
+  if(!wasInViewer){
     state.songScrollPositions = {};
   }
   state.lastViewerSongId = null;
@@ -5158,7 +5215,15 @@ function openViewer(id, fromSetlistId, preferredMassPart){
   autoscrollFloatPos = (state.songScrollPositions && state.songScrollPositions[id]) ? state.songScrollPositions[id] : 0;
   lastUserScrollAt = 0;
   const song = state.songs.find(s=>s.id===id);
-  startAutoscroll(song, false);
+  // (2026-07-13) default Psalm autoscroll off; preserve state on switch; prev: forced
+  if(!wasInViewer && isPsalmSong(song)){
+    state.autoscroll = false;
+    stopAutoscroll();
+  } else if(state.autoscroll){
+    startAutoscroll(song, false);
+  } else {
+    stopAutoscroll();
+  }
   render();
 }
 function currentSong(){ return state.songs.find(s=>s.id===state.currentId); }
@@ -5984,10 +6049,94 @@ function renderPeekSlide(s, isNext, fontSize){
     </div>`;
 }
 
-// (2026-07-13) support 1-4 lines per slide & zero transitions; prev: 2 lines animated
+// (2026-07-13) restrict Psalm split panel strictly to SALMO BOGO; prev: any psalm
+function isPsalmSong(song){
+  if(!song) return false;
+  return /salmo\s+bogo/i.test(song.title || '');
+}
+// (2026-07-13) support 3 Psalm slots (P1-P3) in DB; prev: 1 slot
+function getPsalmSlots(song){
+  const slots = Array.isArray(song && song.psalmSlots) ? song.psalmSlots.slice(0, 3) : [];
+  while(slots.length < 3) slots.push('');
+  if(!slots[0] && song && song.psalmLyrics) slots[0] = song.psalmLyrics;
+  return slots;
+}
+// (2026-07-13) render split-screen Psalm lyrics PPT panel; prev: none
+function renderPsalmSplitPanelHtml(song){
+  if(!isPsalmSong(song)) return '';
+  const slots = getPsalmSlots(song);
+  const activeSlot = (state.psalmActiveSlot >= 0 && state.psalmActiveSlot < 3) ? state.psalmActiveSlot : 0;
+  const lyrics = (slots[activeSlot] || '').trim();
+  const isEditing = !!state.psalmEditing;
+  const slides = lyrics ? buildPptSlides({ title: song.title, body: lyrics }, state.psalmMiniLines || 2) : [];
+  const realCount = Math.max(0, slides.length - (slides.length > 0 && slides[slides.length - 1].isBlankEnd ? 1 : 0));
+  if(!state.psalmMiniSlideIndex || state.psalmMiniSlideIndex < 0) state.psalmMiniSlideIndex = 0;
+  if(slides.length > 0 && state.psalmMiniSlideIndex >= slides.length) state.psalmMiniSlideIndex = slides.length - 1;
+  const curSlide = slides[state.psalmMiniSlideIndex];
+  const bucket = getViewerDeviceBucket();
+  let savedPct = 18;
+  try{
+    const rawPct = parseFloat(localStorage.getItem('ui:psalmSplitPct:' + bucket));
+    if(!isNaN(rawPct) && rawPct >= 14 && rawPct <= 78) savedPct = rawPct;
+  }catch(e){}
+  let miniFs = (song.psalmMiniFontSizes && song.psalmMiniFontSizes[bucket]) || 22;
+  try{
+    if(!(song.psalmMiniFontSizes && song.psalmMiniFontSizes[bucket])){
+      const locFs = parseInt(localStorage.getItem('ui:psalmMiniFont:' + bucket), 10);
+      if(!isNaN(locFs) && locFs >= 14 && locFs <= 56) miniFs = locFs;
+    }
+  }catch(e){}
+  return `
+    <!-- Split-screen Psalm lyrics PPT panel -->
+    <div class="psalm-split-panel" id="psalm-split-panel" style="flex:0 0 ${savedPct}%;">
+      <!-- Draggable split resize bar -->
+      <div class="psalm-split-resizer" id="psalm-split-resizer" title="Drag to resize"></div>
+      <div class="psalm-split-header">
+        <div class="psalm-split-title">
+          <div class="psalm-slot-tabs" id="psalm-slot-tabs">
+            ${[0, 1, 2].map(idx => `<button type="button" class="psalm-slot-btn ${activeSlot===idx?'is-active':''}" data-psalm-slot="${idx}">P${idx+1}</button>`).join('')}
+          </div>
+          ${realCount > 0 ? `<span class="psalm-split-counter" id="psalm-mini-counter">${state.psalmMiniSlideIndex + 1}/${slides.length}</span>` : ''}
+        </div>
+        <div class="psalm-split-actions">
+          <button type="button" class="psalm-mini-btn" id="psalm-btn-edit">${isEditing ? 'Done' : (lyrics ? 'Edit' : 'Paste')}</button>
+        </div>
+      </div>
+      <div class="psalm-split-body">
+        ${isEditing ? `
+          <div class="psalm-editor-wrap">
+            <textarea class="psalm-editor-textarea" id="psalm-lyrics-input" placeholder="Paste Psalm ${activeSlot+1} lyrics here...">${escapeHtml(slots[activeSlot] || '')}</textarea>
+            <div class="psalm-editor-bar">
+              <button type="button" class="psalm-mini-btn" id="psalm-btn-paste-clip">Paste</button>
+              <button type="button" class="psalm-mini-btn is-primary" id="psalm-btn-save">Save</button>
+            </div>
+          </div>
+        ` : `
+          <div class="psalm-mini-stage" id="psalm-mini-stage" style="font-size:${miniFs}px;">
+            ${curSlide && curSlide.lines && curSlide.lines.length > 0
+              ? curSlide.lines.map(l => `<div class="psalm-mini-lyric">${escapeHtml(String(l).toUpperCase())}</div>`).join('')
+              : (lyrics
+                  ? `<div class="psalm-mini-empty"></div>`
+                  : `<div class="psalm-mini-empty">Tap Paste to add Psalm ${activeSlot+1} lyrics</div>`)}
+          </div>
+        `}
+      </div>
+    </div>`;
+}
+
+// (2026-07-13) use active visible Psalm slot for Psalm PPT; prev: body only
 function buildPptSlides(song, linesPerSlide){
   const maxLines = Math.max(1, Math.min(4, parseInt(linesPerSlide || state.pptLinesPerSlide || 2, 10) || 2));
-  const rawLines = ((song && song.body) || '').split('\n');
+  let srcBody = '';
+  if(isPsalmSong(song)){
+    const slots = getPsalmSlots(song);
+    const activeSlot = (state.psalmActiveSlot >= 0 && state.psalmActiveSlot < 3) ? state.psalmActiveSlot : 0;
+    const psalmText = (slots[activeSlot] || '').trim() || (song && song.psalmLyrics ? String(song.psalmLyrics).trim() : '');
+    srcBody = psalmText || ((song && song.body) || '');
+  } else {
+    srcBody = (state.pptSourceOverride === 'psalm' && song && song.psalmLyrics) ? song.psalmLyrics : ((song && song.body) || '');
+  }
+  const rawLines = srcBody.split('\n');
   const slides = [];
   let currentSection = '';
   let group = [];
@@ -6031,11 +6180,25 @@ function buildPptSlides(song, linesPerSlide){
   return slides;
 }
 
+// (2026-07-13) 3-state PPT theme cycling (Dark/Navy/Light); prev: 2-state
+function getNextPptTheme(theme){
+  if(theme === 'dark') return 'navy';
+  if(theme === 'navy') return 'light';
+  return 'dark';
+}
+function getPptThemeLabel(theme){
+  if(theme === 'navy') return 'Navy';
+  if(theme === 'light') return 'Light';
+  return 'Dark';
+}
 function pptThemeIcon(theme){
-  if(theme === 'light'){
-    return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
+  if(theme === 'navy'){
+    return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>`;
   }
-  return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`;
+  if(theme === 'light'){
+    return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`;
+  }
+  return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
 }
 
 // (2026-07-13) add PPT wake lock, section jump, blank, preview & clean mode; prev: basic PPT
@@ -6072,21 +6235,43 @@ function buildPptSectionAnchors(slides){
 function pptBlankIcon(){
   return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
 }
-function pptFullscreenIcon(){
-  return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>`;
+// (2026-07-13) rotate device icon for force rotate button; prev: fullscreen
+function pptRotateIcon(){
+  return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M1 8l3-3 3 3"/><path d="M4 5a6 6 0 0 1 6-3"/><path d="M23 16l-3 3-3-3"/><path d="M20 19a6 6 0 0 1-6 3"/></svg>`;
 }
 
 // (2026-07-13) separate mobile vs tablet zoom buckets saved to Firestore; prev: shared
 function getViewerDeviceBucket(){
   return (typeof window !== 'undefined' && window.innerWidth >= 768) ? 'tablet' : 'mobile';
 }
+// (2026-07-13) PPT device bucket mobile/tablet/desktop; prev: mobile/tablet only
+function getPptDeviceBucket(){
+  if(typeof window === 'undefined') return 'mobile';
+  const finePointer = !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches);
+  if(finePointer) return 'desktop';
+  return Math.min(window.innerWidth, window.innerHeight) >= 600 ? 'tablet' : 'mobile';
+}
+// (2026-07-13) per-song per-device saved PPT lines; prev: always 2L
+function getSongPptLines(song){
+  const map = song && song.pptLinesByDevice && typeof song.pptLinesByDevice === 'object' ? song.pptLinesByDevice : null;
+  const v = parseInt(map ? map[getPptDeviceBucket()] : (song && song.pptLinesPerSlide), 10);
+  return (v >= 1 && v <= 4) ? v : 2;
+}
+function setSongPptLines(song, n){
+  if(!song) return;
+  if(!song.pptLinesByDevice || typeof song.pptLinesByDevice !== 'object') song.pptLinesByDevice = {};
+  song.pptLinesByDevice[getPptDeviceBucket()] = n;
+  song.pptLinesPerSlide = n;
+}
 function getDefaultPptZoom(linesCount){
   return String(linesCount) === '2' ? 80 : 100;
 }
 function getPptZoomPercent(song, linesCount){
   const key = String(Math.max(1, Math.min(4, parseInt(linesCount || state.pptLinesPerSlide || 2, 10) || 2)));
-  const bucketKey = getViewerDeviceBucket() + '_' + key;
-  const raw = song && song.pptZooms && (song.pptZooms[bucketKey] !== undefined ? song.pptZooms[bucketKey] : song.pptZooms[key]);
+  // (2026-07-13) per-device zoom key incl. desktop; prev: mobile/tablet key
+  const bucketKey = getPptDeviceBucket() + '_' + key;
+  const z = song && song.pptZooms;
+  const raw = z && (z[bucketKey] !== undefined ? z[bucketKey] : (z[getViewerDeviceBucket() + '_' + key] !== undefined ? z[getViewerDeviceBucket() + '_' + key] : z[key]));
   const val = parseInt(raw, 10);
   return (!isNaN(val) && val >= 40 && val <= 150) ? val : getDefaultPptZoom(key);
 }
@@ -6102,7 +6287,9 @@ function renderPptOverlayHtml(song){
   const nextSlide = state.pptSlideIndex < slides.length - 1 ? slides[state.pptSlideIndex + 1] : null;
   const nextPreviewText = nextSlide && nextSlide.lines && nextSlide.lines[0] ? String(nextSlide.lines[0]).toUpperCase() : '';
   const anchors = buildPptSectionAnchors(slides);
-  const theme = state.pptTheme === 'light' ? 'light' : 'dark';
+  // (2026-07-13) support Navy PPT theme; prev: light/dark only
+  const theme = (state.pptTheme === 'light' || state.pptTheme === 'navy') ? state.pptTheme : 'dark';
+  const nextTheme = getNextPptTheme(theme);
   const songTitle = cleanSongTitleForDisplay(song.title);
   const sectionText = slide.section || '';
   const pct = slides.length > 1 ? ((state.pptSlideIndex + 1) / slides.length) * 100 : 100;
@@ -6116,7 +6303,8 @@ function renderPptOverlayHtml(song){
   return `
     <!-- Full-screen PPT lyric overlay -->
     <div class="ppt-presentation-overlay ${blankCls} ${cleanCls}" id="ppt-presentation-overlay" data-ppt-theme="${theme}" data-ppt-lines="${linesCount}">
-      <!-- PPT top controls bar -->
+      <div class="ppt-inner-container" id="ppt-inner-container">
+        <!-- PPT top controls bar -->
       <div class="ppt-topbar">
         <!-- Top-left song switcher -->
         <div class="ppt-song-nav">
@@ -6142,15 +6330,14 @@ function renderPptOverlayHtml(song){
             ${pptBlankIcon()}
             <span class="ppt-btn-label">Blank</span>
           </button>
-          <button type="button" class="ppt-ctrl-btn" id="ppt-theme-toggle" title="Toggle Dark/Light Theme">
-            ${pptThemeIcon(theme)}
-            <span class="ppt-btn-label">${theme === 'dark' ? 'Light' : 'Dark'}</span>
+          <button type="button" class="ppt-ctrl-btn" id="ppt-theme-toggle" title="Switch to ${getPptThemeLabel(nextTheme)} Theme">
+            ${pptThemeIcon(nextTheme)}
+            <span class="ppt-btn-label">${getPptThemeLabel(nextTheme)}</span>
           </button>
-          ${canFullscreen ? `
-            <button type="button" class="ppt-ctrl-btn ppt-icon-only-btn" id="ppt-fullscreen-btn" title="Fullscreen (F)">
-              ${pptFullscreenIcon()}
-            </button>
-          ` : ''}
+          <!-- (2026-07-13) force rotate & orientation lock button; prev: fullscreen -->
+          <button type="button" class="ppt-ctrl-btn ppt-icon-only-btn ${state.pptOrientationLock ? 'is-active' : ''}" id="ppt-rotate-btn" title="${state.pptOrientationLock ? 'Orientation: Locked ' + state.pptOrientationLock + ' (Tap to switch)' : 'Orientation: Auto-rotate (Tap to lock)'}">
+            ${pptRotateIcon()}
+          </button>
           <button type="button" class="ppt-ctrl-btn ppt-exit-btn" id="ppt-exit-btn" title="Exit PPT Mode">
             ${iconClose()}
           </button>
@@ -6177,10 +6364,20 @@ function renderPptOverlayHtml(song){
       <div class="ppt-progress-track">
         <div class="ppt-progress-fill" id="ppt-progress-fill" style="width:${pct.toFixed(1)}%;"></div>
       </div>
+      </div>
     </div>`;
 }
 
 function wirePptOverlayEvents(song){
+  // (2026-07-13) clear PPT 5-min inactivity timer & handlers; prev: none
+  if(window._pptInactivityTimer){
+    clearTimeout(window._pptInactivityTimer);
+    window._pptInactivityTimer = null;
+  }
+  if(window._pptInactivityCleanup){
+    window._pptInactivityCleanup();
+    window._pptInactivityCleanup = null;
+  }
   if(window._pptKeyHandler){
     window.removeEventListener('keydown', window._pptKeyHandler, true);
     window._pptKeyHandler = null;
@@ -6243,7 +6440,8 @@ function wirePptOverlayEvents(song){
 
   const setPptZoomForCurrentMode = (nextPct)=>{
     const clamped = Math.max(40, Math.min(150, Math.round(nextPct)));
-    const key = getViewerDeviceBucket() + '_' + String(state.pptLinesPerSlide || 2);
+    // (2026-07-13) save zoom per PPT device bucket; prev: viewer bucket
+    const key = getPptDeviceBucket() + '_' + String(state.pptLinesPerSlide || 2);
     if(!song.pptZooms || typeof song.pptZooms !== 'object') song.pptZooms = {};
     song.pptZooms[key] = clamped;
     const zoomValEl = document.getElementById('ppt-zoom-reset');
@@ -6284,7 +6482,8 @@ function wirePptOverlayEvents(song){
     if(state.pptSlideIndex < 0) state.pptSlideIndex = 0;
     if(state.pptSlideIndex >= slides.length) state.pptSlideIndex = slides.length - 1;
     song.pptSlideIndex = state.pptSlideIndex;
-    song.pptLinesPerSlide = state.pptLinesPerSlide;
+    // (2026-07-13) save lines per device for this song; prev: global field
+    setSongPptLines(song, state.pptLinesPerSlide);
     const slide = slides[state.pptSlideIndex];
     const nextSlide = state.pptSlideIndex < slides.length - 1 ? slides[state.pptSlideIndex + 1] : null;
     const nextPreviewText = nextSlide && nextSlide.lines && nextSlide.lines[0] ? String(nextSlide.lines[0]).toUpperCase() : '';
@@ -6314,7 +6513,29 @@ function wirePptOverlayEvents(song){
   const goToSlide = (nextIdx)=>{
     if(nextIdx < 0 || nextIdx >= slides.length || nextIdx === state.pptSlideIndex) return;
     state.pptSlideIndex = nextIdx;
+    // (2026-07-13) sync Psalm mini slide index on slide nav; prev: unsynced
+    if(isPsalmSong(song)) state.psalmMiniSlideIndex = nextIdx;
     syncSlideView(true);
+    resetPptInactivityTimer();
+  };
+
+  // (2026-07-13) return to first slide after 5m of inactivity; prev: none
+  const resetPptInactivityTimer = ()=>{
+    if(window._pptInactivityTimer){
+      clearTimeout(window._pptInactivityTimer);
+    }
+    window._pptInactivityTimer = setTimeout(()=>{
+      if(state.viewerDisplayMode === 'ppt' && state.pptSlideIndex > 0){
+        goToSlide(0);
+      }
+    }, 5 * 60 * 1000);
+  };
+  resetPptInactivityTimer();
+  const pptActivityEvts = ['touchstart', 'touchmove', 'pointerdown', 'keydown', 'click'];
+  const onPptActivity = ()=> resetPptInactivityTimer();
+  pptActivityEvts.forEach(evt => window.addEventListener(evt, onPptActivity, { passive: true }));
+  window._pptInactivityCleanup = ()=>{
+    pptActivityEvts.forEach(evt => window.removeEventListener(evt, onPptActivity));
   };
 
   const toggleBlank = ()=>{
@@ -6333,29 +6554,83 @@ function wirePptOverlayEvents(song){
     fitPptSlideText();
   };
 
-  const toggleFullscreen = ()=>{
-    try{
-      const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
-      if(isFs){
-        if(document.exitFullscreen) document.exitFullscreen().catch(()=>{});
-        else if(document.webkitExitFullscreen) document.webkitExitFullscreen();
-      } else {
-        const el = document.documentElement;
-        if(el.requestFullscreen) el.requestFullscreen().catch(()=>{});
-        else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  // (2026-07-13) toggle rotation lock & auto-rotate in PPT; prev: CSS rotate
+  const togglePptForceRotate = async ()=>{
+    const rotBtn = document.getElementById('ppt-rotate-btn');
+    const isCurLandscape = window.innerWidth > window.innerHeight;
+
+    let nextLock = null;
+    if(!state.pptOrientationLock){
+      nextLock = 'landscape';
+    } else if(state.pptOrientationLock === 'landscape'){
+      nextLock = isCurLandscape ? null : 'portrait';
+    } else {
+      nextLock = null;
+    }
+
+    state.pptOrientationLock = nextLock;
+
+    if(nextLock){
+      try{
+        if(window.Capacitor?.Plugins?.ScreenOrientation?.lock){
+          await window.Capacitor.Plugins.ScreenOrientation.lock({ orientation: nextLock });
+        }
+      }catch(err){}
+      try{
+        if(window.screen?.orientation?.lock){
+          await window.screen.orientation.lock(nextLock);
+        }
+      }catch(err){}
+      if(rotBtn){
+        rotBtn.classList.add('is-active');
+        rotBtn.title = 'Orientation: Locked ' + (nextLock === 'landscape' ? 'Horizontal' : 'Vertical') + ' (Tap to unlock)';
       }
-    }catch(e){}
+    } else {
+      try{
+        if(window.Capacitor?.Plugins?.ScreenOrientation?.unlock){
+          await window.Capacitor.Plugins.ScreenOrientation.unlock();
+        }
+      }catch(err){}
+      try{
+        if(window.screen?.orientation?.unlock){
+          window.screen.orientation.unlock();
+        }
+      }catch(err){}
+      if(rotBtn){
+        rotBtn.classList.remove('is-active');
+        rotBtn.title = 'Orientation: Auto-rotate (Tap to lock)';
+      }
+    }
+    setTimeout(()=>{ fitPptSlideText(); }, 120);
   };
 
   const exitPpt = ()=>{
+    song.pptSlideIndex = state.pptSlideIndex;
+    // (2026-07-13) persist per-device lines on exit/switch; prev: shared field
+    setSongPptLines(song, state.pptLinesPerSlide);
+    // (2026-07-13) persist Psalm mini slide index on exit; prev: unsynced
+    if(isPsalmSong(song)) state.psalmMiniSlideIndex = state.pptSlideIndex;
     persistSongPptState(true);
     releasePptWakeLock();
     state.pptBlanked = false;
     state.pptChromeHidden = false;
     state.pptSectionsOpen = false;
+    // (2026-07-13) unlock orientation on PPT exit; prev: unlock only
     try{
-      if(document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(()=>{});
+      if(window.Capacitor?.Plugins?.ScreenOrientation?.unlock) window.Capacitor.Plugins.ScreenOrientation.unlock().catch(()=>{});
+      else if(screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
     }catch(e){}
+    state.pptOrientationLock = null;
+    state.pptVisuallyRotated = false;
+    const rotBtn = document.getElementById('ppt-rotate-btn');
+    if(rotBtn) rotBtn.classList.remove('is-active');
+    if(window._pptOrientationHandler){
+      window.removeEventListener('orientationchange', window._pptOrientationHandler);
+      if(window.screen && window.screen.orientation){
+        window.screen.orientation.removeEventListener('change', window._pptOrientationHandler);
+      }
+      window._pptOrientationHandler = null;
+    }
     if(window._pptKeyHandler){
       window.removeEventListener('keydown', window._pptKeyHandler, true);
       window._pptKeyHandler = null;
@@ -6368,6 +6643,15 @@ function wirePptOverlayEvents(song){
       document.removeEventListener('visibilitychange', window._pptVisibilityHandler);
       window._pptVisibilityHandler = null;
     }
+    // (2026-07-13) clear PPT inactivity timer & cleanup on exit; prev: none
+    if(window._pptInactivityTimer){
+      clearTimeout(window._pptInactivityTimer);
+      window._pptInactivityTimer = null;
+    }
+    if(window._pptInactivityCleanup){
+      window._pptInactivityCleanup();
+      window._pptInactivityCleanup = null;
+    }
     state.viewerDisplayMode = state.pptReturnMode || 'chords';
     renderViewer();
   };
@@ -6376,13 +6660,16 @@ function wirePptOverlayEvents(song){
   const currentIndex = songList.findIndex(s => s.id === song.id);
   const prevSong = currentIndex > 0 ? songList[currentIndex - 1] : null;
   const nextSong = currentIndex >= 0 && currentIndex < songList.length - 1 ? songList[currentIndex + 1] : null;
-  const switchPptSong = (targetSong)=>{
+  // (2026-07-13) support target slide on PPT song switch; prev: targetSong only
+  const switchPptSong = (targetSong, targetSlide = 0)=>{
     if(!targetSong) return;
     song.pptSlideIndex = state.pptSlideIndex;
-    song.pptLinesPerSlide = state.pptLinesPerSlide;
+    // (2026-07-13) persist per-device lines on exit/switch; prev: shared field
+    setSongPptLines(song, state.pptLinesPerSlide);
     persistSongPptState(true);
     state.pptSectionsOpen = false;
     state.pptKeepOpenOnSwitch = true;
+    state.pptSlideIndex = targetSlide >= 0 ? targetSlide : 0;
     state.currentId = targetSong.id;
     state.cueKeyIdx = null;
     renderViewer();
@@ -6410,6 +6697,12 @@ function wirePptOverlayEvents(song){
   fitPptSlideText();
   window._pptResizeHandler = ()=>{ fitPptSlideText(); };
   window.addEventListener('resize', window._pptResizeHandler);
+  // (2026-07-13) detect screen orientation changes in PPT; prev: resize only
+  window._pptOrientationHandler = ()=>{ setTimeout(()=>{ fitPptSlideText(); }, 80); };
+  window.addEventListener('orientationchange', window._pptOrientationHandler);
+  if(window.screen && window.screen.orientation){
+    window.screen.orientation.addEventListener('change', window._pptOrientationHandler);
+  }
   if(document.fonts && document.fonts.ready){
     document.fonts.ready.then(()=>{ if(state.viewerDisplayMode === 'ppt') fitPptSlideText(); }).catch(()=>{});
   }
@@ -6445,18 +6738,22 @@ function wirePptOverlayEvents(song){
 
   const blankBtn = document.getElementById('ppt-blank-btn');
   if(blankBtn) blankBtn.onclick = (e)=>{ e.stopPropagation(); blankBtn.blur(); toggleBlank(); };
-  const fsBtn = document.getElementById('ppt-fullscreen-btn');
-  if(fsBtn) fsBtn.onclick = (e)=>{ e.stopPropagation(); fsBtn.blur(); toggleFullscreen(); };
+  // (2026-07-13) wire force rotate button; prev: fullscreen button
+  const rotBtn = document.getElementById('ppt-rotate-btn');
+  if(rotBtn) rotBtn.onclick = (e)=>{ e.stopPropagation(); rotBtn.blur(); togglePptForceRotate(); };
 
+  // (2026-07-13) cycle Dark/Navy/Light PPT themes; prev: 2-state toggle
   const themeBtn = document.getElementById('ppt-theme-toggle');
   if(themeBtn){
     themeBtn.onclick = (e)=>{
       e.stopPropagation();
       themeBtn.blur();
-      state.pptTheme = state.pptTheme === 'light' ? 'dark' : 'light';
+      state.pptTheme = getNextPptTheme(state.pptTheme);
       try{ localStorage.setItem('cbp_ppt_theme', state.pptTheme); }catch(err){}
       overlay.setAttribute('data-ppt-theme', state.pptTheme);
-      themeBtn.innerHTML = `${pptThemeIcon(state.pptTheme)}<span class="ppt-btn-label">${state.pptTheme === 'dark' ? 'Light' : 'Dark'}</span>`;
+      const nextT = getNextPptTheme(state.pptTheme);
+      themeBtn.title = `Switch to ${getPptThemeLabel(nextT)} Theme`;
+      themeBtn.innerHTML = `${pptThemeIcon(nextT)}<span class="ppt-btn-label">${getPptThemeLabel(nextT)}</span>`;
     };
   }
   const exitBtn = document.getElementById('ppt-exit-btn');
@@ -6465,6 +6762,21 @@ function wirePptOverlayEvents(song){
   if(prevBtn) prevBtn.onclick = (e)=>{ e.stopPropagation(); prevBtn.blur(); goToSlide(state.pptSlideIndex - 1); };
   const nextBtn = document.getElementById('ppt-next-btn');
   if(nextBtn) nextBtn.onclick = (e)=>{ e.stopPropagation(); nextBtn.blur(); goToSlide(state.pptSlideIndex + 1); };
+
+  // (2026-07-13) instant touch interaction for PPT buttons; prev: click only
+  const topbarEl = overlay.querySelector('.ppt-topbar');
+  if(topbarEl){
+    topbarEl.addEventListener('pointerdown', (e)=>{
+      const btn = e.target && e.target.closest('button');
+      if(btn) btn.classList.add('is-touch-active');
+    }, { passive: true });
+    const clearTouchState = ()=>{
+      topbarEl.querySelectorAll('.is-touch-active').forEach(b => b.classList.remove('is-touch-active'));
+    };
+    topbarEl.addEventListener('pointerup', clearTouchState, { passive: true });
+    topbarEl.addEventListener('pointercancel', clearTouchState, { passive: true });
+    topbarEl.addEventListener('pointerleave', clearTouchState, { passive: true });
+  }
 
   // (2026-07-13) add 5%-step pinch zoom + swipe gestures in PPT; prev: swipe only
   let startX = 0, startY = 0, deltaX = 0, isSwiping = false, swipedRecently = false;
@@ -6536,8 +6848,20 @@ function wirePptOverlayEvents(song){
     const finalDy = endY - startY;
     if(Math.abs(finalDx) > Math.abs(finalDy) && Math.abs(finalDx) >= 35){
       markSwiped();
-      if(finalDx < 0) goToSlide(state.pptSlideIndex + 1);
-      else goToSlide(state.pptSlideIndex - 1);
+      // (2026-07-13) swipe left/right switches slides & songs in PPT; prev: slides only
+      if(finalDx < 0){
+        if(state.pptSlideIndex < slides.length - 1){
+          goToSlide(state.pptSlideIndex + 1);
+        } else if(nextSong){
+          switchPptSong(nextSong, 0);
+        }
+      } else {
+        if(state.pptSlideIndex > 0){
+          goToSlide(state.pptSlideIndex - 1);
+        } else if(prevSong){
+          switchPptSong(prevSong, 0);
+        }
+      }
     }
     deltaX = 0;
   }, { passive: true });
@@ -6556,8 +6880,20 @@ function wirePptOverlayEvents(song){
     const dy = e.clientY - mouseStartY;
     if(Math.abs(dx) > Math.abs(dy) && Math.abs(dx) >= 40){
       markSwiped();
-      if(dx < 0) goToSlide(state.pptSlideIndex + 1);
-      else goToSlide(state.pptSlideIndex - 1);
+      // (2026-07-13) pointer drag switches slides and songs in PPT; prev: slides only
+      if(dx < 0){
+        if(state.pptSlideIndex < slides.length - 1){
+          goToSlide(state.pptSlideIndex + 1);
+        } else if(nextSong){
+          switchPptSong(nextSong, 0);
+        }
+      } else {
+        if(state.pptSlideIndex > 0){
+          goToSlide(state.pptSlideIndex - 1);
+        } else if(prevSong){
+          switchPptSong(prevSong, 0);
+        }
+      }
     }
   });
   stage.addEventListener('pointercancel', ()=>{ isMouseDragging = false; });
@@ -6569,10 +6905,45 @@ function wirePptOverlayEvents(song){
       const now = Date.now();
       if(now - lastWheelSwipeAt < 260) return;
       lastWheelSwipeAt = now;
-      if(e.deltaX > 0) goToSlide(state.pptSlideIndex + 1);
-      else goToSlide(state.pptSlideIndex - 1);
+      if(e.deltaX > 0){
+        if(state.pptSlideIndex < slides.length - 1){
+          goToSlide(state.pptSlideIndex + 1);
+        } else if(nextSong){
+          switchPptSong(nextSong, 0);
+        }
+      } else {
+        if(state.pptSlideIndex > 0){
+          goToSlide(state.pptSlideIndex - 1);
+        } else if(prevSong){
+          switchPptSong(prevSong, 0);
+        }
+      }
     }
   }, { passive: false });
+
+  // (2026-07-13) swipe on PPT topbar directly switches songs; prev: tap buttons only
+  const pptTopbarEl = overlay.querySelector('.ppt-topbar');
+  if(pptTopbarEl){
+    let tbStartX = 0, tbStartY = 0, isTbSwiping = false;
+    pptTopbarEl.addEventListener('touchstart', (e)=>{
+      if(e.target && e.target.closest('button:not(#ppt-song-meta-btn)')) return;
+      if(e.touches && e.touches[0]){
+        isTbSwiping = true;
+        tbStartX = e.touches[0].clientX;
+        tbStartY = e.touches[0].clientY;
+      }
+    }, { passive: true });
+    pptTopbarEl.addEventListener('touchend', (e)=>{
+      if(!isTbSwiping || !e.changedTouches || !e.changedTouches[0]) return;
+      isTbSwiping = false;
+      const tDx = e.changedTouches[0].clientX - tbStartX;
+      const tDy = e.changedTouches[0].clientY - tbStartY;
+      if(Math.abs(tDx) > Math.abs(tDy) && Math.abs(tDx) >= 35){
+        if(tDx < 0 && nextSong) switchPptSong(nextSong, 0);
+        else if(tDx > 0 && prevSong) switchPptSong(prevSong, 0);
+      }
+    }, { passive: true });
+  }
 
   stage.onclick = (e)=>{
     if(swipedRecently) return;
@@ -6601,9 +6972,9 @@ function wirePptOverlayEvents(song){
     } else if(k === 'b' || k === 'B'){
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       toggleBlank();
-    } else if(k === 'f' || k === 'F'){
+    } else if(k === 'r' || k === 'R' || k === 'f' || k === 'F'){
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-      toggleFullscreen();
+      togglePptForceRotate();
     } else if(k === 'h' || k === 'H'){
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       toggleCleanMode();
@@ -6650,8 +7021,12 @@ function renderViewer(){
     if(state.pptKeepOpenOnSwitch){
       state.pptKeepOpenOnSwitch = false;
       state.viewerDisplayMode = 'ppt';
-      state.pptLinesPerSlide = (song.pptLinesPerSlide >= 1 && song.pptLinesPerSlide <= 4) ? song.pptLinesPerSlide : 2;
-      state.pptSlideIndex = (typeof song.pptSlideIndex === 'number' && song.pptSlideIndex >= 0) ? song.pptSlideIndex : 0;
+      // (2026-07-13) load per-device saved lines on song switch; prev: shared field
+      state.pptLinesPerSlide = getSongPptLines(song);
+      // (2026-07-13) default PPT slide index to visible Psalm slide; prev: song slide
+      state.pptSlideIndex = isPsalmSong(song)
+        ? ((typeof state.psalmMiniSlideIndex === 'number' && state.psalmMiniSlideIndex >= 0) ? state.psalmMiniSlideIndex : 0)
+        : ((typeof song.pptSlideIndex === 'number' && song.pptSlideIndex >= 0) ? song.pptSlideIndex : 0);
     } else {
       state.viewerDisplayMode = 'chords';
       state.pptReturnMode = 'chords';
@@ -6749,29 +7124,34 @@ function renderViewer(){
           }).join('')}
         </div>
       </div>
-      <!-- (2026-07-13) carousel slider track with next/previous slide peek; prev: single wrap -->
-      <div class="viewer-slider-track" id="viewer-slider-track">
-        ${prevSong ? renderPeekSlide(prevSong, false, fontSize) : ''}
-        <div class="chart-wrap chart-slide is-current" id="chart-wrap" style="font-size:${fontSize}px">
-          <!-- (2026-07-13) hardware subpixel scroll content container; prev: direct chart children -->
-          <div class="chart-scroll-content" id="chart-scroll-content">
-            ${renderSongSheetContent(song, false)}
+      <!-- (2026-07-13) isolate main content column for tablet horizontal; prev: flat body -->
+      <div class="viewer-main-content" id="viewer-main-content">
+        <!-- (2026-07-13) carousel slider track with next/previous slide peek; prev: single wrap -->
+        <div class="viewer-slider-track" id="viewer-slider-track">
+          ${prevSong ? renderPeekSlide(prevSong, false, fontSize) : ''}
+          <div class="chart-wrap chart-slide is-current" id="chart-wrap" style="font-size:${fontSize}px">
+            <!-- (2026-07-13) hardware subpixel scroll content container; prev: direct chart children -->
+            <div class="chart-scroll-content" id="chart-scroll-content">
+              ${renderSongSheetContent(song, false)}
+            </div>
           </div>
+          ${nextSong ? renderPeekSlide(nextSong, true, fontSize) : ''}
         </div>
-        ${nextSong ? renderPeekSlide(nextSong, true, fontSize) : ''}
-      </div>
-      <!-- (2026-07-13) toggleable scroll overlay & min speed 1; prev: always visible -->
-      <div class="scroll-overlay ${state.showSpeedControls === false ? 'hidden' : ''}" id="scroll-overlay">
-        <button class="scroll-square up" id="tri-up">${iconBigTriangleUp()}<span class="scroll-square-label">Faster</span></button>
-        <button class="scroll-square down" id="tri-down">${iconBigTriangleDown()}<span class="scroll-square-label">Slower</span></button>
-      </div>
-      <!-- (2026-07-13) autoscroll speed controls with restart button; prev: slider only -->
-      <div class="speed-slider-wrap hidden" id="speed-slider-wrap">
-        <button class="icon-btn playbar-restart" id="btn-slider-restart" title="Restart to top" style="width:28px;height:28px;padding:3px;color:var(--text);margin-right:2px;flex-shrink:0;">${iconRestart()}</button>
-        <span class="speed-slider-icon">${iconSpeedArrows()}</span>
-        <input type="range" id="speed-range-slider" min="1" max="100" value="${scrollSpeed}">
-        <!-- (2026-07-13) display speed value on speed pill; prev: slider only -->
-        <span class="speed-slider-val" id="speed-slider-val">${scrollSpeed}</span>
+        <!-- (2026-07-13) toggleable scroll overlay & min speed 1; prev: always visible -->
+        <div class="scroll-overlay ${state.showSpeedControls === false ? 'hidden' : ''}" id="scroll-overlay">
+          <button class="scroll-square up" id="tri-up">${iconBigTriangleUp()}<span class="scroll-square-label">Faster</span></button>
+          <button class="scroll-square down" id="tri-down">${iconBigTriangleDown()}<span class="scroll-square-label">Slower</span></button>
+        </div>
+        <!-- (2026-07-13) autoscroll speed controls with restart button; prev: slider only -->
+        <div class="speed-slider-wrap hidden" id="speed-slider-wrap">
+          <button class="icon-btn playbar-restart" id="btn-slider-restart" title="Restart to top" style="width:28px;height:28px;padding:3px;color:var(--text);margin-right:2px;flex-shrink:0;">${iconRestart()}</button>
+          <span class="speed-slider-icon">${iconSpeedArrows()}</span>
+          <input type="range" id="speed-range-slider" min="1" max="100" value="${scrollSpeed}">
+          <!-- (2026-07-13) display speed value on speed pill; prev: slider only -->
+          <span class="speed-slider-val" id="speed-slider-val">${scrollSpeed}</span>
+        </div>
+        <!-- (2026-07-13) mount split-screen Psalm PPT panel; prev: none -->
+        ${renderPsalmSplitPanelHtml(song)}
       </div>
       <!-- (2026-07-13) sticky piano tray at bottom of viewer; prev: none -->
       ${renderStickyPianoHtml(song)}
@@ -6825,11 +7205,8 @@ function renderViewer(){
     el.onclick = ()=>{
       const sid = el.dataset.viewerSongId;
       if(sid && sid !== song.id){
-        stopAutoscroll();
-        stopMetronome();
-        state.currentId = sid;
-        state.cueKeyIdx = null;
-        renderViewer();
+        // (2026-07-13) preserve current autoscroll state on song switch; prev: stop
+        openViewer(sid, state.cameFromSetlistId);
       }
     };
   });
@@ -7586,6 +7963,170 @@ function renderViewer(){
       if(Date.now() - lastCornerTouchAt < 450) return;
       handleCornerCheck(e.clientX, e.clientY);
     });
+  }
+
+  // (2026-07-13) wire Psalm split-screen paste, swipe & resize; prev: none
+  if(isPsalmSong(song)){
+    const activeSlot = (state.psalmActiveSlot >= 0 && state.psalmActiveSlot < 3) ? state.psalmActiveSlot : 0;
+    const slots = getPsalmSlots(song);
+    const savePsalmLyrics = (txt)=>{
+      const nextSlots = getPsalmSlots(song);
+      nextSlots[activeSlot] = txt;
+      song.psalmSlots = nextSlots;
+      if(activeSlot === 0) song.psalmLyrics = txt;
+      const idx = state.songs.findIndex(s => s.id === song.id);
+      if(idx >= 0) state.songs[idx] = song;
+      Store.saveSong(song).catch(()=>{});
+    };
+    document.querySelectorAll('.psalm-slot-btn[data-psalm-slot]').forEach(btn => {
+      btn.onclick = (e)=>{
+        e.stopPropagation();
+        const nextSlot = parseInt(btn.dataset.psalmSlot, 10);
+        if(isNaN(nextSlot) || nextSlot === activeSlot) return;
+        if(state.psalmEditing){
+          const ta = document.getElementById('psalm-lyrics-input');
+          if(ta) savePsalmLyrics(ta.value);
+        }
+        state.psalmActiveSlot = nextSlot;
+        state.psalmMiniSlideIndex = 0;
+        renderViewer();
+      };
+    });
+    const editBtn = document.getElementById('psalm-btn-edit');
+    if(editBtn) editBtn.onclick = ()=>{
+      if(state.psalmEditing){
+        const ta = document.getElementById('psalm-lyrics-input');
+        if(ta) savePsalmLyrics(ta.value);
+        state.psalmEditing = false;
+      } else {
+        state.psalmPanelCollapsed = false;
+        state.psalmEditing = true;
+      }
+      renderViewer();
+    };
+    const saveBtn = document.getElementById('psalm-btn-save');
+    if(saveBtn) saveBtn.onclick = ()=>{
+      const ta = document.getElementById('psalm-lyrics-input');
+      if(ta) savePsalmLyrics(ta.value);
+      state.psalmEditing = false;
+      state.psalmMiniSlideIndex = 0;
+      renderViewer();
+    };
+    const pasteBtn = document.getElementById('psalm-btn-paste-clip');
+    if(pasteBtn) pasteBtn.onclick = async ()=>{
+      try{
+        const clip = await navigator.clipboard.readText();
+        const ta = document.getElementById('psalm-lyrics-input');
+        if(ta && clip){ ta.value = clip; savePsalmLyrics(clip); }
+      }catch(e){ if(typeof showToast === 'function') showToast('Paste directly into the box'); }
+    };
+
+    // (2026-07-13) wire draggable line separator to resize Psalm split panel; prev: fixed height
+    const resizerEl = document.getElementById('psalm-split-resizer');
+    const panelEl = document.getElementById('psalm-split-panel');
+    // (2026-07-13) resize relative to viewer main content; prev: viewer-body-wrap
+    const bodyWrapEl = document.getElementById('viewer-main-content') || document.getElementById('viewer-body-wrap') || document.querySelector('.viewer-body');
+    if(resizerEl && panelEl && bodyWrapEl){
+      let dragging = false;
+      const applyHeightAtY = (clientY)=>{
+        const rect = bodyWrapEl.getBoundingClientRect();
+        if(rect.height <= 0) return;
+        const pct = Math.max(14, Math.min(78, ((rect.bottom - clientY) / rect.height) * 100));
+        panelEl.style.flex = `0 0 ${pct.toFixed(1)}%`;
+        try{ localStorage.setItem('ui:psalmSplitPct:' + getViewerDeviceBucket(), pct.toFixed(1)); }catch(e){}
+      };
+      const onMove = (e)=>{
+        if(!dragging) return;
+        const y = e.touches && e.touches[0] ? e.touches[0].clientY : e.clientY;
+        if(typeof y === 'number'){
+          if(e.cancelable) e.preventDefault();
+          applyHeightAtY(y);
+        }
+      };
+      const onStop = ()=>{
+        if(dragging){
+          dragging = false;
+          window.removeEventListener('mousemove', onMove);
+          window.removeEventListener('mouseup', onStop);
+          window.removeEventListener('touchmove', onMove);
+          window.removeEventListener('touchend', onStop);
+        }
+      };
+      resizerEl.addEventListener('mousedown', (e)=>{
+        dragging = true;
+        window.addEventListener('mousemove', onMove, { passive: false });
+        window.addEventListener('mouseup', onStop);
+      });
+      resizerEl.addEventListener('touchstart', (e)=>{
+        dragging = true;
+        window.addEventListener('touchmove', onMove, { passive: false });
+        window.addEventListener('touchend', onStop);
+      }, { passive: true });
+    }
+
+    const miniStage = document.getElementById('psalm-mini-stage');
+    if(miniStage){
+      let sx = 0, sy = 0, swiped = false, pinching = false, pStartDist = 0, pStartFs = 22, pSaveTimer = null;
+      const syncMini = ()=>{
+        const nextSlots = getPsalmSlots(song);
+        const nextLyrics = (nextSlots[activeSlot] || '').trim();
+        const nextSlides = nextLyrics ? buildPptSlides({ title: song.title, body: nextLyrics }, state.psalmMiniLines || 2) : [];
+        const nextCur = nextSlides[state.psalmMiniSlideIndex];
+        const counterEl = document.getElementById('psalm-mini-counter');
+        if(counterEl) counterEl.textContent = `${state.psalmMiniSlideIndex + 1}/${nextSlides.length}`;
+        if(nextCur && nextCur.lines && nextCur.lines.length > 0){
+          miniStage.innerHTML = nextCur.lines.map(l => `<div class="psalm-mini-lyric">${escapeHtml(String(l).toUpperCase())}</div>`).join('');
+        } else {
+          miniStage.innerHTML = nextLyrics ? '<div class="psalm-mini-empty"></div>' : `<div class="psalm-mini-empty">Tap Paste to add Psalm ${activeSlot+1} lyrics</div>`;
+        }
+      };
+      miniStage.addEventListener('touchstart', (e)=>{
+        if(e.touches.length === 2){
+          pinching = true;
+          swiped = true;
+          pStartDist = Math.hypot(e.touches[1].clientX - e.touches[0].clientX, e.touches[1].clientY - e.touches[0].clientY);
+          pStartFs = parseFloat(miniStage.style.fontSize) || 22;
+        } else if(e.touches.length === 1){
+          sx = e.touches[0].clientX; sy = e.touches[0].clientY; swiped = false;
+        }
+      }, { passive: true });
+      miniStage.addEventListener('touchmove', (e)=>{
+        if(pinching && e.touches.length === 2){
+          if(e.cancelable) e.preventDefault();
+          const dist = Math.hypot(e.touches[1].clientX - e.touches[0].clientX, e.touches[1].clientY - e.touches[0].clientY);
+          const nextFs = Math.max(14, Math.min(56, Math.round(pStartFs * (dist / Math.max(10, pStartDist)))));
+          miniStage.style.fontSize = nextFs + 'px';
+          const b = getViewerDeviceBucket();
+          if(!song.psalmMiniFontSizes || typeof song.psalmMiniFontSizes !== 'object') song.psalmMiniFontSizes = {};
+          song.psalmMiniFontSizes[b] = nextFs;
+          try{ localStorage.setItem('ui:psalmMiniFont:' + b, String(nextFs)); }catch(err){}
+          clearTimeout(pSaveTimer);
+          pSaveTimer = setTimeout(()=>{ Store.saveSong(song).catch(()=>{}); }, 350);
+        }
+      }, { passive: false });
+      miniStage.addEventListener('touchend', (e)=>{
+        if(pinching){
+          if(!e.touches || e.touches.length < 2){ pinching = false; setTimeout(()=>{ swiped = false; }, 250); }
+          return;
+        }
+        if(!e.changedTouches || !e.changedTouches[0]) return;
+        const dx = e.changedTouches[0].clientX - sx;
+        const dy = e.changedTouches[0].clientY - sy;
+        if(Math.abs(dx) > Math.abs(dy) && Math.abs(dx) >= 35){
+          swiped = true;
+          if(dx < 0 && state.psalmMiniSlideIndex < slides.length - 1){ state.psalmMiniSlideIndex++; syncMini(); }
+          else if(dx > 0 && state.psalmMiniSlideIndex > 0){ state.psalmMiniSlideIndex--; syncMini(); }
+        }
+      }, { passive: true });
+      // (2026-07-13) left/right half tap navigates slides without fullscreen; prev: center fullscreen
+      miniStage.onclick = (e)=>{
+        if(swiped){ swiped = false; return; }
+        const r = miniStage.getBoundingClientRect();
+        const xRatio = (e.clientX - r.left) / Math.max(1, r.width);
+        if(xRatio < 0.45 && state.psalmMiniSlideIndex > 0){ state.psalmMiniSlideIndex--; syncMini(); }
+        else if(xRatio >= 0.45 && state.psalmMiniSlideIndex < slides.length - 1){ state.psalmMiniSlideIndex++; syncMini(); }
+      };
+    }
   }
   // (2026-07-13) bind PPT overlay swipe & button events; prev: none
   wirePptOverlayEvents(song);
@@ -11503,8 +12044,8 @@ function wireModal(){
         if(mode === 'ppt'){
           state.pptReturnMode = state.viewerDisplayMode === 'lyrics' ? 'lyrics' : 'chords';
           state.viewerDisplayMode = 'ppt';
-          // (2026-07-13) default to 2L mode when opening PPT; prev: kept last mode
-          state.pptLinesPerSlide = 2;
+          // (2026-07-13) open PPT with saved per-device lines; prev: forced 2L
+          state.pptLinesPerSlide = getSongPptLines(song);
           state.pptSlideIndex = 0;
           stopAutoscroll();
           // (2026-07-13) open PPT instantly without modal transition; prev: closeActiveModal
@@ -12251,6 +12792,11 @@ function subscribeRealtimeSync(){
         return true;
       }
       if(state.view === 'viewer'){
+        // (2026-07-13) exit PPT cleanly on Android back button; prev: skipped exitPpt
+        if(state.viewerDisplayMode === 'ppt'){
+          const pptExit = document.getElementById('ppt-exit-btn');
+          if(pptExit){ pptExit.click(); return true; }
+        }
         stopAutoscroll();
         stopMetronome();
         if(state.cameFromSetlistId){

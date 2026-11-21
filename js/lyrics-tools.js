@@ -145,7 +145,37 @@
     return `${base}.${ext}`;
   }
 
-  function triggerBlobDownload(blob, filename){
+  // (2026-07-13) native APK Downloads save + push notification; prev: browser link only
+  function blobToBase64(blob){
+    return new Promise((resolve, reject)=>{
+      const r = new FileReader();
+      r.onerror = reject;
+      r.onload = ()=>{
+        const str = String(r.result || '');
+        const idx = str.indexOf(',');
+        resolve(idx >= 0 ? str.slice(idx + 1) : str);
+      };
+      r.readAsDataURL(blob);
+    });
+  }
+
+  async function triggerBlobDownload(blob, filename){
+    try{
+      const cap = typeof window !== 'undefined' ? window.Capacitor : null;
+      const isNative = !!(cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform());
+      const plugin = cap && ((cap.Plugins && cap.Plugins.GoogleOneTap) || (typeof cap.registerPlugin === 'function' ? cap.registerPlugin('GoogleOneTap') : null));
+      if(isNative && plugin && typeof plugin.saveFileToDownloads === 'function'){
+        const base64Data = await blobToBase64(blob);
+        const res = await plugin.saveFileToDownloads({
+          filename,
+          mimeType: blob.type || 'application/octet-stream',
+          base64Data
+        });
+        const dir = (res && res.directory) || 'Downloads/ChoirBookPro';
+        if(typeof window.showToast === 'function') window.showToast(`Saved to ${dir}/${filename}`);
+        return;
+      }
+    }catch(e){}
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -315,47 +345,68 @@
     replaceBtn.onclick = ()=> applyText('replace');
   };
 
-  /* ---------------- 2. STRUCTURED SONG PARSER FOR EXPORT ---------------- */
-  function buildExportBlocks(song, lyricsOnly){
-    const offset = (song && song.transposeOffset) || 0;
-    let body = (song && song.body) || '';
-    if(offset && typeof window.transposeBody === 'function' && typeof window.getEffectiveSongKey === 'function'){
-      try{
-        const effKey = window.getEffectiveSongKey(song);
-        const preferFlat = window.FLAT_KEYS && window.FLAT_KEYS.has(window.transposeKeyLabel(effKey, offset));
-        body = window.transposeBody(body, offset, preferFlat);
-      }catch(e){}
-    }
-    const rawLines = body.split('\n');
-    const classify = typeof window.classifyLine === 'function' ? window.classifyLine : (()=>'lyric');
-    const blocks = [];
+  /* ---------------- 2. CLEAN LYRICS-ONLY PARSER FOR EXPORT ---------------- */
+  // (2026-07-13) standalone lyrics-only parser starting at first Verse/Chorus; prev: leaked chords
+  const EXPORT_CHORD_TOK_RE = /^[A-G][#b]?(?:m|maj|min|dim|aug|sus|add|M)?[0-9]*(?:\/[A-G][#b]?)?$/;
+  const EXPORT_NOTE_TOK_RE = /^[a-g][#b]?[0-9]?$/;
+  const EXPORT_LYRIC_SECTION_RE = /^(?:Verse|Chorus|Cho|Koro|Kuro|Coro|Refrain|Ref|Bridge|Pre-?Chorus|Post-?Chorus|Ending|Coda|Tag|Finale|Stanza|Estropa|Berso|Tugon|Tubag|Antiphon|Antipona|Himaya)[\s.:\-0-9IVX]*$/i;
+  const EXPORT_ROMAN_OR_NUM_RE = /^(?:(?:I|II|III|IV|V|VI|VII|VIII|IX|X)[.:\)]?|\d{1,2}[.:\)]|[VCB]\d{1,2}[.:\)]?)$/;
+  const EXPORT_SKIP_SECTION_RE = /^(?:Intro|Introduction|Interlude|Instrumental|Outro)[\s.:\-0-9IVX]*$/i;
+  const EXPORT_META_LINE_RE = /^(?:music\b|tempo\b|transpose\b|capo\b|key\b|style\b|voice\b|dual\s*voice\b|acmp\b|entrance\s*:|offertory\s*:|communion\s*:|recessional\s*:|kyrie\s*:|gloria\s*:|sanctus\s*:)/i;
 
+  function isExportChordOrMelodyLine(raw){
+    const s = String(raw || '').trim();
+    if(!s) return false;
+    if(s.startsWith('>') || s.startsWith('<')) return true;
+    if(/^[=\-_]{4,}$/.test(s)) return true;
+    const toks = s.replace(/[()\[\],\-|]/g, ' ').split(/\s+/).filter(Boolean);
+    if(toks.length === 0) return true;
+    const chordHits = toks.filter(t => EXPORT_CHORD_TOK_RE.test(t) || t === 'N.C.' || t === '%').length;
+    if(chordHits / toks.length >= 0.7) return true;
+    const noteHits = toks.filter(t => EXPORT_NOTE_TOK_RE.test(t)).length;
+    if(toks.length >= 3 && noteHits / toks.length >= 0.75) return true;
+    return false;
+  }
+
+  function isExportLyricSectionHeader(raw){
+    const s = String(raw || '').trim().replace(/^[\[\(]|[\]\)]$/g, '').trim();
+    if(!s) return false;
+    return EXPORT_LYRIC_SECTION_RE.test(s) || EXPORT_ROMAN_OR_NUM_RE.test(s);
+  }
+
+  function buildExportBlocks(song){
+    const body = (song && song.body) || '';
+    const rawLines = body.split(/\r?\n/);
+
+    // Start at the first real Verse / Chorus / Koro / Roman numeral section if present
+    let startIdx = 0;
     for(let i = 0; i < rawLines.length; i++){
+      if(isExportLyricSectionHeader(rawLines[i])){
+        startIdx = i;
+        break;
+      }
+    }
+
+    const blocks = [];
+    for(let i = startIdx; i < rawLines.length; i++){
       const line = rawLines[i];
-      const cls = classify(line);
-      if(cls === 'melody' || cls === 'divider'){
-        continue;
-      } else if(cls === 'blank'){
+      const trimmed = line.trim();
+      if(!trimmed){
         if(blocks.length > 0 && blocks[blocks.length - 1].type !== 'blank'){
           blocks.push({ type: 'blank', lines: [] });
         }
-      } else if(cls === 'section'){
-        const label = line.replace(/^[\[\(]|[\]\)]$/g, '').trim();
-        blocks.push({ type: 'section', lines: [label] });
-      } else if(cls === 'chord' || cls === 'bracket'){
-        if(lyricsOnly) continue;
-        const cleanChord = line.replace(/^>/, '').replace(/[<>]/g, '');
-        const nextLine = i + 1 < rawLines.length ? rawLines[i + 1] : null;
-        if(nextLine !== null && classify(nextLine) === 'lyric'){
-          blocks.push({ type: 'chord_lyric', chord: cleanChord, lyric: nextLine.replace(/<[^>]+>/g, '') });
-          i++;
-        } else {
-          blocks.push({ type: 'chord', lines: [cleanChord] });
-        }
-      } else {
-        const clean = line.replace(/<[^>]+>/g, '');
-        blocks.push({ type: 'lyric', lines: [clean] });
+        continue;
       }
+      if(isExportChordOrMelodyLine(trimmed)) continue;
+      const unwrapped = trimmed.replace(/^[\[\(]|[\]\)]$/g, '').trim();
+      if(EXPORT_SKIP_SECTION_RE.test(unwrapped)) continue;
+      if(EXPORT_META_LINE_RE.test(unwrapped)) continue;
+      if(isExportLyricSectionHeader(trimmed)){
+        blocks.push({ type: 'section', lines: [unwrapped.replace(/:+\s*$/, '')] });
+        continue;
+      }
+      const clean = trimmed.replace(/<[^>]+>/g, '').trim();
+      if(clean) blocks.push({ type: 'lyric', lines: [clean] });
     }
     while(blocks.length > 0 && blocks[blocks.length - 1].type === 'blank') blocks.pop();
     return blocks;
@@ -673,8 +724,15 @@
 
   window.exportSongAsPdf = function exportSongAsPdf(song, options){
     if(!song) return;
-    const lyricsOnly = !!(options && options.lyricsOnly);
-    const html = buildPrintableSongHtml(song, lyricsOnly, false);
+    const html = buildPrintableSongHtml(song, true, false);
+    // (2026-07-13) save printable sheet to Downloads with notification on APK; prev: iframe print only
+    const cap = typeof window !== 'undefined' ? window.Capacitor : null;
+    if(cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform()){
+      const title = (typeof window.cleanSongTitleForDisplay === 'function' ? window.cleanSongTitleForDisplay(song.title) : song.title) || 'Untitled Song';
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      triggerBlobDownload(blob, safeFilename(title + ' (Printable)', 'html'));
+      return;
+    }
     const iframe = document.createElement('iframe');
     iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;';
     document.body.appendChild(iframe);

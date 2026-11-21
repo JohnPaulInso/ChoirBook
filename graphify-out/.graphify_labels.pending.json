@@ -1,8 +1,7 @@
 {
-  "0": "app.js",
-  "1": "modalHtml",
-  "2": "buildSongListRowsHtml",
-  "3": "renderListView",
-  "5": "renderEditor",
-  "27": "renderViewer"
+  "10": "GoogleOneTapPlugin.java",
+  "30": "modalHtml",
+  "31": "lyrics-tools.js",
+  "32": ".postDownloadNotification",
+  "33": "getCueChordMap"
 }

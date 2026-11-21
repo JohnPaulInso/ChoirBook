@@ -1,6 +1,6 @@
 // (2026-07-13) bump sw shell cache to v49; prev: v48
-// (2026-07-13) bump cache to v113 & include lyrics-tools.js; prev: v112
-const CACHE_NAME = 'songbook-shell-v113';
+// (2026-07-13) bump cache to v122 & precache piano audio; prev: v121
+const CACHE_NAME = 'songbook-shell-v122';
 const SHELL_FILES = [
   './index.html',
   './css/style.css',
@@ -11,7 +11,21 @@ const SHELL_FILES = [
   './icons/icon-192.png',
   './icons/icon-512.png',
   './MASS%20SONGS%20BOGO%20-%20JPI.gsma',
-  './MISA%20DE%20GALLO%20BOGO%20CEBU%20-%20JPI.gsma'
+  './MISA%20DE%20GALLO%20BOGO%20CEBU%20-%20JPI.gsma',
+  './audio/piano/A2.mp3',
+  './audio/piano/A3.mp3',
+  './audio/piano/A4.mp3',
+  './audio/piano/A5.mp3',
+  './audio/piano/C3.mp3',
+  './audio/piano/C4.mp3',
+  './audio/piano/C5.mp3',
+  './audio/piano/C6.mp3',
+  './audio/piano/Ds3.mp3',
+  './audio/piano/Ds4.mp3',
+  './audio/piano/Ds5.mp3',
+  './audio/piano/Fs3.mp3',
+  './audio/piano/Fs4.mp3',
+  './audio/piano/Fs5.mp3'
 ];
 
 self.addEventListener('install', (event) => {
