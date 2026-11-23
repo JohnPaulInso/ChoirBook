@@ -1411,6 +1411,25 @@ body.theme-light .dropdown-item:active {
   transition: none !important;
   overflow: hidden;
 }
+/* (2026-07-13) CSS 90deg landscape fallback when portrait lock fails; prev: none */
+.ppt-presentation-overlay.is-visual-landscape {
+  top: 50%;
+  left: 50%;
+  right: auto;
+  bottom: auto;
+  width: 100vh;
+  width: 100dvh;
+  height: 100vw;
+  height: 100dvw;
+  transform: translate(-50%, -50%) rotate(90deg);
+  transform-origin: center center;
+}
+/* (2026-07-13) smooth fade-out when swiping down to exit PPT; prev: instant */
+.ppt-presentation-overlay.is-swipe-exiting {
+  opacity: 0;
+  transition: opacity 190ms ease-out !important;
+  pointer-events: none;
+}
 /* (2026-07-13) clean PPT overlay container; prev: broken rotate transform */
 .ppt-inner-container {
   width: 100%;

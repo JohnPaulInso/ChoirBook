@@ -1,6 +1,6 @@
 // (2026-07-13) bump sw shell cache to v49; prev: v48
-// (2026-07-13) bump cache to v122 & precache piano audio; prev: v121
-const CACHE_NAME = 'songbook-shell-v122';
+// (2026-07-13) bump cache to v125 for mobile PPT swipe threshold; prev: v124
+const CACHE_NAME = 'songbook-shell-v125';
 const SHELL_FILES = [
   './index.html',
   './css/style.css',

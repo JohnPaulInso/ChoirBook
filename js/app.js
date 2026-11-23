@@ -6400,6 +6400,47 @@ function wirePptOverlayEvents(song){
   if(!overlay || !stage || !content) return;
 
   acquirePptWakeLock();
+  // (2026-07-13) force horizontal via native lock + CSS fallback; prev: API only
+  const syncPptVisualOrientation = ()=>{
+    const isPortraitVp = window.innerHeight > window.innerWidth;
+    const shouldVisual = state.pptOrientationLock === 'landscape' && isPortraitVp;
+    state.pptVisuallyRotated = shouldVisual;
+    overlay.classList.toggle('is-visual-landscape', shouldVisual);
+  };
+  const applyPptOrientationLock = async (mode)=>{
+    state.pptOrientationLock = mode || null;
+    try{
+      const gPlugin = window.Capacitor?.Plugins?.GoogleOneTap || (typeof window.Capacitor?.registerPlugin === 'function' ? window.Capacitor.registerPlugin('GoogleOneTap') : null);
+      if(gPlugin && typeof gPlugin.setOrientation === 'function'){
+        await gPlugin.setOrientation({ mode: mode || 'auto' }).catch(()=>{});
+      }
+    }catch(e){}
+    if(mode){
+      try{ if(window.Capacitor?.Plugins?.ScreenOrientation?.lock) await window.Capacitor.Plugins.ScreenOrientation.lock({ orientation: mode }); }catch(e){}
+      try{ if(window.screen?.orientation?.lock) await window.screen.orientation.lock(mode); }catch(e){}
+    } else {
+      try{ if(window.Capacitor?.Plugins?.ScreenOrientation?.unlock) await window.Capacitor.Plugins.ScreenOrientation.unlock(); }catch(e){}
+      try{ if(window.screen?.orientation?.unlock) window.screen.orientation.unlock(); }catch(e){}
+    }
+    const rBtn = document.getElementById('ppt-rotate-btn');
+    if(rBtn){
+      rBtn.classList.toggle('is-active', !!mode);
+      rBtn.title = mode
+        ? ('Orientation: Locked ' + (mode === 'landscape' ? 'Horizontal' : 'Vertical') + ' (Tap to unlock)')
+        : 'Orientation: Auto-rotate (Tap to lock Horizontal)';
+    }
+    syncPptVisualOrientation();
+    if(typeof fitPptSlideText === 'function') fitPptSlideText();
+    setTimeout(()=>{
+      if(state.viewerDisplayMode !== 'ppt') return;
+      syncPptVisualOrientation();
+      if(typeof fitPptSlideText === 'function') fitPptSlideText();
+    }, 180);
+  };
+  if(!state.pptOrientationLock){
+    state.pptOrientationLock = 'landscape';
+  }
+  applyPptOrientationLock(state.pptOrientationLock);
   window._pptVisibilityHandler = ()=>{
     if(document.visibilityState === 'visible' && state.viewerDisplayMode === 'ppt') acquirePptWakeLock();
   };
@@ -6554,58 +6595,19 @@ function wirePptOverlayEvents(song){
     fitPptSlideText();
   };
 
-  // (2026-07-13) toggle rotation lock & auto-rotate in PPT; prev: CSS rotate
+  // (2026-07-13) toggle horizontal lock via unified helper; prev: missed native
   const togglePptForceRotate = async ()=>{
-    const rotBtn = document.getElementById('ppt-rotate-btn');
-    const isCurLandscape = window.innerWidth > window.innerHeight;
-
-    let nextLock = null;
-    if(!state.pptOrientationLock){
-      nextLock = 'landscape';
-    } else if(state.pptOrientationLock === 'landscape'){
-      nextLock = isCurLandscape ? null : 'portrait';
-    } else {
-      nextLock = null;
-    }
-
-    state.pptOrientationLock = nextLock;
-
-    if(nextLock){
-      try{
-        if(window.Capacitor?.Plugins?.ScreenOrientation?.lock){
-          await window.Capacitor.Plugins.ScreenOrientation.lock({ orientation: nextLock });
-        }
-      }catch(err){}
-      try{
-        if(window.screen?.orientation?.lock){
-          await window.screen.orientation.lock(nextLock);
-        }
-      }catch(err){}
-      if(rotBtn){
-        rotBtn.classList.add('is-active');
-        rotBtn.title = 'Orientation: Locked ' + (nextLock === 'landscape' ? 'Horizontal' : 'Vertical') + ' (Tap to unlock)';
-      }
-    } else {
-      try{
-        if(window.Capacitor?.Plugins?.ScreenOrientation?.unlock){
-          await window.Capacitor.Plugins.ScreenOrientation.unlock();
-        }
-      }catch(err){}
-      try{
-        if(window.screen?.orientation?.unlock){
-          window.screen.orientation.unlock();
-        }
-      }catch(err){}
-      if(rotBtn){
-        rotBtn.classList.remove('is-active');
-        rotBtn.title = 'Orientation: Auto-rotate (Tap to lock)';
-      }
-    }
-    setTimeout(()=>{ fitPptSlideText(); }, 120);
+    const nextLock = state.pptOrientationLock === 'landscape' ? null : 'landscape';
+    await applyPptOrientationLock(nextLock);
   };
 
   const exitPpt = ()=>{
     song.pptSlideIndex = state.pptSlideIndex;
+    try{
+      const map = JSON.parse(localStorage.getItem('ui:pptSlidePositions') || '{}') || {};
+      map[song.id] = state.pptSlideIndex;
+      localStorage.setItem('ui:pptSlidePositions', JSON.stringify(map));
+    }catch(e){}
     // (2026-07-13) persist per-device lines on exit/switch; prev: shared field
     setSongPptLines(song, state.pptLinesPerSlide);
     // (2026-07-13) persist Psalm mini slide index on exit; prev: unsynced
@@ -6617,11 +6619,14 @@ function wirePptOverlayEvents(song){
     state.pptSectionsOpen = false;
     // (2026-07-13) unlock orientation on PPT exit; prev: unlock only
     try{
+      const gPlugin = window.Capacitor?.Plugins?.GoogleOneTap || (typeof window.Capacitor?.registerPlugin === 'function' ? window.Capacitor.registerPlugin('GoogleOneTap') : null);
+      if(gPlugin && typeof gPlugin.setOrientation === 'function') gPlugin.setOrientation({ mode: 'auto' }).catch(()=>{});
       if(window.Capacitor?.Plugins?.ScreenOrientation?.unlock) window.Capacitor.Plugins.ScreenOrientation.unlock().catch(()=>{});
-      else if(screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
+      if(screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
     }catch(e){}
     state.pptOrientationLock = null;
     state.pptVisuallyRotated = false;
+    overlay.classList.remove('is-visual-landscape');
     const rotBtn = document.getElementById('ppt-rotate-btn');
     if(rotBtn) rotBtn.classList.remove('is-active');
     if(window._pptOrientationHandler){
@@ -6695,10 +6700,10 @@ function wirePptOverlayEvents(song){
   rebuildSectionJumpBar();
 
   fitPptSlideText();
-  window._pptResizeHandler = ()=>{ fitPptSlideText(); };
+  window._pptResizeHandler = ()=>{ syncPptVisualOrientation(); fitPptSlideText(); };
   window.addEventListener('resize', window._pptResizeHandler);
-  // (2026-07-13) detect screen orientation changes in PPT; prev: resize only
-  window._pptOrientationHandler = ()=>{ setTimeout(()=>{ fitPptSlideText(); }, 80); };
+  // (2026-07-13) sync visual rotation on orientation change; prev: fit text only
+  window._pptOrientationHandler = ()=>{ setTimeout(()=>{ syncPptVisualOrientation(); fitPptSlideText(); }, 80); };
   window.addEventListener('orientationchange', window._pptOrientationHandler);
   if(window.screen && window.screen.orientation){
     window.screen.orientation.addEventListener('change', window._pptOrientationHandler);
@@ -6804,9 +6809,30 @@ function wirePptOverlayEvents(song){
     startY = e.touches[0].clientY;
     deltaX = 0;
     isSwiping = true;
+    isVerticalDismiss = false;
+    if(pptInnerEl){
+      pptInnerEl.style.transition = 'none';
+    }
   }, { passive: true });
 
+  // (2026-07-13) longer swipe-down travel + fade-out exit animation; prev: instant 140px
+  const pptInnerEl = overlay.querySelector('.ppt-inner-container');
+  let isVerticalDismiss = false;
+  let isDismissExiting = false;
+  // (2026-07-13) scale swipe-down travel to mobile landscape height; prev: 195px min
+  const getPptDismissThreshold = ()=>{
+    const h = overlay.clientHeight || window.innerHeight || 500;
+    return Math.min(230, Math.max(145, Math.round(h * 0.42)));
+  };
+  const resetPptDismissVisual = ()=>{
+    if(!pptInnerEl) return;
+    pptInnerEl.style.transition = 'transform 180ms ease-out, opacity 180ms ease-out';
+    pptInnerEl.style.transform = '';
+    pptInnerEl.style.opacity = '';
+  };
+
   overlay.addEventListener('touchmove', (e)=>{
+    if(isDismissExiting) return;
     if(isPinching && e.touches && e.touches.length === 2){
       e.stopPropagation();
       if(e.cancelable) e.preventDefault();
@@ -6822,15 +6848,44 @@ function wirePptOverlayEvents(song){
     }
     if(!isSwiping || !e.touches || e.touches.length !== 1) return;
     e.stopPropagation();
-    const dx = e.touches[0].clientX - startX;
-    const dy = e.touches[0].clientY - startY;
-    if(Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 6){
+    // (2026-07-13) remap swipe axes when visually rotated 90deg; prev: raw axes
+    const rawDx = e.touches[0].clientX - startX;
+    const rawDy = e.touches[0].clientY - startY;
+    const dx = state.pptVisuallyRotated ? rawDy : rawDx;
+    const dy = state.pptVisuallyRotated ? -rawDx : rawDy;
+    if(!isVerticalDismiss && Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 6){
       deltaX = dx;
       if(e.cancelable) e.preventDefault();
+    } else if(dy > 28 && dy > Math.abs(dx) * 1.8){
+      isVerticalDismiss = true;
+      if(e.cancelable) e.preventDefault();
+      if(pptInnerEl){
+        const threshold = getPptDismissThreshold();
+        const dragY = Math.max(0, dy - 28);
+        const progress = Math.min(1, dragY / threshold);
+        pptInnerEl.style.transition = 'none';
+        pptInnerEl.style.transform = 'translate3d(0,' + Math.round(dragY * 0.65) + 'px,0)';
+        pptInnerEl.style.opacity = String(Math.max(0.22, 1 - progress * 0.72));
+      }
+    } else if(isVerticalDismiss && pptInnerEl){
+      if(e.cancelable) e.preventDefault();
+      const dragY = Math.max(0, dy - 28);
+      const progress = Math.min(1, dragY / getPptDismissThreshold());
+      pptInnerEl.style.transform = 'translate3d(0,' + Math.round(dragY * 0.65) + 'px,0)';
+      pptInnerEl.style.opacity = String(Math.max(0.22, 1 - progress * 0.72));
     }
   }, { passive: false });
 
+  overlay.addEventListener('touchcancel', ()=>{
+    isSwiping = false;
+    if(isVerticalDismiss){
+      isVerticalDismiss = false;
+      resetPptDismissVisual();
+    }
+  }, { passive: true });
+
   overlay.addEventListener('touchend', (e)=>{
+    if(isDismissExiting) return;
     if(isPinching){
       e.stopPropagation();
       if(!e.touches || e.touches.length < 2){
@@ -6844,8 +6899,35 @@ function wirePptOverlayEvents(song){
     isSwiping = false;
     const endX = (e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0].clientX : (startX + deltaX);
     const endY = (e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0].clientY : startY;
-    const finalDx = endX - startX;
-    const finalDy = endY - startY;
+    // (2026-07-13) remap touchend swipe axes for rotated overlay; prev: raw axes
+    const rawFinalDx = endX - startX;
+    const rawFinalDy = endY - startY;
+    const finalDx = state.pptVisuallyRotated ? rawFinalDy : rawFinalDx;
+    const finalDy = state.pptVisuallyRotated ? -rawFinalDx : rawFinalDy;
+    const dismissThreshold = getPptDismissThreshold();
+    // (2026-07-13) deliberate long swipe-down with fade-out exits PPT; prev: 140px instant
+    if(isVerticalDismiss && finalDy >= dismissThreshold && finalDy > Math.abs(finalDx) * 2.2){
+      isVerticalDismiss = false;
+      isDismissExiting = true;
+      markSwiped();
+      if(pptInnerEl){
+        const exitShift = Math.round((overlay.clientHeight || 500) * 0.42);
+        pptInnerEl.style.transition = 'transform 190ms ease-out, opacity 190ms ease-out';
+        pptInnerEl.style.transform = 'translate3d(0,' + exitShift + 'px,0)';
+        pptInnerEl.style.opacity = '0';
+      }
+      overlay.classList.add('is-swipe-exiting');
+      setTimeout(()=>{ exitPpt(); }, 190);
+      deltaX = 0;
+      return;
+    }
+    if(isVerticalDismiss){
+      isVerticalDismiss = false;
+      markSwiped();
+      resetPptDismissVisual();
+      deltaX = 0;
+      return;
+    }
     if(Math.abs(finalDx) > Math.abs(finalDy) && Math.abs(finalDx) >= 35){
       markSwiped();
       // (2026-07-13) swipe left/right switches slides & songs in PPT; prev: slides only
@@ -6876,8 +6958,10 @@ function wirePptOverlayEvents(song){
   stage.addEventListener('pointerup', (e)=>{
     if(!isMouseDragging || e.pointerType === 'touch') return;
     isMouseDragging = false;
-    const dx = e.clientX - mouseStartX;
-    const dy = e.clientY - mouseStartY;
+    const rawMouseDx = e.clientX - mouseStartX;
+    const rawMouseDy = e.clientY - mouseStartY;
+    const dx = state.pptVisuallyRotated ? rawMouseDy : rawMouseDx;
+    const dy = state.pptVisuallyRotated ? -rawMouseDx : rawMouseDy;
     if(Math.abs(dx) > Math.abs(dy) && Math.abs(dx) >= 40){
       markSwiped();
       // (2026-07-13) pointer drag switches slides and songs in PPT; prev: slides only
@@ -6953,7 +7037,10 @@ function wirePptOverlayEvents(song){
       return;
     }
     const rect = stage.getBoundingClientRect();
-    const xRatio = (e.clientX - rect.left) / Math.max(1, rect.width);
+    // (2026-07-13) remap tap zones for 90deg rotated stage; prev: clientX only
+    const xRatio = state.pptVisuallyRotated
+      ? (e.clientY - rect.top) / Math.max(1, rect.height)
+      : (e.clientX - rect.left) / Math.max(1, rect.width);
     if(xRatio < 0.3) goToSlide(state.pptSlideIndex - 1);
     else if(xRatio > 0.7) goToSlide(state.pptSlideIndex + 1);
     else toggleCleanMode();
@@ -12046,7 +12133,14 @@ function wireModal(){
           state.viewerDisplayMode = 'ppt';
           // (2026-07-13) open PPT with saved per-device lines; prev: forced 2L
           state.pptLinesPerSlide = getSongPptLines(song);
-          state.pptSlideIndex = 0;
+          let memSlide = (typeof song.pptSlideIndex === 'number' && song.pptSlideIndex >= 0) ? song.pptSlideIndex : -1;
+          if(memSlide < 0){
+            try{
+              const map = JSON.parse(localStorage.getItem('ui:pptSlidePositions') || '{}') || {};
+              if(typeof map[song.id] === 'number' && map[song.id] >= 0) memSlide = map[song.id];
+            }catch(e){}
+          }
+          state.pptSlideIndex = memSlide >= 0 ? memSlide : 0;
           stopAutoscroll();
           // (2026-07-13) open PPT instantly without modal transition; prev: closeActiveModal
           state.modal = null;
