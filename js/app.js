@@ -1281,6 +1281,7 @@ async function moveToTrash(type, item){
   state.trash.unshift(trashEntry);
   LocalAdapter.save('meta:trash', state.trash);
   Store.saveTrash(state.trash).catch(()=>{});
+  return trashEntry.id;
 }
 
 async function restoreFromTrash(trashId){
@@ -3141,12 +3142,42 @@ function renderAuthView(){
     };
   }
 }
-function showToast(msg){
+// (2026-07-13) full-width bottom snackbar with optional Undo button; prev: plain toast
+let _activeToastEl = null;
+let _activeToastTimer = null;
+function showToast(msg, opts){
+  if(_activeToastTimer){ clearTimeout(_activeToastTimer); _activeToastTimer = null; }
+  if(_activeToastEl){ _activeToastEl.remove(); _activeToastEl = null; }
+  const hasUndo = !!(opts && typeof opts.undo === 'function');
+  const duration = (opts && opts.duration) ? opts.duration : (hasUndo ? 4800 : 2500);
   const t = document.createElement('div');
-  t.className='toast'; t.textContent=msg;
-  app.appendChild(t);
+  t.className = 'toast';
+  const msgEl = document.createElement('span');
+  msgEl.className = 'toast-msg';
+  msgEl.textContent = msg;
+  t.appendChild(msgEl);
+  const dismiss = ()=>{
+    if(_activeToastTimer){ clearTimeout(_activeToastTimer); _activeToastTimer = null; }
+    t.classList.remove('show');
+    setTimeout(()=>{ if(t.parentNode) t.remove(); if(_activeToastEl === t) _activeToastEl = null; }, 240);
+  };
+  if(hasUndo){
+    const uBtn = document.createElement('button');
+    uBtn.type = 'button';
+    uBtn.className = 'toast-undo-btn';
+    uBtn.textContent = (opts && opts.undoLabel) || 'Undo';
+    uBtn.onclick = async (e)=>{
+      e.stopPropagation();
+      uBtn.disabled = true;
+      dismiss();
+      try{ await opts.undo(); }catch(err){ console.error('Undo failed:', err); }
+    };
+    t.appendChild(uBtn);
+  }
+  document.body.appendChild(t);
+  _activeToastEl = t;
   requestAnimationFrame(()=>t.classList.add('show'));
-  setTimeout(()=>{ t.classList.remove('show'); setTimeout(()=>t.remove(),300); }, 1800);
+  _activeToastTimer = setTimeout(dismiss, duration);
 }
 
 /* ============================================================
@@ -3720,8 +3751,8 @@ function getOrderedSongSections(songs){
     return 0;
   });
 
-  // (2026-07-13) preserve empty mass part dividers in setlists only; prev: all views
-  const shouldKeepEmptyParts = !!state.filterSetlistId && !state.favOnly && !state.search?.trim() && !state.filterMassPart && !state.filterFlag;
+  // (2026-07-13) show all mass part dividers in all masses/folders; prev: setlists only
+  const shouldKeepEmptyParts = !state.favOnly && !state.search?.trim() && !state.filterMassPart && !state.filterFlag;
   const coreParts = new Set(DEFAULT_MASS_PARTS.filter(p => p !== 'Other'));
 
   activeParts.forEach(mp=>{
@@ -4349,8 +4380,14 @@ function renderListView(animateChipScroll){
   // (2026-07-13) restore scroll position & record live scroll offsets; prev: single check
   const initialLw = document.getElementById('list-wrap');
   if(initialLw){
+    // (2026-07-13) force instant scroll restore on list return; prev: animated
     if(prevListScroll > 0){
-      initialLw.scrollTop = prevListScroll;
+      initialLw.style.scrollBehavior = 'auto';
+      if(typeof initialLw.scrollTo === 'function'){
+        initialLw.scrollTo({ top: prevListScroll, behavior: 'instant' });
+      } else {
+        initialLw.scrollTop = prevListScroll;
+      }
       requestAnimationFrame(()=>{
         if(initialLw && initialLw.scrollTop !== prevListScroll){
           initialLw.scrollTop = prevListScroll;
@@ -7132,7 +7169,8 @@ function renderViewer(){
   const scrollSpeed = song.viewerScrollSpeed || 30;
   // (2026-07-13) pause autoscroll when ppt or modal open; prev: modal only
   const isOverlayOpen = !!(state.viewerDisplayMode === 'ppt' || state.modal || document.getElementById('modal-bg') || document.querySelector('.modal-backdrop, .modal, .sidebar-backdrop'));
-  const isActivelyScrolling = state.autoscroll && !isOverlayOpen && performance.now() >= autoscrollTopDelayUntil;
+  // (2026-07-13) match play/pause icon to state.autoscroll during top wait; prev: hid pause
+  const isActivelyScrolling = state.autoscroll && !isOverlayOpen;
 
   const beatsPerBar = parseInt((song.timeSig||'4/4').split('/')[0]) || 4;
   let beatDots = '';
@@ -7324,22 +7362,31 @@ function renderViewer(){
     }, { passive: true });
   }
 
-  document.getElementById('btn-back').onclick = ()=>{
+  // (2026-07-13) slide-right fade-out animation exiting song viewer; prev: instant
+  window.exitSongViewerAnimated = ()=>{
+    if(window._viewerExiting) return;
+    window._viewerExiting = true;
     stopAutoscroll(); stopMetronome();
-    // (2026-07-13) reset display mode & ppt listeners on exit; prev: key only
     if(window._pptKeyHandler){ window.removeEventListener('keydown', window._pptKeyHandler, true); window._pptKeyHandler = null; }
     if(window._pptResizeHandler){ window.removeEventListener('resize', window._pptResizeHandler); window._pptResizeHandler = null; }
-    state.viewerDisplayMode = 'chords';
-    state.pptSlideIndex = 0;
-    if(state.cameFromSetlistId){
-      state.currentSetlistId = state.cameFromSetlistId;
-      state.cameFromSetlistId = null;
-      state.view = 'setlist-editor';
-    } else {
-      state.view = 'list';
-    }
-    render();
+    const shell = document.getElementById('app');
+    if(shell) shell.classList.add('viewer-exiting-right');
+    setTimeout(()=>{
+      window._viewerExiting = false;
+      if(shell) shell.classList.remove('viewer-exiting-right');
+      state.viewerDisplayMode = 'chords';
+      state.pptSlideIndex = 0;
+      if(state.cameFromSetlistId){
+        state.currentSetlistId = state.cameFromSetlistId;
+        state.cameFromSetlistId = null;
+        state.view = 'setlist-editor';
+      } else {
+        state.view = 'list';
+      }
+      render();
+    }, 175);
   };
+  document.getElementById('btn-back').onclick = ()=>{ window.exitSongViewerAnimated(); };
   // (2026-07-13) wire prev/next songs, touch swiping, and liturgical cue toggles
   const prevBtn = document.getElementById('btn-prev-song');
   if(prevBtn && prevSong){
@@ -7493,7 +7540,18 @@ function renderViewer(){
       starFavBtn.title = song.favorite ? 'Remove from favorites' : 'Add to favorites';
       await Store.saveSong(song).catch(()=>{});
       try{ LocalAdapter.save('song:' + song.id, song); }catch(err){}
-      showToast(song.favorite ? 'Added to favorites' : 'Removed from favorites');
+      // (2026-07-13) add Undo button to favorites snackbar; prev: plain toast
+      const addedFav = !!song.favorite;
+      showToast(addedFav ? 'Added to favorites' : 'Removed from favorites', {
+        undo: async ()=>{
+          song.favorite = !addedFav;
+          const b = document.querySelector(`.song-fav-star-btn[data-viewer-fav-id="${song.id}"]`);
+          if(b){ b.innerHTML = iconStar(!!song.favorite); b.title = song.favorite ? 'Remove from favorites' : 'Add to favorites'; }
+          await Store.saveSong(song).catch(()=>{});
+          try{ LocalAdapter.save('song:' + song.id, song); }catch(e){}
+          showToast(song.favorite ? 'Restored to favorites' : 'Removed from favorites');
+        }
+      });
     };
   }
   document.querySelectorAll('.cue-note-circle-btn').forEach(btn=>{
@@ -7654,10 +7712,11 @@ function renderViewer(){
     lastUserScrollAt = 0;
     autoscrollTopDelayUntil = performance.now() + 2000;
     startAutoscroll(song, false);
+    // (2026-07-13) show pause icon immediately during top wait; prev: play icon
     const pb = document.getElementById('btn-playpause');
-    if(pb) pb.innerHTML = iconPlay();
+    if(pb) pb.innerHTML = iconPause();
   }; });
-  // (2026-07-13) play/pause toggles 2s pause if at top; prev: immediate only
+  // (2026-07-13) show pause icon immediately when starting at top; prev: stayed play
   const playBtn = document.getElementById('btn-playpause');
   if(playBtn){
     playBtn.onclick = ()=>{
@@ -7665,14 +7724,10 @@ function renderViewer(){
         stopAutoscroll();
         playBtn.innerHTML = iconPlay();
       } else {
-        if(chartWrap && chartWrap.scrollTop <= 5){
-          autoscrollFloatPos = 0;
-          startAutoscroll(song, false);
-          playBtn.innerHTML = iconPlay();
-        } else {
-          startAutoscroll(song, true);
-          playBtn.innerHTML = iconPause();
-        }
+        // (2026-07-13) single-tap play starts immediately even at top; prev: 2s wait
+        if(chartWrap && chartWrap.scrollTop <= 5) autoscrollFloatPos = 0;
+        startAutoscroll(song, true);
+        playBtn.innerHTML = iconPause();
       }
     };
   }
@@ -7776,8 +7831,9 @@ function renderViewer(){
         autoscrollIconSynced = false;
         const sc = document.getElementById('chart-scroll-content');
         if(sc) sc.style.transform = 'none';
+        // (2026-07-13) keep pause icon at top while autoscroll stays on; prev: showed play
         const pb = document.getElementById('btn-playpause');
-        if(pb) pb.innerHTML = iconPlay();
+        if(pb) pb.innerHTML = iconPause();
         if(!autoscrollRAF) startAutoscroll(song, false);
       }
     }
@@ -8693,7 +8749,7 @@ function renderEditor(){
         </div>
       </div>
       <div class="field">
-        <!-- (2026-07-13) add Upload Img Lyrics OCR button in editor; prev: label only -->
+        <!-- (2026-07-13) move Copy button into Export & Copy panel; prev: beside OCR -->
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
           <label style="margin:0;">Chord chart</label>
           <button type="button" class="quick-chip" id="btn-upload-img-lyrics" style="background:var(--accent);color:#111318;border-color:transparent;font-weight:800;padding:5px 11px;">Upload Img Lyrics</button>
@@ -8707,14 +8763,38 @@ function renderEditor(){
         <textarea id="f-body" placeholder="Put the chord line directly above its lyric line, e.g.&#10;G          C      G&#10;Amazing grace, how sweet the sound">${escapeHtml(d.body)}</textarea>
         <div class="hint">Type <b>--</b> or <b>==</b> then space/enter for a divider. Wrap chords like <b>&gt; G D Em</b> for yellow inline chords.</div>
       </div>
-      <!-- (2026-07-13) move printable PNG/PDF/Word export into Edit Details; prev: Adjustments -->
-      <div class="field" style="margin-top:6px;">
-        <label>Export Printable Song</label>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button type="button" class="btn btn-secondary" id="ed-export-png" style="flex:1;min-height:38px;font-size:12.5px;font-weight:700;">PNG (Full)</button>
-          <button type="button" class="btn btn-secondary" id="ed-export-png-lyrics" style="flex:1;min-height:38px;font-size:12.5px;font-weight:700;">PNG (Lyrics)</button>
-          <button type="button" class="btn btn-secondary" id="ed-export-pdf" style="flex:1;min-height:38px;font-size:12.5px;font-weight:700;">PDF</button>
-          <button type="button" class="btn btn-secondary" id="ed-export-word" style="flex:1;min-height:38px;font-size:12.5px;font-weight:700;">Word</button>
+      <!-- (2026-07-13) polished Export & Copy card with Copy/PNG/PDF/DOCX/PPT; prev: basic row -->
+      <div class="field" style="margin-top:8px;">
+        <div class="export-panel-card">
+          <div class="export-panel-head">
+            <label style="margin:0;">Export &amp; Copy</label>
+            <div class="export-seg-toggle" id="ed-export-mode-wrap" role="group" aria-label="Export Content Mode">
+              <button type="button" class="export-seg-btn is-active" data-export-mode="chords">With Chords</button>
+              <button type="button" class="export-seg-btn" data-export-mode="lyrics">Lyrics Only</button>
+            </div>
+          </div>
+          <div class="export-actions-grid">
+            <button type="button" class="export-action-btn is-copy" id="ed-copy-text" title="Copy text using selected mode">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              <span>Copy</span>
+            </button>
+            <button type="button" class="export-action-btn" id="ed-export-png" title="Download PNG image">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+              <span>PNG</span>
+            </button>
+            <button type="button" class="export-action-btn" id="ed-export-pdf" title="Export Printable PDF">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
+              <span>PDF</span>
+            </button>
+            <button type="button" class="export-action-btn" id="ed-export-word" title="Download Word Document">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13l1.5 5 1.5-4 1.5 4 1.5-5"/></svg>
+              <span>DOCX</span>
+            </button>
+            <button type="button" class="export-action-btn" id="ed-export-ppt" title="Preview and export PPT slides">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M12 18v4"/><path d="M8 22h8"/></svg>
+              <span>PPT</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -8979,14 +9059,60 @@ function renderEditor(){
     key: (document.getElementById('f-key')?.value || d.key || '').trim(),
     body: bodyEl ? bodyEl.value : (d.body || '')
   });
+  // (2026-07-13) wire segmented Chords/Lyrics mode & unified Copy button; prev: checkbox
+  let editorExportLyricsOnly = false;
+  document.querySelectorAll('#ed-export-mode-wrap .export-seg-btn').forEach(btn => {
+    btn.onclick = ()=>{
+      editorExportLyricsOnly = (btn.dataset.exportMode === 'lyrics');
+      document.querySelectorAll('#ed-export-mode-wrap .export-seg-btn').forEach(b => {
+        b.classList.toggle('is-active', b === btn);
+      });
+    };
+  });
+  const isExportLyricsOnly = ()=> editorExportLyricsOnly;
+  const edCopyBtn = document.getElementById('ed-copy-text');
+  if(edCopyBtn){
+    edCopyBtn.onclick = async ()=>{
+      const live = getLiveEditorExportSong();
+      const lyricsOnly = isExportLyricsOnly();
+      const text = lyricsOnly
+        ? (typeof window.extractSongLyricsOnlyText === 'function' ? window.extractSongLyricsOnlyText(live) : (live.body || ''))
+        : String(live.body || '').replace(/^s*>s?/gm, '').trim();
+      if(!text.trim()){ showToast('Nothing to copy'); return; }
+      try{
+        if(navigator.clipboard && navigator.clipboard.writeText){
+          await navigator.clipboard.writeText(text);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.cssText = 'position:fixed;opacity:0;';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          ta.remove();
+        }
+        showToast(lyricsOnly ? 'Copied lyrics only' : 'Copied with chords');
+      }catch(err){
+        showToast('Could not copy text');
+      }
+    };
+  }
   const edExportPng = document.getElementById('ed-export-png');
-  if(edExportPng) edExportPng.onclick = ()=>{ if(typeof window.exportSongAsPng === 'function') window.exportSongAsPng(getLiveEditorExportSong(), { lyricsOnly: false }); };
-  const edExportPngLy = document.getElementById('ed-export-png-lyrics');
-  if(edExportPngLy) edExportPngLy.onclick = ()=>{ if(typeof window.exportSongAsPng === 'function') window.exportSongAsPng(getLiveEditorExportSong(), { lyricsOnly: true }); };
+  if(edExportPng) edExportPng.onclick = ()=>{ if(typeof window.exportSongAsPng === 'function') window.exportSongAsPng(getLiveEditorExportSong(), { lyricsOnly: isExportLyricsOnly() }); };
   const edExportPdf = document.getElementById('ed-export-pdf');
-  if(edExportPdf) edExportPdf.onclick = ()=>{ if(typeof window.exportSongAsPdf === 'function') window.exportSongAsPdf(getLiveEditorExportSong(), { lyricsOnly: false }); };
+  if(edExportPdf) edExportPdf.onclick = ()=>{ if(typeof window.exportSongAsPdf === 'function') window.exportSongAsPdf(getLiveEditorExportSong(), { lyricsOnly: isExportLyricsOnly() }); };
   const edExportWord = document.getElementById('ed-export-word');
-  if(edExportWord) edExportWord.onclick = ()=>{ if(typeof window.exportSongAsWord === 'function') window.exportSongAsWord(getLiveEditorExportSong(), { lyricsOnly: false }); };
+  if(edExportWord) edExportWord.onclick = ()=>{ if(typeof window.exportSongAsWord === 'function') window.exportSongAsWord(getLiveEditorExportSong(), { lyricsOnly: isExportLyricsOnly() }); };
+  const edExportPpt = document.getElementById('ed-export-ppt');
+  if(edExportPpt) edExportPpt.onclick = ()=>{
+    if(typeof window.openPptExportModal === 'function'){
+      window.openPptExportModal(getLiveEditorExportSong(), {
+        buildSlides: typeof buildPptSlides === 'function' ? buildPptSlides : null,
+        initialLines: state.pptLinesPerSlide || 2,
+        initialTheme: state.pptTheme || 'dark'
+      });
+    }
+  };
   document.getElementById('ins-divider').onclick = ()=> insertAtCursor(bodyEl, '\n' + '='.repeat(40) + '\n');
   document.querySelectorAll('[data-ins-section]').forEach(el=>{
     el.onclick = ()=> insertAtCursor(bodyEl, '\n' + el.dataset.insSection + '\n');
@@ -9021,13 +9147,16 @@ function renderEditor(){
       confirmText: 'Move to Trash',
       danger: true,
       onConfirm: async ()=>{
-        await moveToTrash('song', d);
+        const trashId = await moveToTrash('song', d);
         await markSongAsDeleted(d);
         await Store.deleteSong(d.id);
         state.songs = state.songs.filter(s=>s.id!==d.id);
         state.currentId = null;
         closeEditorOverlay(()=>{ state.view='list'; render(); });
-        showToast(`Moved "${songTitle}" to trash`);
+        // (2026-07-13) add Undo button on trash snackbar; prev: plain toast
+        showToast(`Moved "${songTitle}" to trash`, {
+          undo: async ()=>{ if(trashId){ await restoreFromTrash(trashId); render(); } }
+        });
       }
     });
   };
@@ -9099,6 +9228,22 @@ function renderEditor(){
     };
     if(song.artist) registerKnownArtist(song.artist);
     const idx = state.songs.findIndex(s=>s.id===song.id);
+    // (2026-07-13) capture previous song snapshot for Save Undo snackbar; prev: none
+    const prevSongSnap = idx >= 0 ? JSON.parse(JSON.stringify(state.songs[idx])) : null;
+    const changedParts = [];
+    if(prevSongSnap){
+      if(prevSongSnap.title !== song.title) changedParts.push('title');
+      if(prevSongSnap.artist !== song.artist) changedParts.push('artist');
+      if(prevSongSnap.key !== song.key) changedParts.push('key');
+      if(prevSongSnap.body !== song.body) changedParts.push('lyrics/chords');
+      if(JSON.stringify(prevSongSnap.categories||[]) !== JSON.stringify(song.categories||[])) changedParts.push('folders');
+      if(JSON.stringify(prevSongSnap.massParts||[]) !== JSON.stringify(song.massParts||[])) changedParts.push('mass parts');
+      if(prevSongSnap.flag !== song.flag) changedParts.push('flag');
+    }
+    const cleanT = cleanSongTitleForDisplay(song.title);
+    const saveMsg = prevSongSnap
+      ? (changedParts.length ? `Updated ${changedParts.slice(0,3).join(', ')} in "${cleanT}"` : `Saved "${cleanT}"`)
+      : `Created "${cleanT}"`;
     if(idx>=0) state.songs[idx] = song; else state.songs.push(song);
     state.currentId = song.id;
     try{ LocalAdapter.set('song:' + song.id, JSON.stringify(song)).catch(()=>{}); }catch(e){}
@@ -9112,7 +9257,24 @@ function renderEditor(){
     closeEditorOverlay(()=>{
       state.view = state.editorCameFrom === 'viewer' ? 'viewer' : 'list';
       render();
-      showToast('Saved');
+      showToast(saveMsg, {
+        undo: async ()=>{
+          if(prevSongSnap){
+            const curI = state.songs.findIndex(s => s.id === prevSongSnap.id);
+            if(curI >= 0) state.songs[curI] = prevSongSnap; else state.songs.push(prevSongSnap);
+            try{ LocalAdapter.set('song:' + prevSongSnap.id, JSON.stringify(prevSongSnap)).catch(()=>{}); }catch(e){}
+            await Store.saveSong(prevSongSnap).catch(()=>{});
+            render();
+            showToast(`Undid changes to "${cleanSongTitleForDisplay(prevSongSnap.title)}"`);
+          } else {
+            state.songs = state.songs.filter(s => s.id !== song.id);
+            await Store.deleteSong(song.id).catch(()=>{});
+            if(state.currentId === song.id){ state.currentId = null; state.view = 'list'; }
+            render();
+            showToast(`Removed "${cleanT}"`);
+          }
+        }
+      });
     });
   };
   // (2026-07-13) wire confirmation & cue modals in editor; prev: unwired stuck modal
@@ -11792,13 +11954,16 @@ function wireModal(){
           await new Promise(r => setTimeout(r, 260));
         }
         // (2026-07-13) move song to trash on context delete; prev: permanent delete
+        let trashId = null;
         if(song){
-          await moveToTrash('song', song);
+          trashId = await moveToTrash('song', song);
           await markSongAsDeleted(song);
         }
         await Store.deleteSong(id);
         state.songs = state.songs.filter(s=>s.id!==id);
-        showToast('Moved to trash');
+        showToast(`Moved "${song ? cleanSongTitleForDisplay(song.title) : 'song'}" to trash`, {
+          undo: async ()=>{ if(trashId){ await restoreFromTrash(trashId); renderListView(); } }
+        });
         renderListView();
       }
     });
@@ -11818,13 +11983,23 @@ function wireModal(){
         confirmText: 'Remove',
         danger: true,
         onConfirm: async ()=>{
+          const prevSlItems = Array.isArray(activeSl.items) ? JSON.parse(JSON.stringify(activeSl.items)) : [];
           if(Array.isArray(activeSl.items)){
             activeSl.items = activeSl.items.filter(it=>!(it.type==='song' && it.songId===song?.id));
             activeSl.dateModified = Date.now();
             LocalAdapter.save('setlist:' + activeSl.id, activeSl);
             await Store.saveSetlist(activeSl);
           }
-          showToast(`Removed "${songTitle}" from ${activeSl.name}`);
+          showToast(`Removed "${songTitle}" from ${activeSl.name}`, {
+            undo: async ()=>{
+              activeSl.items = prevSlItems;
+              activeSl.dateModified = Date.now();
+              LocalAdapter.save('setlist:' + activeSl.id, activeSl);
+              await Store.saveSetlist(activeSl);
+              renderListView();
+              showToast(`Restored "${songTitle}" to ${activeSl.name}`);
+            }
+          });
           renderListView();
         }
       });
@@ -12890,6 +13065,11 @@ function subscribeRealtimeSync(){
         if(state.viewerDisplayMode === 'ppt'){
           const pptExit = document.getElementById('ppt-exit-btn');
           if(pptExit){ pptExit.click(); return true; }
+        }
+        // (2026-07-13) use slide-right fade-out on universal back; prev: instant render
+        if(typeof window.exitSongViewerAnimated === 'function'){
+          window.exitSongViewerAnimated();
+          return true;
         }
         stopAutoscroll();
         stopMetronome();

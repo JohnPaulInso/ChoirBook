@@ -374,16 +374,19 @@
     return EXPORT_LYRIC_SECTION_RE.test(s) || EXPORT_ROMAN_OR_NUM_RE.test(s);
   }
 
-  function buildExportBlocks(song){
+  // (2026-07-13) support lyricsOnly vs with-chords export blocks; prev: lyrics only
+  function buildExportBlocks(song, lyricsOnly){
     const body = (song && song.body) || '';
     const rawLines = body.split(/\r?\n/);
 
-    // Start at the first real Verse / Chorus / Koro / Roman numeral section if present
+    // Start at the first real Verse / Chorus / Koro / Roman numeral section when lyrics-only
     let startIdx = 0;
-    for(let i = 0; i < rawLines.length; i++){
-      if(isExportLyricSectionHeader(rawLines[i])){
-        startIdx = i;
-        break;
+    if(lyricsOnly){
+      for(let i = 0; i < rawLines.length; i++){
+        if(isExportLyricSectionHeader(rawLines[i])){
+          startIdx = i;
+          break;
+        }
       }
     }
 
@@ -397,20 +400,66 @@
         }
         continue;
       }
-      if(isExportChordOrMelodyLine(trimmed)) continue;
+      if(/^[=\-_]{4,}$/.test(trimmed)) continue;
+
       const unwrapped = trimmed.replace(/^[\[\(]|[\]\)]$/g, '').trim();
-      if(EXPORT_SKIP_SECTION_RE.test(unwrapped)) continue;
-      if(EXPORT_META_LINE_RE.test(unwrapped)) continue;
-      if(isExportLyricSectionHeader(trimmed)){
-        blocks.push({ type: 'section', lines: [unwrapped.replace(/:+\s*$/, '')] });
-        continue;
+      if(lyricsOnly){
+        if(isExportChordOrMelodyLine(trimmed)) continue;
+        if(EXPORT_SKIP_SECTION_RE.test(unwrapped)) continue;
+        if(EXPORT_META_LINE_RE.test(unwrapped)) continue;
+        if(isExportLyricSectionHeader(trimmed)){
+          blocks.push({ type: 'section', lines: [unwrapped.replace(/:+\s*$/, '')] });
+          continue;
+        }
+        const clean = trimmed.replace(/<[^>]+>/g, '').trim();
+        if(clean) blocks.push({ type: 'lyric', lines: [clean] });
+      } else {
+        if(isExportLyricSectionHeader(trimmed) || EXPORT_SKIP_SECTION_RE.test(unwrapped)){
+          blocks.push({ type: 'section', lines: [unwrapped.replace(/:+\s*$/, '')] });
+          continue;
+        }
+        if(isExportChordOrMelodyLine(trimmed)){
+          const chordText = line.replace(/^\s*>\s?/, '').replace(/\s+$/, '');
+          const nextRaw = i + 1 < rawLines.length ? rawLines[i + 1] : '';
+          const nextTrim = nextRaw.trim();
+          const nextIsLyric = nextTrim && !/^[=\-_]{4,}$/.test(nextTrim)
+            && !isExportChordOrMelodyLine(nextTrim)
+            && !isExportLyricSectionHeader(nextTrim)
+            && !EXPORT_SKIP_SECTION_RE.test(nextTrim.replace(/^[\[\(]|[\]\)]$/g, '').trim());
+          if(nextIsLyric){
+            const cleanNext = nextRaw.replace(/<[^>]+>/g, '').replace(/\s+$/, '');
+            blocks.push({ type: 'chord_lyric', chord: chordText, lyric: cleanNext });
+            i++;
+          } else if(chordText.trim()){
+            blocks.push({ type: 'chord', lines: [chordText] });
+          }
+          continue;
+        }
+        const clean = line.replace(/<[^>]+>/g, '').replace(/\s+$/, '');
+        if(clean.trim()) blocks.push({ type: 'lyric', lines: [clean] });
       }
-      const clean = trimmed.replace(/<[^>]+>/g, '').trim();
-      if(clean) blocks.push({ type: 'lyric', lines: [clean] });
     }
     while(blocks.length > 0 && blocks[blocks.length - 1].type === 'blank') blocks.pop();
     return blocks;
   }
+
+  // (2026-07-13) extract clean lyrics-only plain text for clipboard copy; prev: none
+  window.extractSongLyricsOnlyText = function extractSongLyricsOnlyText(song){
+    if(!song) return '';
+    const blocks = buildExportBlocks(song, true);
+    const out = [];
+    for(const b of blocks){
+      if(b.type === 'blank'){
+        if(out.length > 0 && out[out.length - 1] !== '') out.push('');
+      } else if(b.type === 'section'){
+        if(out.length > 0 && out[out.length - 1] !== '') out.push('');
+        out.push(b.lines[0].toUpperCase());
+      } else if(b.type === 'lyric'){
+        out.push(b.lines[0]);
+      }
+    }
+    return out.join('\n').trim();
+  };
 
   /* ---------------- 3. PNG EXPORT (WHITE BG, BLACK TEXT, AUTO 2-COL) ---------------- */
   function wrapTextToWidth(ctx, text, maxW, preserveSpacing){
@@ -611,7 +660,8 @@
             y += it.lineH;
           }
         } else if(it.kind === 'chord_lyric'){
-          ctx.fillStyle = '#1d4ed8';
+          // (2026-07-13) goldish-dark chord color in PNG export; prev: blue #1d4ed8
+          ctx.fillStyle = '#8c6200';
           ctx.font = it.chordFont;
           ctx.fillText(it.chord, startX, y);
           y += it.chordH;
@@ -623,7 +673,7 @@
           }
           y += Math.round(chosenFs * 0.14);
         } else if(it.kind === 'chord'){
-          ctx.fillStyle = '#1d4ed8';
+          ctx.fillStyle = '#8c6200';
           ctx.font = it.font;
           for(const ln of it.lines){
             ctx.fillText(ln, startX, y);
@@ -707,7 +757,7 @@
   .cols { ${useTwoCols ? 'column-count:2; column-gap:26px; column-rule:1px solid #e5e7eb;' : ''} font-size:${useTwoCols ? '10.5pt' : '12.5pt'}; line-height:1.4; }
   .sec { font-family:'Segoe UI',Arial,sans-serif; font-weight:800; font-size:10.5pt; margin-top:10px; margin-bottom:3px; color:#000000; break-after:avoid; page-break-after:avoid; }
   .pair { break-inside:avoid; page-break-inside:avoid; margin-bottom:3px; }
-  .ch { font-family:'Consolas','Courier New',monospace; font-weight:800; color:#1d4ed8; white-space:pre-wrap; line-height:1.15; }
+  .ch { font-family:'Consolas','Courier New',monospace; font-weight:800; color:#8c6200; white-space:pre-wrap; line-height:1.15; }
   .ly { color:#000000; font-weight:600; white-space:${hasChords ? 'pre-wrap' : 'normal'}; }
   .sp { height:8px; }
 </style>
@@ -722,15 +772,17 @@
 </html>`;
   }
 
+  // (2026-07-13) respect lyricsOnly option in PDF export; prev: hardcoded true
   window.exportSongAsPdf = function exportSongAsPdf(song, options){
     if(!song) return;
-    const html = buildPrintableSongHtml(song, true, false);
+    const lyricsOnly = !!(options && options.lyricsOnly);
+    const html = buildPrintableSongHtml(song, lyricsOnly, false);
     // (2026-07-13) save printable sheet to Downloads with notification on APK; prev: iframe print only
     const cap = typeof window !== 'undefined' ? window.Capacitor : null;
     if(cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform()){
       const title = (typeof window.cleanSongTitleForDisplay === 'function' ? window.cleanSongTitleForDisplay(song.title) : song.title) || 'Untitled Song';
       const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-      triggerBlobDownload(blob, safeFilename(title + ' (Printable)', 'html'));
+      triggerBlobDownload(blob, safeFilename(title + (lyricsOnly ? ' (Lyrics)' : ' (Chords)'), 'html'));
       return;
     }
     const iframe = document.createElement('iframe');
@@ -756,8 +808,496 @@
     const title = (typeof window.cleanSongTitleForDisplay === 'function' ? window.cleanSongTitleForDisplay(song.title) : song.title) || 'Untitled Song';
     const html = buildPrintableSongHtml(song, lyricsOnly, true);
     const blob = new Blob(['\ufeff' + html], { type: 'application/msword;charset=utf-8' });
-    const fname = safeFilename(title + (lyricsOnly ? ' (Lyrics)' : ''), 'doc');
+    const fname = safeFilename(title + (lyricsOnly ? ' (Lyrics)' : ' (Chords)'), 'doc');
     triggerBlobDownload(blob, fname);
     if(typeof window.showToast === 'function') window.showToast('Downloaded ' + fname);
+  };
+
+  /* ---------------- 5. PPT EXPORT THUMBNAIL MODAL & OFFLINE .PPTX BUILDER ---------------- */
+  function crc32Bytes(bytes){
+    let c = 0xffffffff;
+    for(let i = 0; i < bytes.length; i++){
+      c ^= bytes[i];
+      for(let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+    }
+    return (c ^ 0xffffffff) >>> 0;
+  }
+
+  function buildStoredZipBlob(entries, mimeType){
+    const enc = new TextEncoder();
+    const localParts = [];
+    const centralParts = [];
+    let offset = 0;
+    for(const entry of entries){
+      const nameBytes = enc.encode(entry.name);
+      const dataBytes = typeof entry.data === 'string' ? enc.encode(entry.data) : entry.data;
+      const crc = crc32Bytes(dataBytes);
+      const lh = new ArrayBuffer(30);
+      const lv = new DataView(lh);
+      lv.setUint32(0, 0x04034b50, true);
+      lv.setUint16(4, 20, true);
+      lv.setUint16(6, 0x0800, true);
+      lv.setUint16(8, 0, true);
+      lv.setUint32(14, crc, true);
+      lv.setUint32(18, dataBytes.length, true);
+      lv.setUint32(22, dataBytes.length, true);
+      lv.setUint16(26, nameBytes.length, true);
+      localParts.push(new Uint8Array(lh), nameBytes, dataBytes);
+
+      const ch = new ArrayBuffer(46);
+      const cv = new DataView(ch);
+      cv.setUint32(0, 0x02014b50, true);
+      cv.setUint16(4, 20, true);
+      cv.setUint16(6, 20, true);
+      cv.setUint16(8, 0x0800, true);
+      cv.setUint16(10, 0, true);
+      cv.setUint32(16, crc, true);
+      cv.setUint32(20, dataBytes.length, true);
+      cv.setUint32(24, dataBytes.length, true);
+      cv.setUint16(28, nameBytes.length, true);
+      cv.setUint32(42, offset, true);
+      centralParts.push(new Uint8Array(ch), nameBytes);
+
+      offset += 30 + nameBytes.length + dataBytes.length;
+    }
+    let centralSize = 0;
+    for(const p of centralParts) centralSize += p.length;
+    const eocd = new ArrayBuffer(22);
+    const ev = new DataView(eocd);
+    ev.setUint32(0, 0x06054b50, true);
+    ev.setUint16(8, entries.length, true);
+    ev.setUint16(10, entries.length, true);
+    ev.setUint32(12, centralSize, true);
+    ev.setUint32(16, offset, true);
+    return new Blob([...localParts, ...centralParts, new Uint8Array(eocd)], { type: mimeType });
+  }
+
+  function escXml(s){
+    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // (2026-07-13) compute max projector-size font (pt) for 16:9 slide; prev: fixed 44pt
+  const _pptMeasureCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+  const _pptMeasureCtx = _pptMeasureCanvas ? _pptMeasureCanvas.getContext('2d') : null;
+  function computePptSlideFontPt(lines, zoomPct){
+    const cleanLines = (Array.isArray(lines) ? lines : []).map(l => String(l || '').trim().toUpperCase()).filter(Boolean);
+    if(!cleanLines.length) return 48;
+    const boxW = 870; // 16:9 widescreen 960pt minus margins
+    const boxH = 460; // 540pt minus margins
+    const countWrapped = (pt)=>{
+      if(!_pptMeasureCtx) return cleanLines.length;
+      _pptMeasureCtx.font = `800 ${pt}px "Montserrat", Arial, sans-serif`;
+      let total = 0;
+      for(const ln of cleanLines){
+        const words = ln.split(/\s+/);
+        let cur = '';
+        let rows = 1;
+        for(const w of words){
+          const test = cur ? (cur + ' ' + w) : w;
+          if(_pptMeasureCtx.measureText(test).width <= boxW || !cur){
+            cur = test;
+          } else {
+            rows++;
+            cur = w;
+          }
+        }
+        total += rows;
+      }
+      return total;
+    };
+    let lo = 24, hi = 96, best = 28;
+    while(lo <= hi){
+      const mid = (lo + hi) >> 1;
+      const rows = countWrapped(mid);
+      const totalH = rows * mid * 1.24;
+      if(totalH <= boxH){
+        best = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return Math.max(20, Math.min(110, Math.round(best * ((zoomPct || 100) / 100))));
+  }
+
+  // (2026-07-13) strict Microsoft PowerPoint OOXML .pptx builder with big auto-fit text; prev: missing theme/props
+  function buildPptxBlob(title, slides, themeKey, zoomPct){
+    const themes = {
+      dark:  { bg: '121316', fg: 'F1EBE1' },
+      navy:  { bg: '0B1526', fg: 'F4F1EA' },
+      light: { bg: 'F4EFE6', fg: '1F2328' }
+    };
+    const th = themes[themeKey] || themes.dark;
+    const nowIso = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+    const files = [];
+
+    const slideOverrides = slides.map((_, idx) =>
+      `<Override PartName="/ppt/slides/slide${idx + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`
+    ).join('');
+
+    files.push({
+      name: '[Content_Types].xml',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+  <Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>
+  <Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>
+  <Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>
+  <Override PartName="/ppt/presProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presProps+xml"/>
+  <Override PartName="/ppt/viewProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.viewProps+xml"/>
+  <Override PartName="/ppt/tableStyles.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.tableStyles+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+  ${slideOverrides}
+</Types>`
+    });
+
+    files.push({
+      name: '_rels/.rels',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>`
+    });
+
+    files.push({
+      name: 'docProps/core.xml',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:title>${escXml(title)}</dc:title>
+  <dc:creator>Choir Book Pro</dc:creator>
+  <dcterms:created xsi:type="dcterms:W3CDTF">${nowIso}</dcterms:created>
+  <dcterms:modified xsi:type="dcterms:W3CDTF">${nowIso}</dcterms:modified>
+</cp:coreProperties>`
+    });
+
+    files.push({
+      name: 'docProps/app.xml',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">
+  <Application>Choir Book Pro</Application>
+  <Slides>${slides.length}</Slides>
+  <PresentationFormat>Widescreen</PresentationFormat>
+</Properties>`
+    });
+
+    const sldIdList = slides.map((_, idx) => `<p:sldId id="${256 + idx}" r:id="rId${idx + 6}"/>`).join('');
+    files.push({
+      name: 'ppt/presentation.xml',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>
+  <p:sldIdLst>${sldIdList}</p:sldIdLst>
+  <p:sldSz cx="12192000" cy="6858000"/>
+  <p:notesSz cx="6858000" cy="9144000"/>
+</p:presentation>`
+    });
+
+    const presRels = slides.map((_, idx) =>
+      `<Relationship Id="rId${idx + 6}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide${idx + 1}.xml"/>`
+    ).join('');
+    files.push({
+      name: 'ppt/_rels/presentation.xml.rels',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/presProps" Target="presProps.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/viewProps" Target="viewProps.xml"/>
+  <Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>
+  <Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/tableStyles" Target="tableStyles.xml"/>
+  ${presRels}
+</Relationships>`
+    });
+
+    files.push({
+      name: 'ppt/presProps.xml',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentationPr xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>`
+    });
+
+    files.push({
+      name: 'ppt/viewProps.xml',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:viewPr xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:normalViewPr><p:restoredLeft sz="15620"/><p:restoredTop sz="94660"/></p:normalViewPr><p:slideViewPr><p:cSldViewPr><p:cViewPr varScale="1"><p:scale><a:sx n="100" d="100"/><a:sy n="100" d="100"/></p:scale><p:origin x="0" y="0"/></p:cViewPr></p:cSldViewPr></p:slideViewPr></p:viewPr>`
+    });
+
+    files.push({
+      name: 'ppt/tableStyles.xml',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<a:tblStyleLst xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" def="{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}"/>`
+    });
+
+    files.push({
+      name: 'ppt/theme/theme1.xml',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="ChoirBookTheme">
+  <a:themeElements>
+    <a:clrScheme name="ChoirBook">
+      <a:dk1><a:srgbClr val="000000"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1>
+      <a:dk2><a:srgbClr val="1F2328"/></a:dk2><a:lt2><a:srgbClr val="F4EFE6"/></a:lt2>
+      <a:accent1><a:srgbClr val="E08E42"/></a:accent1><a:accent2><a:srgbClr val="4E9A6F"/></a:accent2>
+      <a:accent3><a:srgbClr val="3B82F6"/></a:accent3><a:accent4><a:srgbClr val="A855F7"/></a:accent4>
+      <a:accent5><a:srgbClr val="EF4444"/></a:accent5><a:accent6><a:srgbClr val="14B8A6"/></a:accent6>
+      <a:hlink><a:srgbClr val="3B82F6"/></a:hlink><a:folHlink><a:srgbClr val="8B5CF6"/></a:folHlink>
+    </a:clrScheme>
+    <a:fontScheme name="ChoirBook">
+      <a:majorFont><a:latin typeface="Montserrat"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>
+      <a:minorFont><a:latin typeface="Montserrat"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>
+    </a:fontScheme>
+    <a:fmtScheme name="ChoirBook">
+      <a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst>
+      <a:lnStyleLst><a:ln w="9525"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln w="9525"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln w="9525"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst>
+      <a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst>
+      <a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst>
+    </a:fmtScheme>
+  </a:themeElements>
+</a:theme>`
+    });
+
+    files.push({
+      name: 'ppt/slideMasters/slideMaster1.xml',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld>
+    <p:bg><p:bgPr><a:solidFill><a:srgbClr val="${th.bg}"/></a:solidFill><a:effectLst/></p:bgPr></p:bg>
+    <p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree>
+  </p:cSld>
+  <p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>
+  <p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst>
+  <p:txStyles><p:titleStyle/><p:bodyStyle/><p:otherStyle/></p:txStyles>
+</p:sldMaster>`
+    });
+
+    files.push({
+      name: 'ppt/slideMasters/_rels/slideMaster1.xml.rels',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/>
+</Relationships>`
+    });
+
+    files.push({
+      name: 'ppt/slideLayouts/slideLayout1.xml',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" type="blank" preserve="1">
+  <p:cSld name="Blank"><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld>
+  <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
+</p:sldLayout>`
+    });
+
+    files.push({
+      name: 'ppt/slideLayouts/_rels/slideLayout1.xml.rels',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="../slideMasters/slideMaster1.xml"/>
+</Relationships>`
+    });
+
+    slides.forEach((sl, idx) => {
+      const lines = (sl && Array.isArray(sl.lines) && sl.lines.length) ? sl.lines : [];
+      const slidePt = computePptSlideFontPt(lines, zoomPct);
+      const fontSz = slidePt * 100;
+      const paras = lines.length
+        ? lines.map(ln => `<a:p><a:pPr algn="ctr"><a:lnSpc><a:spcPct val="112000"/></a:lnSpc></a:pPr><a:r><a:rPr lang="en-US" sz="${fontSz}" b="1" dirty="0"><a:solidFill><a:srgbClr val="${th.fg}"/></a:solidFill><a:latin typeface="Montserrat"/><a:cs typeface="Montserrat"/></a:rPr><a:t>${escXml(String(ln || '').toUpperCase())}</a:t></a:r><a:endParaRPr lang="en-US" sz="${fontSz}"/></a:p>`).join('')
+        : `<a:p><a:endParaRPr lang="en-US" sz="2400"/></a:p>`;
+      files.push({
+        name: `ppt/slides/slide${idx + 1}.xml`,
+        data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld>
+    <p:bg><p:bgPr><a:solidFill><a:srgbClr val="${th.bg}"/></a:solidFill><a:effectLst/></p:bgPr></p:bg>
+    <p:spTree>
+      <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+      <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="2" name="Lyrics"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+        <p:spPr>
+          <a:xfrm><a:off x="365760" y="342900"/><a:ext cx="11460480" cy="6172200"/></a:xfrm>
+          <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+          <a:noFill/>
+        </p:spPr>
+        <p:txBody>
+          <a:bodyPr wrap="square" lIns="91440" tIns="91440" rIns="91440" bIns="91440" anchor="ctr" anchorCtr="0"/>
+          <a:lstStyle/>
+          ${paras}
+        </p:txBody>
+      </p:sp>
+    </p:spTree>
+  </p:cSld>
+  <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
+</p:sld>`
+      });
+      files.push({
+        name: `ppt/slides/_rels/slide${idx + 1}.xml.rels`,
+        data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>
+</Relationships>`
+      });
+    });
+
+    return buildStoredZipBlob(files, 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
+  }
+
+  function fallbackBuildPptSlides(song, linesPerSlide){
+    const blocks = buildExportBlocks(song, true);
+    const slides = [];
+    let curSec = '';
+    let buf = [];
+    const flush = ()=>{
+      while(buf.length){
+        slides.push({ section: curSec, lines: buf.splice(0, linesPerSlide) });
+      }
+    };
+    for(const b of blocks){
+      if(b.type === 'section'){ flush(); curSec = b.lines[0]; }
+      else if(b.type === 'blank'){ flush(); }
+      else if(b.type === 'lyric'){ buf.push(b.lines[0]); }
+    }
+    flush();
+    slides.push({ section: '', lines: [], isBlank: true });
+    return slides;
+  }
+
+  // (2026-07-13) interactive PPT export modal with slide thumbnails, lines & zoom; prev: none
+  window.openPptExportModal = function openPptExportModal(song, opts){
+    if(!song) return;
+    const old = document.getElementById('ppt-export-modal-backdrop');
+    if(old) old.remove();
+
+    const title = (typeof window.cleanSongTitleForDisplay === 'function' ? window.cleanSongTitleForDisplay(song.title) : song.title) || 'Untitled Song';
+    let linesPerSlide = (opts && opts.initialLines >= 1 && opts.initialLines <= 4) ? opts.initialLines : 2;
+    let zoomPct = 100;
+    let themeKey = (opts && opts.initialTheme) || 'dark';
+    const buildFn = (opts && typeof opts.buildSlides === 'function') ? opts.buildSlides : fallbackBuildPptSlides;
+
+    const themeColors = {
+      dark:  { bg: '#121316', fg: '#f1ebe1' },
+      navy:  { bg: '#0b1526', fg: '#f4f1ea' },
+      light: { bg: '#f4efe6', fg: '#1f2328' }
+    };
+
+    const backdrop = document.createElement('div');
+    backdrop.id = 'ppt-export-modal-backdrop';
+    backdrop.className = 'ppt-export-backdrop custom-modal-backdrop';
+    backdrop.innerHTML = `
+      <div class="ppt-export-modal" role="dialog" aria-modal="true">
+        <div class="ppt-export-hdr">
+          <div style="min-width:0;">
+            <h3>PPT Slide Export</h3>
+            <div class="ppt-export-sub">${escHtml(title)}</div>
+          </div>
+          <button type="button" class="icon-btn" id="ppt-exp-close" style="width:32px;height:32px;font-size:18px;flex-shrink:0;">&times;</button>
+        </div>
+        <div class="ppt-export-controls">
+          <div class="ppt-export-ctrl-row">
+            <div class="ppt-export-ctrl-group">
+              <span>Lines</span>
+              <div class="ppt-export-pill-row" id="ppt-exp-lines">
+                ${[1, 2, 3, 4].map(n => `<button type="button" class="ppt-export-pill ${n === linesPerSlide ? 'is-active' : ''}" data-n="${n}">${n}L</button>`).join('')}
+              </div>
+            </div>
+            <div class="ppt-export-ctrl-group">
+              <span>Theme</span>
+              <div class="ppt-export-pill-row" id="ppt-exp-theme">
+                <button type="button" class="ppt-export-pill ${themeKey === 'dark' ? 'is-active' : ''}" data-t="dark">Dark</button>
+                <button type="button" class="ppt-export-pill ${themeKey === 'navy' ? 'is-active' : ''}" data-t="navy">Navy</button>
+                <button type="button" class="ppt-export-pill ${themeKey === 'light' ? 'is-active' : ''}" data-t="light">Light</button>
+              </div>
+            </div>
+          </div>
+          <div class="ppt-export-ctrl-row ppt-export-zoom-row">
+            <span>Size</span>
+            <button type="button" class="ppt-export-step-btn" id="ppt-exp-zoom-down">&minus;</button>
+            <input type="range" class="ppt-export-zoom-slider" id="ppt-exp-zoom" min="60" max="135" step="5" value="${zoomPct}" />
+            <button type="button" class="ppt-export-step-btn" id="ppt-exp-zoom-up">+</button>
+            <span id="ppt-exp-zoom-val" style="min-width:38px;text-align:right;color:var(--text);font-weight:800;">${zoomPct}%</span>
+          </div>
+        </div>
+        <div class="ppt-export-thumb-grid" id="ppt-exp-grid"></div>
+        <div class="ppt-export-ftr">
+          <span id="ppt-exp-count" style="font-size:12px;font-weight:700;color:var(--text-dim);white-space:nowrap;"></span>
+          <div style="display:flex;gap:8px;flex-shrink:0;">
+            <button type="button" class="btn btn-secondary" id="ppt-exp-cancel" style="min-height:38px;padding:0 14px;white-space:nowrap;">Cancel</button>
+            <button type="button" class="btn btn-primary" id="ppt-exp-download" style="min-height:38px;padding:0 16px;font-weight:800;white-space:nowrap;">Download PPTX</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(backdrop);
+
+    const grid = backdrop.querySelector('#ppt-exp-grid');
+    const countEl = backdrop.querySelector('#ppt-exp-count');
+    let currentSlides = [];
+
+    // (2026-07-13) 1:1 WYSIWYG scaled big lyrics in PPT thumbnails; prev: tiny 8px font
+    const renderThumbs = ()=>{
+      currentSlides = buildFn(song, linesPerSlide) || [];
+      const th = themeColors[themeKey] || themeColors.dark;
+      if(countEl) countEl.textContent = currentSlides.length + ' slides';
+      const gridW = Math.max(220, (grid.clientWidth || 320) - 32);
+      const colCount = gridW >= 460 ? Math.max(2, Math.floor((gridW + 12) / 240)) : 1;
+      const thumbW = (gridW - (colCount - 1) * 12) / colCount;
+      const pxPerPt = thumbW / 960;
+      grid.innerHTML = currentSlides.map((sl, idx) => {
+        const lines = (sl && Array.isArray(sl.lines) && sl.lines.length) ? sl.lines : [];
+        const slidePt = computePptSlideFontPt(lines, zoomPct);
+        const thumbFontPx = Math.max(8, +(slidePt * pxPerPt).toFixed(1));
+        const txt = lines.length ? lines.map(l => escHtml(l)).join('<br>') : '<span style="opacity:0.35;font-size:10px;">(Blank)</span>';
+        const sec = sl && sl.section ? escHtml(sl.section) : '';
+        return `<div class="ppt-export-thumb-card">
+          <div class="ppt-export-thumb-slide" style="background:${th.bg};color:${th.fg};font-size:${thumbFontPx}px;"><div>${txt}</div></div>
+          <div class="ppt-export-thumb-meta"><span>#${idx + 1}</span><span>${sec}</span></div>
+        </div>`;
+      }).join('');
+    };
+
+    backdrop.querySelectorAll('#ppt-exp-lines .ppt-export-pill').forEach(btn => {
+      btn.onclick = ()=>{
+        linesPerSlide = parseInt(btn.dataset.n, 10) || 2;
+        backdrop.querySelectorAll('#ppt-exp-lines .ppt-export-pill').forEach(b => b.classList.toggle('is-active', b === btn));
+        renderThumbs();
+      };
+    });
+    backdrop.querySelectorAll('#ppt-exp-theme .ppt-export-pill').forEach(btn => {
+      btn.onclick = ()=>{
+        themeKey = btn.dataset.t || 'dark';
+        backdrop.querySelectorAll('#ppt-exp-theme .ppt-export-pill').forEach(b => b.classList.toggle('is-active', b === btn));
+        renderThumbs();
+      };
+    });
+    const zoomInput = backdrop.querySelector('#ppt-exp-zoom');
+    const zoomVal = backdrop.querySelector('#ppt-exp-zoom-val');
+    const setZoom = (next)=>{
+      zoomPct = Math.max(60, Math.min(135, Math.round(next / 5) * 5));
+      if(zoomInput) zoomInput.value = String(zoomPct);
+      if(zoomVal) zoomVal.textContent = zoomPct + '%';
+      renderThumbs();
+    };
+    if(zoomInput) zoomInput.oninput = ()=> setZoom(parseInt(zoomInput.value, 10) || 100);
+    const zDown = backdrop.querySelector('#ppt-exp-zoom-down');
+    const zUp = backdrop.querySelector('#ppt-exp-zoom-up');
+    if(zDown) zDown.onclick = ()=> setZoom(zoomPct - 5);
+    if(zUp) zUp.onclick = ()=> setZoom(zoomPct + 5);
+
+    const close = ()=> backdrop.remove();
+    backdrop.querySelector('#ppt-exp-close').onclick = close;
+    backdrop.querySelector('#ppt-exp-cancel').onclick = close;
+    backdrop.onclick = (e)=>{ if(e.target === backdrop) close(); };
+
+    backdrop.querySelector('#ppt-exp-download').onclick = ()=>{
+      const blob = buildPptxBlob(title, currentSlides, themeKey, zoomPct);
+      const fname = safeFilename(title + ' (' + linesPerSlide + 'L)', 'pptx');
+      triggerBlobDownload(blob, fname);
+      if(typeof window.showToast === 'function') window.showToast('Downloaded ' + fname);
+      close();
+    };
+
+    renderThumbs();
   };
 })();

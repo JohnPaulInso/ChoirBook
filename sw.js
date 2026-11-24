@@ -1,6 +1,6 @@
 // (2026-07-13) bump sw shell cache to v49; prev: v48
-// (2026-07-13) bump cache to v125 for mobile PPT swipe threshold; prev: v124
-const CACHE_NAME = 'songbook-shell-v125';
+// (2026-07-13) bump cache to v133 for snackbar border removal; prev: v132
+const CACHE_NAME = 'songbook-shell-v133';
 const SHELL_FILES = [
   './index.html',
   './css/style.css',
@@ -49,6 +49,20 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
   if (url.origin.includes('firestore.googleapis.com') || url.origin.includes('identitytoolkit.googleapis.com') || url.origin.includes('securetoken.googleapis.com')) {
+    return;
+  }
+  // (2026-07-13) network-first for html/js/css so updates load on 1st refresh; prev: cache-first
+  const isCodeAsset = url.origin === self.location.origin && /\.(?:html|js|css)$|^\/$/i.test(url.pathname);
+  if (isCodeAsset) {
+    event.respondWith(
+      fetch(event.request).then((networkResponse) => {
+        if (networkResponse && networkResponse.status === 200) {
+          const clone = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone)).catch(() => {});
+        }
+        return networkResponse;
+      }).catch(() => caches.match(event.request, { ignoreSearch: true }))
+    );
     return;
   }
   event.respondWith(
